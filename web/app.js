@@ -354,6 +354,13 @@ function fmtBytes(n) {
     : Math.round(mb) + ' MB';
 }
 
+// La misma cadena que `_ritmo()` en progreso.py, para que la terminal y la pantalla no
+// digan cifras distintas. `fmtBytes` no sirve aquí: redondea a MB enteros y estas
+// descargas van por debajo de 2 MB/s, así que saldrían todas como «1 MB».
+function fmtVelocidad(bytesPorS) {
+  return ((bytesPorS || 0) / (1024 * 1024)).toFixed(1).replace('.', ',') + ' MB/s';
+}
+
 // Mismo formato que la línea de la terminal: 45s, 12m, 1h 39m.
 function fmtDuracion(segundos) {
   const s = Math.round(segundos || 0);
@@ -408,7 +415,7 @@ function pintarCarga(det) {
     barra.removeAttribute('value');
     txt.textContent =
       `descargando ${fmtBytes(det.bytes)}` +
-      (det.bytes_por_s ? ` · ${fmtBytes(det.bytes_por_s * 60)}/min` : '') +
+      (det.bytes_por_s ? ` · ${fmtVelocidad(det.bytes_por_s)}` : '') +
       ' — el servidor no dice cuánto pesa, así que no hay porcentaje';
   } else if (det.subtareas > 0) {
     barra.max = det.subtareas;

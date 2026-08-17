@@ -65,8 +65,11 @@ if [ "$nuevo" = "si" ]; then
   echo
   echo "  1. Anuncios europeos y de Cataluña — unos minutos. Al terminar esta se"
   echo "     abre la aplicación, ya con unas 1.400 licitaciones que encajan."
-  echo "  2. Histórico de plataformas agregadas — unos 15 minutos y ~500 MB."
-  echo "  3. Histórico de la Plataforma del Estado — un par de horas y ~4 GB."
+  echo "  2. Histórico de plataformas agregadas — ~360 MB y ~4 min de proceso."
+  echo "  3. Histórico de la Plataforma del Estado — ~4 GB y ~15 min de proceso."
+  echo
+  echo "Lo que tarden las descargas depende de tu conexión: esos 4 GB han tardado"
+  echo "desde unos minutos hasta casi dos horas según la línea. El proceso, no."
   echo
   echo "Las etapas 2 y 3 siguen descargando por detrás mientras trabajas: la"
   echo "aplicación lo avisa arriba, con una barra, y las licitaciones van"

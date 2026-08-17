@@ -65,7 +65,8 @@ ETAPAS_PRIMERA_CARGA = [
         "etiqueta": "Histórico de plataformas agregadas y consultas previas",
         "fuentes": ["placsp:agregadas", "placsp:consultas_previas"],
         "historico": True,
-        "coste": "unos 15 minutos y unos 500 MB de base",
+        "coste": "unos 360 MB de descarga, lo que tarde depende de tu conexión, "
+                 "y unos 4 minutos de proceso",
         "detalle": "cubre Cataluña, Andalucía, País Vasco, Madrid, Galicia, Navarra "
                    "y La Rioja",
     },
@@ -73,7 +74,12 @@ ETAPAS_PRIMERA_CARGA = [
         "etiqueta": "Histórico de la Plataforma del Estado",
         "fuentes": ["placsp:licitaciones"],
         "historico": True,
-        "coste": "un par de horas y unos 4 GB de descarga",
+        # No se anuncia un total a propósito. Medido: con los ZIP ya en la caché son 17
+        # minutos de proceso, y bajándolos a 0,8 MB/s fueron casi dos horas. La descarga
+        # manda, y varía casi dos órdenes de magnitud según la línea de cada uno; el
+        # proceso solo depende de la máquina y sí se puede prometer.
+        "coste": "unos 4 GB de descarga, lo que tarde depende de tu conexión, "
+                 "y unos 15 minutos de proceso",
         "detalle": "es el que trae las otras diez comunidades y el que llena "
                    "Vencimientos y Adjudicatarios",
     },

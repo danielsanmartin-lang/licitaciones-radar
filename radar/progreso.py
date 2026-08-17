@@ -73,8 +73,12 @@ def _dur(segundos: float) -> str:
 
 
 def _ritmo(bytes_por_s: float) -> str:
-    """En MB por minuto: un ZIP anual tarda media hora y así se lee de un vistazo."""
-    return f"{bytes_por_s * 60 / (1024 * 1024):.0f} MB/min"
+    """En MB por segundo, que es como se mide una conexión en todas partes.
+
+    Con un decimal porque estas descargas se mueven por debajo de 2 MB/s y sin él se
+    quedarían todas en «1 MB/s», que no dice si va bien o si se está atascando.
+    """
+    return f"{bytes_por_s / (1024 * 1024):.1f} MB/s".replace(".", ",")
 
 
 def _de(texto: str) -> str:

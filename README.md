@@ -60,9 +60,14 @@ cuatro etapas, de la más barata a la más cara:
 | | qué trae | cuánto cuesta |
 |---|---|---|
 | 1 | anuncios europeos (TED) y de Cataluña | unos minutos, apenas ocupa |
-| 2 | histórico de plataformas agregadas y consultas previas | ~15 min y ~500 MB |
-| 3 | histórico de la Plataforma del Estado | un par de horas y ~4 GB |
+| 2 | histórico de plataformas agregadas y consultas previas | ~360 MB + ~4 min de proceso |
+| 3 | histórico de la Plataforma del Estado | ~4 GB + ~15 min de proceso |
 | 4 | lo publicado desde la fecha de corte de los ZIP | unos minutos |
+
+Los tiempos de descarga no están porque no se pueden prometer: dependen de tu conexión y
+de lo que dé PLACSP ese día. Medido aquí, los mismos 4 GB han tardado desde unos minutos
+hasta casi dos horas. Lo que sí es predecible es el proceso —abrir los ZIP y volcar el
+millón y pico de fichas en la base—, porque solo depende de tu máquina.
 
 **La aplicación se abre en cuanto termina la etapa 1**, ya con unas 1.400 licitaciones
 que encajan. Las demás siguen descargando por detrás mientras trabajas: arriba aparece
