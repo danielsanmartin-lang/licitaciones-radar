@@ -1,0 +1,27 @@
+# La base de datos y todo lo que se descarga. Son cientos de MB y además contiene
+# el triaje y las notas personales de cada uno: cada persona construye la suya al
+# arrancar, no se comparte.
+data/
+
+# Los términos de búsqueda de cada uno. Solo se versiona `perfiles.ejemplo.json`, que es
+# genérico: la lista de verdad —raíces, erratas de los pliegos, lenguas cooficiales— es el
+# trabajo de la persona y no tiene por qué acabar en un repositorio público.
+config/perfiles.json
+config/perfiles.anterior.json
+config/perfiles.json.tmp
+
+# Lo que aparta el actualizador para poder volver atrás (radar.anterior/, web.anterior/…).
+*.anterior
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node: solo se usa para regenerar el documento de docs/, no en tiempo de ejecución.
+node_modules/
+package-lock.json
+
+# macOS
+.DS_Store

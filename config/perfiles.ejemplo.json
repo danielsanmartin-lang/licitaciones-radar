@@ -1,0 +1,57 @@
+{
+  "_ayuda": [
+    "Cada perfil es una búsqueda guardada. Edita este fichero y vuelve a lanzar",
+    "'python3 radar.py match' para reevaluar sin descargar nada otra vez.",
+    "",
+    "Este es el fichero de EJEMPLO, y es a propósito genérico: los términos con los",
+    "que buscas de verdad son tu trabajo, no del programa. Al arrancar por primera",
+    "vez se copia a config/perfiles.json, que no se versiona, y es ahí donde debes",
+    "afinar los tuyos: se quedan en tu equipo y ninguna actualización los toca.",
+    "",
+    "terminos_fuertes    -> se bastan solos para que una licitación entre.",
+    "terminos_debiles    -> ambiguos: solo entran si además aparece algo de",
+    "                       contexto_requerido o un CPV de cpv_prefijos.",
+    "terminos_consulta   -> lo que se le pide a TED y a Cataluña, que filtran en",
+    "                       servidor; conviene que sean amplios.",
+    "contexto_requerido  -> lo que convierte un término débil en una coincidencia.",
+    "excluir             -> descarta la licitación aunque haya casado por otro lado.",
+    "cpv_prefijos        -> prefijos de CPV, no códigos completos.",
+    "importe_minimo      -> por debajo no merece la pena mirarlo.",
+    "ccaa                -> vacío = toda España.",
+    "",
+    "Tres cosas que se aprenden a base de perder contratos:",
+    "",
+    "1. Usa raíces, no palabras completas: 'conscienci' cubre concienciar,",
+    "   concienciación y la variante catalana.",
+    "2. Deja las erratas. En los pliegos publicados hay faltas de ortografía, y si",
+    "   no las incluyes esas licitaciones no aparecen.",
+    "3. Añade las lenguas cooficiales. Media España publica en catalán, gallego o",
+    "   euskera, y quien solo busca en castellano no ve esos contratos."
+  ],
+  "perfiles": [
+    {
+      "nombre": "Ejemplo: ciberseguridad",
+      "activo": true,
+      "cpv_prefijos": ["72500000"],
+      "terminos_fuertes": ["ciberseguridad", "seguridad de la informacion"],
+      "terminos_consulta": ["ciberseguridad", "seguridad de la informacion"],
+      "terminos_debiles": ["seguridad"],
+      "contexto_requerido": ["informatica", "sistemas de informacion"],
+      "excluir": ["seguridad vial", "seguridad alimentaria", "vigilancia"],
+      "importe_minimo": 10000,
+      "ccaa": []
+    },
+    {
+      "nombre": "Ejemplo: formación",
+      "activo": false,
+      "cpv_prefijos": ["80500000"],
+      "terminos_fuertes": ["plan de formacion"],
+      "terminos_consulta": ["formacion"],
+      "terminos_debiles": ["formacion", "capacitacion"],
+      "contexto_requerido": ["ciberseguridad", "informatica"],
+      "excluir": ["formacion vial"],
+      "importe_minimo": 10000,
+      "ccaa": []
+    }
+  ]
+}

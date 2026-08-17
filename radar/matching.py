@@ -1,0 +1,570 @@
+"""Motor de reglas: decide qué licitaciones interesan y deja constancia de por qué.
+
+El problema real de esta herramienta no es traer datos, es el ruido. Medido sobre
+datos reales de Cataluña, las licitaciones de concienciación en ciberseguridad
+aparecen con CPV 80511000, 80510000, 79341000, 71316000 y algunas SIN CPV: de cinco
+casos verificados, filtrar solo por CPV habría perdido cuatro. Y al revés, buscar
+"concienciación" a secas trae campañas de feminización, seguridad vial y consumo
+responsable.
+
+De ahí el modelo de tres niveles:
+
+- `terminos_fuertes`: se bastan solos ("phishing", "DMARC", "ingeniería social").
+- `terminos_debiles`: ambiguos ("concienciación", "formación"). Solo valen si
+  además aparece algo de `contexto_requerido` EN EL TEXTO.
+- `cpv_prefijos`: suman puntuación, pero nunca aceptan por sí solos ni sirven como
+  contexto. Se probó dejarles hacer de contexto y colaba "servicio de formación
+  informática en hojas de cálculo" con el CPV 80533100: el CPV dice que es
+  formación en informática, no que tenga nada que ver con seguridad.
+
+`excluir` manda sobre todo lo demás.
+
+Dos lecciones de los datos reales que están grabadas en la configuración:
+los términos deben ser RAÍCES ("conscienci" cubre conscienciar, conscienciació y
+conscienciación), porque los pliegos usan el verbo tanto como el sustantivo; y hay
+que incluir las erratas frecuentes ("phising" con una sola s aparece tal cual en
+pliegos publicados).
+
+Cada match guarda su motivo. Sin la traza no se puede afinar el ruido, y el ruido
+es lo que hace que la gente deje de abrir la herramienta a las dos semanas.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import sqlite3
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import progreso
+from .db import ahora
+from .model import normalizar
+
+log = logging.getLogger(__name__)
+
+RAIZ = Path(__file__).resolve().parent.parent
+PERFILES_POR_DEFECTO = RAIZ / "config" / "perfiles.json"
+# El de ejemplo sí se versiona; el de verdad no. Los términos con los que cada uno busca
+# son su trabajo —las raíces, las erratas de los pliegos, las lenguas cooficiales— y no
+# tienen por qué acabar en un repositorio público ni viajar en una actualización.
+PERFILES_EJEMPLO = RAIZ / "config" / "perfiles.ejemplo.json"
+
+
+def patron(termino: str) -> re.Pattern | None:
+    """Compila un término en una expresión que solo casa a PRINCIPIO de palabra.
+
+    Antes se buscaba con `termino in texto`, y eso casaba dentro de otras palabras:
+    "formacion" aparecía en "sistemas de in-formación" y metía en la bandeja 612 de
+    los 943 matches de una base real, todos con el motivo "término ambiguo:
+    formacion" sobre pliegos donde no había ninguna formación. El panel «Por qué ha
+    entrado» —que existe justo para poder afinar— estaba mintiendo.
+
+    El ancla va SOLO al principio, y esto es lo importante: el fichero de perfiles
+    está escrito con RAÍCES a propósito ("conscienci" cubre conscienciar,
+    conscienciació y concienciación), así que cerrar también el final con `\\b`
+    rompería la lección nº1 del README y perdería negocio real. Con el ancla solo
+    delante, la raíz sigue creciendo hacia la derecha y el falso positivo desaparece:
+
+        "formacion"  vs "informacion"     -> no casa (la 'n' de 'in' es letra)
+        "formacio"   vs "de formació"     -> casa
+        "conscienci" vs "conscienciació"  -> casa
+
+    Y si el término se escribió con un espacio final se exige además fin de palabra,
+    que es lo que ya documentaba el README para las siglas cortas: "ens " busca la
+    sigla suelta y no debe casar dentro de "ensayo" ni "enseñanza".
+    """
+    norm = normalizar(termino)
+    nucleo = norm.strip()
+    if not nucleo:
+        return None
+    expresion = r"(?<!\w)" + re.escape(nucleo)
+    if norm != norm.rstrip():
+        expresion += r"(?!\w)"
+    return re.compile(expresion)
+
+
+def _termino(bruto: str) -> tuple[str, str, re.Pattern] | None:
+    """El término listo para comparar: (original, literal, patrón anclado).
+
+    El literal no es redundante. Buscar la regex de los ~100 términos de todos los
+    perfiles sobre cada texto costaba 4,2 s más que el `in` de antes sobre esta base
+    de 133.000 registros, y casi todo ese tiempo se iba en términos que no aparecen.
+    Como el literal es un superconjunto del patrón —`(?<!\\w)formacion` solo puede
+    casar donde también casa `formacion`—, se usa de guarda barata: el `in` en C
+    descarta, y la regex solo se ejecuta cuando hay algo que afinar.
+    """
+    pat = patron(bruto)
+    if pat is None:
+        return None
+    return (bruto, normalizar(bruto).strip(), pat)
+
+
+def _preparar_terminos(brutos: list[str]) -> list[tuple[str, str, re.Pattern]]:
+    return [t for t in map(_termino, brutos) if t]
+
+
+def prefijo_cpv(codigo: str) -> str:
+    """Quita los ceros de relleno de un CPV para poder compararlo como prefijo.
+
+    El CPV es jerárquico y los ceros finales marcan el nivel: 72000000 es la división
+    «servicios TI», 72500000 el grupo «servicios informáticos», 72514300 una
+    subcategoría concreta. El campo se llama `cpv_prefijos` y se comparaba con
+    `codigo.startswith(prefijo)`, pero al escribirlos con los ceros ningún prefijo
+    llegaba a funcionar como tal: "72514300".startswith("72500000") es falso, así que
+    "72500000" solo casaba consigo mismo. Medido sobre una base de 133.000 registros,
+    los diez prefijos declarados solo tocaban su código exacto, y la oficina de
+    ciberseguridad del Ministerio de Cultura (CPV 72514300) no recibía ni un punto
+    del grupo 725 al que pertenece.
+
+    Se dejan al menos dos dígitos: un CPV de una sola cifra no acota nada.
+    """
+    limpio = "".join(c for c in codigo if c.isdigit())
+    if len(limpio) <= 2:
+        return limpio
+    recortado = limpio.rstrip("0")
+    return recortado if len(recortado) >= 2 else limpio[:2]
+
+
+def _casan(terminos, texto: str):
+    """Los originales de los términos que aparecen de verdad en el texto.
+
+    Devuelve un generador: `evaluar` necesita la lista completa para el motivo, pero
+    la comprobación de `excluir` corta en el primero como hacía antes.
+    """
+    return (o for o, literal, pat in terminos if literal in texto and pat.search(texto))
+
+
+
+@dataclass
+class Perfil:
+    nombre: str
+    activo: bool = True
+    cpv_prefijos: list[str] = field(default_factory=list)
+    terminos_fuertes: list[str] = field(default_factory=list)
+    terminos_debiles: list[str] = field(default_factory=list)
+    contexto_requerido: list[str] = field(default_factory=list)
+    excluir: list[str] = field(default_factory=list)
+    importe_minimo: float | None = None
+    ccaa: list[str] = field(default_factory=list)
+    # Prefijos de fuente a los que se limita el perfil (vacío = todas). Permite,
+    # por ejemplo, un perfil deliberadamente amplio que solo se aplique a las
+    # consultas preliminares de mercado, donde el volumen es pequeño y merece la
+    # pena verlo todo.
+    fuentes: list[str] = field(default_factory=list)
+    # Términos que se envían a las fuentes que filtran en servidor (TED, Cataluña).
+    # Si está vacío se usan los `terminos_fuertes`. Existe porque el contexto
+    # incluye palabras genéricas ("seguridad", "protección") que como filtro remoto
+    # traen decenas de miles de avisos irrelevantes.
+    terminos_consulta: list[str] = field(default_factory=list)
+
+    @classmethod
+    def desde_dict(cls, d: dict) -> "Perfil":
+        conocidos = {f for f in cls.__dataclass_fields__}
+        desconocidos = set(d) - conocidos
+        if desconocidos:
+            raise ValueError(
+                f"Perfil '{d.get('nombre', '?')}': claves no reconocidas {sorted(desconocidos)}. "
+                f"Válidas: {sorted(conocidos)}"
+            )
+        if not d.get("nombre"):
+            raise ValueError("Todo perfil necesita 'nombre'")
+        return cls(**d)
+
+    # Versiones normalizadas, calculadas una vez.
+    def preparar(self) -> "Perfil":
+        self._fuertes = _preparar_terminos(self.terminos_fuertes)
+        self._debiles = _preparar_terminos(self.terminos_debiles)
+        self._contexto = _preparar_terminos(self.contexto_requerido)
+        self._excluir = _preparar_terminos(self.excluir)
+
+        # Solo para comparar en local. Lo que se manda a TED y Cataluña sigue siendo
+        # el código declarado tal cual: TED consulta con `classification-cpv IN (...)`,
+        # que exige códigos exactos de 8 dígitos, y mandarle "725" no devolvería nada.
+        self._cpv_prefijos = [prefijo_cpv(c) for c in self.cpv_prefijos]
+
+        # Criba: una sola expresión regular con todos los términos que pueden hacer
+        # que una licitación entre. La gran mayoría de los 127.000 registros no
+        # contiene ninguno, y descartarlos con una pasada en C en lugar de con
+        # sesenta comprobaciones en Python baja la evaluación de 3 segundos a unas
+        # décimas. `evaluar` exige un término fuerte o uno ambiguo para aceptar, así
+        # que si no aparece ninguno no hay nada que mirar.
+        #
+        # Va con los términos DESNUDOS, sin el ancla de principio de palabra que sí
+        # aplica `patron()`. Es a propósito: aquí solo hace falta un superconjunto
+        # —quien no pase la criba tampoco pasaría el patrón anclado— y poner el
+        # lookbehind en cada rama le quita a `re` la optimización de alternancia de
+        # literales, medido sobre esta base: 4,1 s con literales, 32,1 s con el ancla.
+        # Los pocos miles de textos que la criba deja pasar de más los descarta
+        # después la comprobación término a término, que ya es exacta.
+        candidatos = [
+            normalizar(t).strip()
+            for t in self.terminos_fuertes + self.terminos_debiles
+            if normalizar(t).strip()
+        ]
+        self._criba = (
+            re.compile("|".join(re.escape(c) for c in candidatos)) if candidatos else None
+        )
+        return self
+
+
+@dataclass
+class Resultado:
+    casa: bool
+    puntuacion: float = 0.0
+    motivo: str = ""
+
+
+def evaluar(perfil: Perfil, texto: str, cpvs: list[str], importe: float | None,
+            ccaa: str | None, fuente: str | None = None,
+            ya_normalizado: bool = False) -> Resultado:
+    """Aplica un perfil a una licitación.
+
+    `ya_normalizado` evita repetir la normalización del texto una vez por perfil.
+    La base la guarda hecha (columna `texto_norm`), y eso convertía una evaluación
+    de 8,7 segundos sobre 127.000 registros en algo instantáneo.
+    """
+    if not hasattr(perfil, "_fuertes"):
+        perfil.preparar()
+
+    if perfil.fuentes and not any((fuente or "").startswith(f) for f in perfil.fuentes):
+        return Resultado(False, 0.0, f"perfil limitado a {perfil.fuentes}")
+
+    t = texto if ya_normalizado else normalizar(texto)
+
+    # Criba rápida: si no aparece ningún término que pueda hacerla entrar, fuera.
+    if perfil._criba is not None and not perfil._criba.search(t):
+        return Resultado(False, 0.0, "sin coincidencias")
+
+    excluido = next(_casan(perfil._excluir, t), None)
+    if excluido:
+        return Resultado(False, 0.0, f'excluido por "{excluido}"')
+
+    if perfil.ccaa and ccaa and ccaa not in perfil.ccaa:
+        return Resultado(False, 0.0, f"fuera del ámbito ({ccaa})")
+
+    # El importe solo descarta cuando se conoce. Muchas licitaciones publican el
+    # presupuesto más tarde, y descartarlas por un dato ausente sería peor que
+    # dejarlas pasar.
+    if perfil.importe_minimo and importe is not None and importe < perfil.importe_minimo:
+        return Resultado(False, 0.0, f"importe {importe:.0f} < mínimo {perfil.importe_minimo:.0f}")
+
+    cpv_tocados = [
+        c for c in cpvs if any(c.startswith(p) for p in perfil._cpv_prefijos)
+    ]
+    fuertes = list(_casan(perfil._fuertes, t))
+    debiles = list(_casan(perfil._debiles, t))
+    contexto = list(_casan(perfil._contexto, t))
+
+    partes: list[str] = []
+    puntuacion = 0.0
+
+    if fuertes:
+        puntuacion += 3.0 + 0.5 * (len(fuertes) - 1)
+        partes.append("término fuerte: " + ", ".join(f'"{f}"' for f in fuertes[:3]))
+
+    # El contexto tiene que estar en el TEXTO. Un CPV de formación informática no
+    # convierte un curso de ofimática en una licitación de ciberseguridad.
+    hay_contexto = bool(contexto)
+    if debiles and hay_contexto:
+        puntuacion += 2.0
+        partes.append("término ambiguo con contexto: " + ", ".join(f'"{d}"' for d in debiles[:3]))
+        partes.append("contexto: " + ", ".join(f'"{c}"' for c in contexto[:3]))
+    elif debiles and not fuertes:
+        return Resultado(
+            False, 0.0,
+            f'solo términos ambiguos ({", ".join(debiles[:2])}) sin contexto de seguridad',
+        )
+
+    if cpv_tocados:
+        puntuacion += 1.0
+        partes.append("CPV " + ", ".join(cpv_tocados[:3]))
+
+    # El CPV nunca acepta por sí solo: 80533100 abarca toda la formación
+    # informática del país y ahogaría la bandeja.
+    if not fuertes and not (debiles and hay_contexto):
+        if cpv_tocados:
+            return Resultado(False, 0.0, f"solo CPV ({cpv_tocados[0]}), sin señal en el texto")
+        return Resultado(False, 0.0, "sin coincidencias")
+
+    if importe is not None and importe >= 100_000:
+        puntuacion += 0.5
+        partes.append("importe relevante")
+
+    return Resultado(True, round(puntuacion, 2), " · ".join(partes))
+
+
+# --- Carga de perfiles -----------------------------------------------------
+
+
+def preparar_perfiles(ruta: Path | str | None = None) -> Path:
+    """Se asegura de que exista el fichero de perfiles, creándolo del ejemplo.
+
+    En una instalación recién descargada solo está `perfiles.ejemplo.json`, porque el
+    de verdad no se versiona. Copiarlo aquí evita que la primera vez que alguien abre
+    start.command lo reciba un error en la cara; a partir de ese momento el fichero es
+    suyo y nadie lo vuelve a tocar.
+    """
+    ruta = Path(ruta) if ruta else PERFILES_POR_DEFECTO
+    if not ruta.exists() and ruta == PERFILES_POR_DEFECTO and PERFILES_EJEMPLO.exists():
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(PERFILES_EJEMPLO.read_text(encoding="utf-8"), encoding="utf-8")
+        log.info("Creado %s a partir del ejemplo. Ajusta ahí tus términos de búsqueda.",
+                 ruta.name)
+    return ruta
+
+
+def cargar_perfiles(ruta: Path | str | None = None) -> list[Perfil]:
+    ruta = preparar_perfiles(ruta)
+    if not ruta.exists():
+        raise FileNotFoundError(
+            f"No existe {ruta}. Copia config/perfiles.ejemplo.json a config/perfiles.json."
+        )
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    if isinstance(datos, dict):
+        datos = datos.get("perfiles", [])
+    perfiles = [Perfil.desde_dict(d).preparar() for d in datos]
+    activos = [p for p in perfiles if p.activo]
+    if not activos:
+        raise ValueError(f"Ningún perfil activo en {ruta}")
+    return activos
+
+
+def leer_fichero_perfiles(ruta: Path | str | None = None) -> dict:
+    """Devuelve el JSON tal cual, incluida la ayuda, para poder editarlo y reescribirlo."""
+    # También aquí: la pestaña de términos es lo primero que abre alguien que acaba de
+    # descargar el programa, y en ese momento el fichero puede no existir todavía.
+    ruta = preparar_perfiles(ruta)
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    if isinstance(datos, list):
+        datos = {"perfiles": datos}
+    return datos
+
+
+def validar_perfiles(perfiles_json: list[dict]) -> list[Perfil]:
+    """Valida antes de escribir nada. Lanza ValueError con el motivo concreto."""
+    if not isinstance(perfiles_json, list) or not perfiles_json:
+        raise ValueError("Hace falta al menos un perfil.")
+
+    nombres = set()
+    validados = []
+    for bruto in perfiles_json:
+        if not isinstance(bruto, dict):
+            raise ValueError("Cada perfil tiene que ser un objeto con sus campos.")
+        perfil = Perfil.desde_dict(bruto)  # ya rechaza claves raras y falta de nombre
+        if perfil.nombre in nombres:
+            raise ValueError(f"Hay dos perfiles con el mismo nombre: «{perfil.nombre}».")
+        nombres.add(perfil.nombre)
+        if perfil.activo and not (perfil.terminos_fuertes or perfil.terminos_debiles):
+            raise ValueError(
+                f"El perfil «{perfil.nombre}» está activo pero no tiene ningún término: "
+                "aceptaría o rechazaría todo."
+            )
+        if perfil.activo and perfil.terminos_debiles and not perfil.contexto_requerido:
+            raise ValueError(
+                f"El perfil «{perfil.nombre}» tiene términos ambiguos "
+                f"({', '.join(perfil.terminos_debiles[:3])}) sin contexto requerido. "
+                "Así entraría cualquier cosa que hable de formación o concienciación."
+            )
+        validados.append(perfil.preparar())
+
+    if not any(p.activo for p in validados):
+        raise ValueError("Ningún perfil está activo: la bandeja se quedaría vacía.")
+    return validados
+
+
+def avisos_perfiles(perfiles: list[Perfil]) -> list[str]:
+    """Cosas que probablemente no quieres, pero que decides tú.
+
+    No son errores y no bloquean el guardado: hay términos cortos perfectamente
+    válidos («spf», «dkim»). Lo que sí conviene decir es que un término corto casa
+    DENTRO de otras palabras: «ens» aparece en «defensa», «bienes» y «ensayo», y
+    escribirlo con un espacio final («ens ») lo limita a la palabra suelta. La
+    respuesta empírica la da la previsualización, que dice cuántas entran y salen.
+    """
+    avisos = []
+    for perfil in perfiles:
+        if not perfil.activo:
+            continue
+        for lista, etiqueta in (
+            ("terminos_fuertes", "fuerte"),
+            ("terminos_debiles", "ambiguo"),
+            ("contexto_requerido", "de contexto"),
+        ):
+            for termino in getattr(perfil, lista):
+                limpio = termino.strip()
+                if limpio and len(limpio) <= 3 and termino == limpio:
+                    avisos.append(
+                        f"«{perfil.nombre}»: el término {etiqueta} «{termino}» tiene "
+                        f"{len(limpio)} letras y casará dentro de otras palabras. "
+                        f"Si buscas la palabra suelta, escríbelo «{limpio} » con un "
+                        "espacio al final."
+                    )
+    return avisos
+
+
+def guardar_perfiles(perfiles_json: list[dict], ruta: Path | str | None = None) -> list[Perfil]:
+    """Valida y escribe `perfiles.json`, guardando antes una copia del anterior.
+
+    Se conserva el bloque `_ayuda` del fichero: son las tres lecciones que costaron
+    encontrar (usar raíces, dejar las erratas tipo «phising», incluir el catalán) y
+    perderlas al editar desde la pantalla sería un retroceso.
+    """
+    validados = validar_perfiles(perfiles_json)
+    ruta = Path(ruta) if ruta else PERFILES_POR_DEFECTO
+
+    documento = {}
+    if ruta.exists():
+        try:
+            anterior = leer_fichero_perfiles(ruta)
+            if "_ayuda" in anterior:
+                documento["_ayuda"] = anterior["_ayuda"]
+            # Copia de seguridad antes de sobrescribir.
+            (ruta.parent / "perfiles.anterior.json").write_text(
+                ruta.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        except (ValueError, OSError):
+            pass
+
+    documento["perfiles"] = perfiles_json
+    # Se escribe a un temporal y se mueve: si falla a medias, el fichero bueno sigue.
+    temporal = ruta.with_suffix(".json.tmp")
+    temporal.write_text(
+        json.dumps(documento, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    temporal.replace(ruta)
+    return validados
+
+
+def previsualizar(con, perfiles: list[Perfil]) -> dict:
+    """Qué pasaría con estos perfiles, sin tocar la base.
+
+    Cambiar un término a ciegas sobre más de cien mil registros es la forma más
+    rápida de ensuciar la bandeja, así que primero se dice cuántas coincidencias
+    habría y qué entra o sale.
+    """
+    actuales = {
+        f["licitacion_id"] for f in con.execute("SELECT DISTINCT licitacion_id FROM matches")
+    }
+    nuevas: set[int] = set()
+    for fila in con.execute(
+        """SELECT id, COALESCE(texto_norm, '') AS texto, cpv, importe_referencia,
+                  ccaa, fuente FROM licitaciones"""
+    ):
+        cpvs = (fila["cpv"] or "").split()
+        for perfil in perfiles:
+            if evaluar(perfil, fila["texto"], cpvs, fila["importe_referencia"],
+                       fila["ccaa"], fila["fuente"], ya_normalizado=True).casa:
+                nuevas.add(fila["id"])
+                break
+
+    entran, salen = nuevas - actuales, actuales - nuevas
+
+    def muestra(ids):
+        if not ids:
+            return []
+        marcas = ", ".join("?" * min(len(ids), 5))
+        return [
+            dict(f) for f in con.execute(
+                f"SELECT id, objeto, organo FROM licitaciones WHERE id IN ({marcas})",
+                list(ids)[:5],
+            )
+        ]
+
+    return {
+        "antes": len(actuales),
+        "despues": len(nuevas),
+        "entran": len(entran),
+        "salen": len(salen),
+        "muestra_entran": muestra(entran),
+        "muestra_salen": muestra(salen),
+        "avisos": avisos_perfiles(perfiles),
+    }
+
+
+def terminos_para_consultas(perfiles: list[Perfil]) -> tuple[list[str], list[str]]:
+    """CPV y términos que se mandan a las fuentes que filtran en servidor.
+
+    Lo que se pregunta al servidor NO es lo mismo que lo que se filtra en local, y
+    el criterio se eligió midiendo contra TED:
+
+    - mandar los términos débiles ("formacion", "email") -> 5.957 avisos
+    - mandar además el contexto ("seguridad", "proteccion") -> 12.948 avisos
+    - mandar solo términos discriminantes + CPV -> unos cientos
+
+    Todos para quedarse en ~200 coincidencias reales. Por eso cada perfil declara
+    `terminos_consulta`; si no lo hace, se usan sus `terminos_fuertes`. Los CPV van
+    siempre, y son la red que recoge lo que el texto no delata.
+    """
+    cpv: list[str] = []
+    terminos: list[str] = []
+    for p in perfiles:
+        for c in p.cpv_prefijos:
+            if c not in cpv:
+                cpv.append(c)
+        for t in (p.terminos_consulta or p.terminos_fuertes):
+            t = t.strip()
+            if len(t) >= 4 and t not in terminos:
+                terminos.append(t)
+    return cpv, terminos
+
+
+# --- Aplicación sobre la base ---------------------------------------------
+
+
+def reevaluar(con: sqlite3.Connection, perfiles: list[Perfil], *, solo_nuevas: bool = False) -> dict:
+    """Aplica los perfiles a la base y actualiza la tabla `matches`.
+
+    Se ejecuta en Python en lugar de con FTS5 MATCH porque las reglas son
+    condicionales (fuerte / débil+contexto / exclusiones / umbral de importe) y
+    eso no se expresa en una consulta FTS sin volverla ilegible. FTS5 se sigue
+    usando para la caja de búsqueda libre de la bandeja, que sí es un MATCH.
+    """
+    sql = """SELECT id, COALESCE(texto_norm, '') AS texto, cpv, importe_referencia,
+                    ccaa, fuente FROM licitaciones"""
+    if solo_nuevas:
+        sql += " WHERE id NOT IN (SELECT licitacion_id FROM matches)"
+
+    momento = ahora()
+    stats = {"evaluadas": 0, "matches": 0, "por_perfil": {}}
+    nombres = {p.nombre for p in perfiles}
+
+    progreso.fuente("evaluando perfiles")
+    progreso.fase("aplicando reglas")
+    for fila in con.execute(sql):
+        stats["evaluadas"] += 1
+        progreso.fichas(stats["evaluadas"])
+        cpvs = (fila["cpv"] or "").split()
+        for perfil in perfiles:
+            res = evaluar(
+                perfil, fila["texto"], cpvs,
+                fila["importe_referencia"], fila["ccaa"], fila["fuente"],
+                ya_normalizado=True,
+            )
+            if res.casa:
+                con.execute(
+                    """INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(licitacion_id, perfil) DO UPDATE SET
+                         puntuacion = excluded.puntuacion,
+                         motivo = excluded.motivo""",
+                    (fila["id"], perfil.nombre, res.puntuacion, res.motivo, momento),
+                )
+                stats["matches"] += 1
+                stats["por_perfil"][perfil.nombre] = stats["por_perfil"].get(perfil.nombre, 0) + 1
+            else:
+                # Si dejó de casar (perfil endurecido), se retira el match pero
+                # el triaje humano de esa licitación se conserva.
+                con.execute(
+                    "DELETE FROM matches WHERE licitacion_id = ? AND perfil = ?",
+                    (fila["id"], perfil.nombre),
+                )
+
+    # Limpia matches de perfiles que ya no existen en el fichero de configuración.
+    existentes = {r[0] for r in con.execute("SELECT DISTINCT perfil FROM matches")}
+    for huerfano in existentes - nombres:
+        con.execute("DELETE FROM matches WHERE perfil = ?", (huerfano,))
+
+    con.commit()
+    return stats

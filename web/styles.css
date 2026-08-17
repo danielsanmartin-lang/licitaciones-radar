@@ -1,0 +1,391 @@
+:root {
+  --fondo: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --borde: #2a2f3a;
+  --texto: #e6e8ec;
+  --texto-sec: #98a0ae;
+  --acento: #4f8cff;
+  --verde: #35c46b;
+  --ambar: #e2a838;
+  --rojo: #e5544b;
+  --radio: 10px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --fondo: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #f0f2f5;
+    --borde: #dde1e7;
+    --texto: #1a1d23;
+    --texto-sec: #626a78;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* Las reglas del autor ganan siempre sobre el `[hidden] { display: none }` del
+   navegador, así que cualquier clase que fije `display` deja el atributo `hidden`
+   sin efecto. Pasó con el botón «Cargar más»: `.mas { display: block }` lo mantenía
+   visible después de haber cargado todo, y al pulsarlo se pedían filas más allá del
+   final y no ocurría nada. Esta regla lo arregla para todos los elementos que se
+   ocultan con el atributo, no solo para ese botón. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  padding: 0 20px 60px;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 22px 0 16px;
+  border-bottom: 1px solid var(--borde);
+}
+
+h1 { margin: 0; font-size: 21px; letter-spacing: -0.01em; }
+.sub { margin: 4px 0 0; color: var(--texto-sec); font-size: 13px; }
+
+.busqueda-ahora { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.pista { font-size: 12px; color: var(--texto-sec); }
+.boton-pri {
+  background: var(--acento);
+  border: 1px solid var(--acento);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+}
+.boton-pri:hover { filter: brightness(1.1); }
+.boton-pri:disabled { opacity: .55; cursor: default; filter: none; }
+
+.kpis { display: flex; gap: 10px; flex-wrap: wrap; }
+.kpi {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 8px 14px;
+  min-width: 96px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+button.kpi { cursor: pointer; }
+button.kpi:hover { border-color: var(--acento); }
+button.kpi.activo { border-color: var(--acento); box-shadow: inset 0 0 0 1px var(--acento); }
+
+.ventanas { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+.ventana {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 8px 14px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--texto);
+  text-align: left;
+  min-width: 118px;
+}
+.ventana:hover { border-color: var(--acento); }
+.ventana.activa { border-color: var(--acento); box-shadow: inset 0 0 0 1px var(--acento); }
+.ventana .n { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ventana .t { font-size: 11px; color: var(--texto-sec); text-transform: uppercase; letter-spacing: .04em; }
+.ventana .imp { font-size: 11px; color: var(--texto-sec); font-variant-numeric: tabular-nums; }
+
+.total-ventana { margin: 0 0 12px; font-size: 14px; }
+.total-ventana strong { font-size: 16px; }
+
+.filtros-activos { margin: -4px 0 10px; font-size: 12px; color: var(--texto-sec); }
+.filtros-activos .quitar {
+  background: none; border: 0; color: var(--acento); cursor: pointer;
+  font: inherit; font-size: 12px; padding: 0 0 0 8px; text-decoration: underline;
+}
+.kpi .n { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kpi .t { font-size: 11px; color: var(--texto-sec); text-transform: uppercase; letter-spacing: .04em; }
+.kpi.urgente .n { color: var(--ambar); }
+
+.avisos {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border-radius: var(--radio);
+  background: rgba(229, 84, 75, .12);
+  border: 1px solid rgba(229, 84, 75, .35);
+  font-size: 13px;
+}
+.avisos p { margin: 3px 0; }
+
+/* Carga en segundo plano. En azul y no en rojo a propósito: no ha pasado nada malo,
+   solo está entrando el histórico y se puede trabajar mientras. */
+.carga {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border-radius: var(--radio);
+  background: rgba(79, 140, 255, .10);
+  border: 1px solid rgba(79, 140, 255, .35);
+  font-size: 13px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.carga-texto { flex: 1 1 320px; }
+.carga-texto strong { display: block; }
+.carga-barras {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.carga-barras label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  font-size: 12px;
+  color: var(--texto-sec);
+}
+.carga-barras span { grid-column: 1 / -1; }
+.carga-barras progress {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 6px;
+  accent-color: var(--acento);
+}
+/* Sin `value` la barra es indeterminada: se usa cuando no se sabe el total, que es
+   preferible a inventarse un porcentaje. */
+.carga-barras progress:not([value]) { opacity: .7; }
+
+.vistas { display: flex; gap: 6px; padding: 14px 0 0; flex-wrap: wrap; }
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--texto-sec);
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--texto); }
+.tab.activo { color: var(--texto); border-bottom-color: var(--acento); font-weight: 600; }
+.tab.novedades { color: var(--verde); font-weight: 600; }
+
+.filtros {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 16px 0;
+}
+input[type=search], select {
+  background: var(--panel);
+  color: var(--texto);
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+input[type=search] { flex: 1 1 260px; }
+input[type=search]:focus, select:focus { outline: 2px solid var(--acento); outline-offset: -1px; }
+.check { font-size: 13px; color: var(--texto-sec); display: flex; align-items: center; gap: 6px; }
+
+.boton-sec {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--texto);
+  text-decoration: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.boton-sec:hover { border-color: var(--acento); }
+.mas { display: block; margin: 18px auto; }
+
+.contador { color: var(--texto-sec); font-size: 13px; margin: 0 0 10px; }
+.vacio { color: var(--texto-sec); text-align: center; padding: 50px 0; }
+
+/* Aviso de que la consulta está en marcha. Ocupa el mismo sitio que .vacio para
+   que la lista no salte al aparecer los resultados. */
+.cargando {
+  color: var(--texto-sec);
+  text-align: center;
+  padding: 50px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.cargando::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--borde);
+  border-top-color: var(--acento);
+  border-radius: 50%;
+  animation: girar 0.7s linear infinite;
+}
+@keyframes girar { to { transform: rotate(360deg); } }
+
+/* Quien haya pedido menos animación no quiere una rueda girando sin parar. */
+@media (prefers-reduced-motion: reduce) {
+  .cargando::before { animation-duration: 2.5s; }
+}
+
+.lista { display: flex; flex-direction: column; gap: 8px; }
+
+.tarjeta {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-left: 3px solid transparent;
+  border-radius: var(--radio);
+  padding: 12px 14px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 16px;
+}
+.tarjeta:hover { border-color: var(--acento); }
+.tarjeta.rev-siguiendo { border-left-color: var(--verde); }
+.tarjeta.rev-descartado { opacity: .5; }
+.tarjeta.rev-presentada { border-left-color: var(--acento); }
+
+/* Las plataformas agregadas de PLACSP meten el objeto entero del contrato en el
+   título, con párrafos de veinte líneas. Se recorta a tres para poder recorrer la
+   lista con la vista; el texto completo está en la ficha. */
+.tarjeta h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tarjeta .organo { color: var(--texto-sec); font-size: 13px; }
+.tarjeta .meta { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+.pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--panel-2);
+  color: var(--texto-sec);
+  border: 1px solid var(--borde);
+  white-space: nowrap;
+}
+.pill.importe { color: var(--texto); font-variant-numeric: tabular-nums; }
+.pill.plazo-ok { color: var(--verde); border-color: rgba(53,196,107,.4); }
+.pill.plazo-pronto { color: var(--ambar); border-color: rgba(226,168,56,.45); }
+.pill.plazo-vencido { color: var(--rojo); border-color: rgba(229,84,75,.4); }
+.pill.perfil { color: var(--acento); border-color: rgba(79,140,255,.4); }
+.pill.anuncios { color: var(--texto); border-style: dashed; }
+.pill.incumbente { color: var(--ambar); border-color: rgba(226,168,56,.45); }
+
+.fila-empresa { cursor: pointer; }
+.fila-empresa .cifras { display: flex; gap: 18px; font-variant-numeric: tabular-nums; }
+.fila-empresa .cifras b { font-weight: 600; }
+.contratos-empresa { grid-column: 1 / -1; margin-top: 10px; font-size: 13px; }
+.contratos-empresa li { margin-bottom: 4px; color: var(--texto-sec); }
+.contratos-empresa a { color: var(--acento); }
+
+.derecha { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.dias { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.dias small { display: block; font-size: 10px; font-weight: 400; color: var(--texto-sec); text-transform: uppercase; }
+.dias.pronto { color: var(--ambar); }
+.dias.vencido { color: var(--rojo); }
+
+.panel {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: min(560px, 100%);
+  background: var(--panel);
+  border-left: 1px solid var(--borde);
+  padding: 22px 24px 40px;
+  overflow-y: auto;
+  box-shadow: -12px 0 40px rgba(0,0,0,.35);
+  z-index: 20;
+}
+.cerrar {
+  position: absolute; top: 12px; right: 16px;
+  background: none; border: 0; color: var(--texto-sec);
+  font-size: 26px; cursor: pointer; line-height: 1;
+}
+.panel h2 { font-size: 17px; margin: 0 30px 4px 0; line-height: 1.35; }
+.panel .campo { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--borde); }
+.panel .campo dt { color: var(--texto-sec); }
+.panel .campo dd { margin: 0; }
+.panel h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--texto-sec); margin: 22px 0 8px; }
+.motivo { background: var(--panel-2); border-radius: 8px; padding: 9px 12px; font-size: 12px; color: var(--texto-sec); }
+.acciones { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
+.acciones button.activo { border-color: var(--acento); color: var(--acento); }
+textarea {
+  width: 100%; min-height: 74px; background: var(--panel-2); color: var(--texto);
+  border: 1px solid var(--borde); border-radius: 8px; padding: 8px 10px;
+  font: inherit; font-size: 13px; resize: vertical;
+}
+.enlaces { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.enlaces a { color: var(--acento); word-break: break-all; }
+.hist { font-size: 12px; color: var(--texto-sec); }
+.hist li { margin-bottom: 3px; }
+.guardado { color: var(--verde); font-size: 12px; margin-left: 8px; }
+
+/* --- Términos de búsqueda --- */
+.consejos {
+  background: var(--panel-2);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--texto-sec);
+  margin-bottom: 14px;
+}
+.consejos li { margin: 3px 0; }
+
+.perfil-caja {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.perfil-caja > header {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.perfil-caja h3 { margin: 0; font-size: 15px; }
+.campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.campo-term label { display: block; font-size: 12px; color: var(--texto-sec); margin-bottom: 4px; }
+.campo-term label b { color: var(--texto); font-weight: 600; }
+.campo-term textarea { min-height: 108px; font-size: 12px; line-height: 1.45; }
+.campo-num { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.campo-num input { width: 120px; }
+input[type=number], input[type=text] {
+  background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde);
+  border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 13px;
+}
+
+.acciones-ajustes { display: flex; align-items: center; gap: 10px; margin: 16px 0; flex-wrap: wrap; }
+.previsualizacion {
+  background: var(--panel);
+  border: 1px solid var(--acento);
+  border-radius: var(--radio);
+  padding: 14px 16px;
+  font-size: 13px;
+}
+.previsualizacion h4 { margin: 12px 0 6px; }
+.previsualizacion li { color: var(--texto-sec); margin-bottom: 3px; }
+
+.pie { margin-top: 30px; padding-top: 12px; border-top: 1px solid var(--borde); color: var(--texto-sec); font-size: 12px; }

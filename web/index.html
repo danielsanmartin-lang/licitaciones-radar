@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radar de Licitaciones</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="cabecera">
+    <div class="titulo">
+      <h1>Radar de Licitaciones</h1>
+      <p class="sub">Concienciación en ciberseguridad · protección del correo · administración pública española</p>
+      <div class="busqueda-ahora">
+        <button id="buscar-ahora" class="boton-pri">Buscar ahora</button>
+        <span id="ultima-busqueda" class="pista"></span>
+      </div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </header>
+
+  <!-- Carga en segundo plano. Se rellena desde /api/busqueda-estado: la ingesta corre
+       en otro proceso y la base va creciendo mientras se trabaja aquí. -->
+  <div id="carga" class="carga" hidden>
+    <div class="carga-texto">
+      <strong id="carga-titulo"></strong>
+      <span id="carga-detalle" class="pista"></span>
+      <!-- El latido: lo único que se mueve solo. Es la respuesta a «¿sigue viva?». -->
+      <span id="carga-latido" class="pista"></span>
+    </div>
+    <div class="carga-barras">
+      <label>
+        <span id="carga-etapa-txt"></span>
+        <progress id="carga-etapa" max="100" value="0"></progress>
+      </label>
+      <label>
+        <span id="carga-tarea-txt"></span>
+        <progress id="carga-tarea" max="100"></progress>
+      </label>
+    </div>
+  </div>
+
+  <div id="avisos" class="avisos" hidden></div>
+
+  <!-- Aviso de versión nueva. Va en su propio hueco y no en #avisos porque ese lo
+       reescribe entero cada refresco de los contadores, y se lo llevaría por delante. -->
+  <div id="aviso-version" class="avisos" hidden></div>
+
+  <nav class="vistas">
+    <button class="tab activo" data-vista="bandeja">Bandeja</button>
+    <button class="tab" data-vista="vencimientos">Vencimientos</button>
+    <button class="tab" data-vista="adjudicatarios">Adjudicatarios</button>
+    <button class="tab" data-vista="ajustes">Términos de búsqueda</button>
+    <button class="tab novedades" id="tab-novedades" hidden></button>
+  </nav>
+
+  <section class="filtros" id="filtros">
+    <input type="search" id="q" placeholder="Buscar en objeto, órgano, expediente…" autocomplete="off">
+    <select id="perfil"><option value="">Todos los perfiles</option></select>
+    <select id="estado">
+      <option value="">Todo menos descartadas</option>
+      <option value="nuevo">Sin revisar</option>
+      <option value="siguiendo">En seguimiento</option>
+      <option value="presentada">Presentadas</option>
+      <option value="descartado">Descartadas</option>
+    </select>
+    <select id="ccaa"><option value="">Toda España</option></select>
+    <select id="importe_min">
+      <option value="">Cualquier importe</option>
+      <option value="25000">Desde 25.000 €</option>
+      <option value="50000">Desde 50.000 €</option>
+      <option value="100000">Desde 100.000 €</option>
+      <option value="300000">Desde 300.000 €</option>
+    </select>
+    <select id="orden">
+      <option value="urgencia">Ordenar: cierran antes</option>
+      <option value="puntuacion">Ordenar: mejor encaje</option>
+      <option value="reciente">Ordenar: más recientes</option>
+      <option value="importe">Ordenar: mayor importe</option>
+    </select>
+    <label class="check"><input type="checkbox" id="vivas" checked> Solo abiertas</label>
+    <a id="exportar" class="boton-sec" href="/api/export.csv">Exportar CSV</a>
+  </section>
+
+  <main>
+    <section id="vista-bandeja">
+      <p id="contador" class="contador"></p>
+      <p id="filtros-activos" class="filtros-activos" hidden></p>
+      <div id="lista" class="lista"></div>
+      <p id="vacio" class="vacio" hidden></p>
+      <button id="mas" class="boton-sec mas" hidden>Cargar más</button>
+    </section>
+
+    <section id="vista-vencimientos" hidden>
+      <p class="contador">
+        Contratos ya adjudicados que vencen pronto. Es la lista para llamar
+        <strong>antes</strong> de que salga el pliego.
+      </p>
+      <div class="ventanas" id="ventanas"></div>
+      <p class="total-ventana" id="total-ventana"></p>
+      <div id="lista-vencimientos" class="lista"></div>
+    </section>
+
+    <section id="vista-adjudicatarios" hidden>
+      <p class="contador">
+        Quién se lleva estos contratos. Agrupa las variantes de razón social.
+      </p>
+      <div id="lista-adjudicatarios" class="lista"></div>
+    </section>
+
+    <section id="vista-ajustes" hidden>
+      <p class="contador">
+        Estas son las palabras que definen tu búsqueda. Al guardar se reevalúa todo
+        lo descargado, sin volver a bajar nada.
+      </p>
+      <div class="consejos" id="consejos"></div>
+      <div id="lista-perfiles"></div>
+      <div class="acciones-ajustes">
+        <button id="previsualizar" class="boton-sec">Ver qué cambiaría</button>
+        <button id="guardar-perfiles" class="boton-pri">Guardar y aplicar</button>
+        <span id="ajustes-aviso" class="pista"></span>
+      </div>
+      <div id="previsualizacion" class="previsualizacion" hidden></div>
+    </section>
+  </main>
+
+  <aside id="panel" class="panel" hidden>
+    <button class="cerrar" id="cerrar" aria-label="Cerrar">×</button>
+    <div id="panel-contenido"></div>
+  </aside>
+
+  <footer class="pie">
+    <span id="salud"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
