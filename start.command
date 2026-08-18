@@ -61,17 +61,19 @@ PY
 )
 
 if [ "$nuevo" = "si" ]; then
-  echo "Es la primera vez. Voy a construir el histórico en varias etapas:"
+  echo "Es la primera vez. Voy a construir el histórico en cuatro etapas:"
   echo
   echo "  1. Anuncios europeos y de Cataluña — unos minutos. Al terminar esta se"
-  echo "     abre la aplicación, ya con unas 1.400 licitaciones que encajan."
+  echo "     abre la aplicación, ya con unos mil expedientes que encajan."
   echo "  2. Histórico de plataformas agregadas — ~360 MB y ~4 min de proceso."
-  echo "  3. Histórico de la Plataforma del Estado — ~4 GB y ~15 min de proceso."
+  echo "  3. Histórico de la Plataforma del Estado — ~5 GB y ~15 min de proceso."
+  echo "  4. Lo publicado desde la fecha de corte de los ZIP — unos minutos."
   echo
-  echo "Lo que tarden las descargas depende de tu conexión: esos 4 GB han tardado"
+  echo "Lo que tarden las descargas depende de tu conexión: esos 5 GB han tardado"
   echo "desde unos minutos hasta casi dos horas según la línea. El proceso, no."
+  echo "Si una descarga se corta, se reintenta sola varias veces antes de rendirse."
   echo
-  echo "Las etapas 2 y 3 siguen descargando por detrás mientras trabajas: la"
+  echo "Las etapas 2, 3 y 4 siguen descargando por detrás mientras trabajas: la"
   echo "aplicación lo avisa arriba, con una barra, y las licitaciones van"
   echo "apareciendo solas sin recargar la página."
   echo

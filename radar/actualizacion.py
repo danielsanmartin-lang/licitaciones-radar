@@ -203,7 +203,10 @@ def aplicar(timeout: int = 600) -> dict:
     try:
         zip_nuevo = temporal / "nueva.zip"
         log.info("Descargando la versión %s...", info["version_nueva"])
-        net.descargar_a_fichero(info["url_zip"], zip_nuevo, timeout=timeout)
+        # Dos intentos y no los cuatro por defecto: `aplicar_en_subproceso` mata este
+        # proceso a los 900 s, y con cuatro pasadas de 600 s de timeout el peor caso se
+        # come el plazo y muere a mitad. Un zipball de unos pocos MB no necesita más.
+        net.descargar_a_fichero(info["url_zip"], zip_nuevo, timeout=timeout, intentos=2)
 
         esperado = _sha_publicado(info["notas"])
         if esperado:

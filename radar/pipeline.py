@@ -46,12 +46,14 @@ PAGINAS_CIERRE = 12
 
 # Etapas de la carga inicial, de la más barata a la más cara. El orden no es estético:
 # la primera llena la bandeja en minutos y por eso es la que se hace antes de abrir la
-# aplicación; la tercera es la que cuesta 4 GB y un par de horas, y se deja corriendo
-# por detrás mientras ya se puede trabajar.
+# aplicación; la tercera es la que cuesta 5 GB y hasta un par de horas, y se deja
+# corriendo por detrás mientras ya se puede trabajar.
 #
 # El reparto de coste y provecho está medido sobre una base ya construida (449.094
 # licitaciones, 2.934 coincidencias): TED y Cataluña filtran en servidor y aportan
-# ~1.400 coincidencias casi gratis; `placsp:licitaciones` aporta 974 y cuesta 4 GB.
+# ~1.400 anuncios casi gratis; `placsp:licitaciones` aporta 974 y cuesta 5 GB. Las
+# cifras absolutas han crecido desde entonces, pero la proporción y el reparto de coste
+# —que es lo que decide el orden de las etapas— siguen igual.
 ETAPAS_PRIMERA_CARGA = [
     {
         "etiqueta": "Anuncios europeos y de Cataluña",
@@ -78,7 +80,7 @@ ETAPAS_PRIMERA_CARGA = [
         # minutos de proceso, y bajándolos a 0,8 MB/s fueron casi dos horas. La descarga
         # manda, y varía casi dos órdenes de magnitud según la línea de cada uno; el
         # proceso solo depende de la máquina y sí se puede prometer.
-        "coste": "unos 4 GB de descarga, lo que tarde depende de tu conexión, "
+        "coste": "unos 5 GB de descarga, lo que tarde depende de tu conexión, "
                  "y unos 15 minutos de proceso",
         "detalle": "es el que trae las otras diez comunidades y el que llena "
                    "Vencimientos y Adjudicatarios",

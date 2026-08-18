@@ -15,6 +15,7 @@ Todo vive en esta carpeta (base SQLite en data/radar.db).
     python3 radar.py adjudicatarios            # quién gana estos contratos
     python3 radar.py programar                 # descarga automática cada mañana
     python3 radar.py estado                    # salud de las fuentes
+    python3 radar.py doctor                    # autodiagnóstico: ¿está todo en su sitio?
 """
 
 from __future__ import annotations
@@ -63,14 +64,29 @@ def cmd_ingest(args) -> int:
         busqueda.liberar()
 
 
-def _evaluar_perfiles(con, perfiles) -> None:
+def _evaluar_perfiles(con, perfiles, *, incremental: bool = False) -> None:
     """Reevalúa y cuenta. Se imprime con progreso.imprimir: hay una línea de estado
-    viva en la terminal y un print() a secas la dejaría a medio borrar."""
+    viva en la terminal y un print() a secas la dejaría a medio borrar.
+
+    Con `incremental` solo se miran las fichas nuevas o modificadas de verdad. La
+    reevaluación puede acabar siendo completa igualmente si los perfiles han cambiado
+    —lo decide `reevaluar`—, y entonces se dice por qué: «no ha cambiado nada» y «lo he
+    reevaluado todo porque tocaste los términos» son dos cosas distintas.
+    """
     progreso.imprimir("\nEvaluando perfiles...")
-    stats = reevaluar(con, perfiles)
-    progreso.imprimir(
-        f"  {stats['evaluadas']} licitaciones evaluadas · {stats['matches']} coincidencias"
-    )
+    stats = reevaluar(con, perfiles, incremental=incremental)
+    if stats["completa"]:
+        progreso.imprimir(
+            f"  {stats['evaluadas']} licitaciones evaluadas · "
+            f"{stats['matches']} coincidencias"
+        )
+    else:
+        progreso.imprimir(
+            f"  {stats['evaluadas']} nuevas o modificadas evaluadas · "
+            f"{stats['matches']} coincidencias en total"
+        )
+    if stats["motivo"]:
+        progreso.imprimir(f"  (pasada completa: {stats['motivo']})")
     for perfil, n in sorted(stats["por_perfil"].items(), key=lambda x: -x[1]):
         progreso.imprimir(f"    {perfil}: {n}")
 
@@ -124,7 +140,11 @@ def _primera_carga(args) -> int:
         # Se reevalúa al final de CADA etapa, no una sola vez al terminar todo: es lo
         # que hace que los contadores de la bandeja suban a la vista mientras el resto
         # sigue descargando por detrás.
-        _evaluar_perfiles(con, perfiles)
+        #
+        # Incremental, porque cada etapa solo tiene que mirar lo que ella misma acaba de
+        # traer: lo de las etapas anteriores ya está evaluado. Evaluándolo todo, la
+        # cuarta etapa recorría por cuarta vez la base entera para no cambiar nada.
+        _evaluar_perfiles(con, perfiles, incremental=True)
 
     pendientes = [n for n in range(1, len(etapas) + 1) if n not in pedidas]
     if pendientes:
@@ -156,7 +176,8 @@ def _ingest(args) -> int:
         con, fuentes, anios=anios, reiniciar_cursor=args.reiniciar_cursor
     )
 
-    _evaluar_perfiles(con, perfiles)
+    # Incremental: esto se ejecuta cada mañana sobre una base que casi no cambia.
+    _evaluar_perfiles(con, perfiles, incremental=True)
     return _aviso_fallidas([f for f, r in resumen.items() if r["error"]])
 
 
@@ -314,15 +335,59 @@ def cmd_actualizar(args) -> int:
     return 0 if resultado["ok"] else 1
 
 
+# Cuatro caracteres las cuatro, para que la columna del mensaje quede alineada.
+MARCAS_DIAGNOSTICO = {"ok": "[ok ]", "omitida": "[-- ]", "aviso": "[!! ]", "error": "[ERR]"}
+
+
+def cmd_doctor(args) -> int:
+    """Autodiagnóstico. Aquí solo se pinta: las comprobaciones viven en el módulo.
+
+    Devuelve 1 solo si hay algún error. Los avisos pueden ser decisiones legítimas —no
+    tener la tarea diaria, no haber construido el histórico— y si contaran como fallo el
+    código de salida no serviría para nada.
+    """
+    from radar import diagnostico
+
+    comprobaciones = diagnostico.diagnosticar(
+        bd=args.bd, perfiles=args.perfiles,
+        con_red=args.con_red, integridad=args.integridad,
+    )
+    fallos = diagnostico.hay_errores(comprobaciones)
+
+    if args.json:
+        print(json.dumps(diagnostico.a_json(comprobaciones), ensure_ascii=False))
+        return 1 if fallos else 0
+
+    for c in comprobaciones:
+        print(f"{MARCAS_DIAGNOSTICO[c.estado]} {c.nombre:22} {c.mensaje}")
+        if c.remedio and c.estado != "ok":
+            print(f"       → {c.remedio}")
+
+    avisos = sum(1 for c in comprobaciones if c.estado == "aviso")
+    errores = sum(1 for c in comprobaciones if c.estado == "error")
+    print()
+    if errores:
+        print(f"{errores} cosa(s) que hay que arreglar y {avisos} aviso(s).")
+    elif avisos:
+        print(f"Nada roto. {avisos} aviso(s), por si te interesan.")
+    else:
+        print("Todo en su sitio.")
+    return 1 if fallos else 0
+
+
 def cmd_estado(args) -> int:
     if args.limpiar_cache:
         cache = RAIZ / "data" / "cache"
         borrados = 0
-        for f in sorted(cache.glob("*.zip")):
-            tam = f.stat().st_size
-            f.unlink()
-            borrados += tam
-            print(f"  borrado {f.name} ({tam / 1e6:.0f} MB)")
+        # También los `.parcial`: una descarga cortada deja ahí lo que llevaba bajado
+        # para poder reanudarla, y con el glob a secas de `*.zip` un resto de 900 MB
+        # quedaba invisible en el informe e imborrable desde la herramienta.
+        for patron in ("*.zip", "*.zip.parcial*"):
+            for f in sorted(cache.glob(patron)):
+                tam = f.stat().st_size
+                f.unlink()
+                borrados += tam
+                print(f"  borrado {f.name} ({tam / 1e6:.0f} MB)")
         print(f"Liberados {borrados / 1e6:.0f} MB." if borrados else "La caché ya estaba vacía.")
         return 0
 
@@ -361,12 +426,19 @@ def cmd_estado(args) -> int:
             print(f"         {f['error'][:160]}")
 
     # Los ZIP del histórico se guardan para no volver a descargarlos, pero ocupan
-    # y nadie los encuentra si no se dicen.
-    cache = sorted((RAIZ / "data" / "cache").glob("*.zip"))
-    if cache:
-        total = sum(f.stat().st_size for f in cache) / 1e6
-        print(f"\nCaché de históricos: {len(cache)} ficheros, {total:.0f} MB")
-        print("  Se pueden borrar sin perder nada: python3 radar.py estado --limpiar-cache")
+    # y nadie los encuentra si no se dicen. La cuenta la hace el diagnóstico, que es el
+    # que ya sabe distinguir un ZIP bueno de uno a medias: duplicar el glob aquí es cómo
+    # se acaba con dos cifras distintas del mismo disco.
+    from radar import diagnostico
+
+    cache = diagnostico.cache_de_historicos()
+    if cache.datos.get("ficheros") or cache.datos.get("parciales"):
+        print(f"\nCaché de históricos: {cache.mensaje}")
+        if cache.remedio:
+            print(f"  {cache.remedio}")
+        else:
+            print("  Se pueden borrar sin perder nada: "
+                  "python3 radar.py estado --limpiar-cache")
     return 0
 
 
@@ -440,6 +512,16 @@ def main(argv=None) -> int:
     s.add_argument("--limpiar-cache", action="store_true",
                    help="borra los ZIP de históricos descargados (no pierde datos)")
     s.set_defaults(func=cmd_estado)
+
+    s = sub.add_parser("doctor", help="autodiagnóstico: certificados, base, caché y tarea")
+    s.add_argument("--integridad", action="store_true",
+                   help="comprueba también que la base no esté dañada (lee los 3 GB "
+                        "enteros: casi un minuto)")
+    s.add_argument("--con-red", action="store_true",
+                   help="pregunta a GitHub si hay una versión más nueva")
+    s.add_argument("--json", action="store_true",
+                   help="salida para la aplicación, no para leer")
+    s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("actualizar", help="trae la última versión publicada del programa")
     s.add_argument("--solo-comprobar", action="store_true",

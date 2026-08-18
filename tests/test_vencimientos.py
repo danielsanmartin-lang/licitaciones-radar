@@ -4,6 +4,10 @@ Todo lo que hay aquí salió de datos reales: las unidades mezcladas de PLACSP, 
 texto libre de Cataluña y el prefijo genérico de los títulos de TED.
 """
 
+# Sin esto, la anotación `str | None` de `_añadir` se evalúa al definir la función y este
+# fichero no se puede ni importar en Python 3.9, el mínimo que declara el proyecto.
+from __future__ import annotations
+
 import tempfile
 import unittest
 from datetime import date, timedelta

@@ -18,7 +18,9 @@ from __future__ import annotations
 import io
 import logging
 import re
+import time
 import zipfile
+from datetime import date
 from pathlib import Path
 from typing import Iterator
 from xml.etree import ElementTree as ET
@@ -41,6 +43,18 @@ DATASETS = {
     "agregadas": ("sindicacion_1044", "PlataformasAgregadasSinMenores"),
     "consultas_previas": ("sindicacion_1403", "CPM_SectorPublico"),
 }
+
+# Cuánto se da por bueno el ZIP del año EN CURSO antes de volver a pedirlo. PLACSP lo
+# reescribe cada día, así que el `licitaciones_2026.zip` bajado en agosto no trae
+# septiembre ni octubre: reutilizarlo en noviembre hace parecer que 2026 está completo
+# cuando le faltan semanas, y como la ingesta incremental solo mira hacia delante, ese
+# hueco no lo rellena nadie.
+#
+# 24 h y no una semana porque `historico()` solo se invoca desde `--backfill` y
+# `--primera-carga`, nunca desde la ingesta diaria: quien llega aquí está pidiendo
+# histórico, o sea datos frescos. Y relanzar el mismo día una carga inicial que se
+# cortó —el caso repetido de verdad— sigue reaprovechando la caché.
+HORAS_CADUCIDAD_ANIO_EN_CURSO = 24
 
 NS = {
     "a": "http://www.w3.org/2005/Atom",
@@ -420,6 +434,29 @@ def parsear_atom(datos: bytes, dataset: str) -> tuple[list[Licitacion], str | No
     return licitaciones, url_siguiente, feed_updated
 
 
+def _es_anio_en_curso(anio: int, hoy: date | None = None) -> bool:
+    """Los años cerrados son inmutables; el actual crece todos los días.
+
+    `hoy` se pasa para poder fijarlo en las pruebas, igual que en
+    `pipeline.anios_primera_carga`.
+    """
+    return anio == (hoy or date.today()).year
+
+
+def _horas_desde_la_descarga(destino: Path) -> float | None:
+    """Horas desde que se acabó de escribir el fichero. None si no se puede saber.
+
+    Vale el mtime porque `net.descargar_a_fichero` termina moviendo el `.parcial`
+    encima del destino: la fecha del fichero es el instante en que se terminó de bajar,
+    que es exactamente la pregunta que hay que responder («¿de cuándo son estos
+    datos?») y no cuándo lo generó PLACSP.
+    """
+    try:
+        return (time.time() - destino.stat().st_mtime) / 3600
+    except OSError:
+        return None
+
+
 class FuentePLACSP:
     """Conector de un dataset concreto de PLACSP."""
 
@@ -523,18 +560,56 @@ class FuentePLACSP:
                         "Se descarga otra vez.", destino.name)
         return legible
 
+    def _zip_caducado(self, destino: Path, anio: int) -> bool:
+        """¿Hay que volver a pedir este ZIP aunque se pueda leer perfectamente?
+
+        Solo el del año en curso. Los de años cerrados pesan 1,7 y 2,0 GB y volver a
+        pedirlos no traería ni una licitación nueva.
+        """
+        if not _es_anio_en_curso(anio):
+            return False
+        horas = _horas_desde_la_descarga(destino)
+        # Un mtime en el futuro —reloj mal puesto, copia restaurada— da negativo y se
+        # da por reciente: es el lado seguro de equivocarse.
+        if horas is None or horas < HORAS_CADUCIDAD_ANIO_EN_CURSO:
+            return False
+        log.info(
+            "%s se descargó hace %.0f h y %s sigue en curso: se vuelve a pedir para no "
+            "dar por completo un año al que le faltan semanas.",
+            destino.name, horas, anio,
+        )
+        return True
+
     def historico(self, anio: int) -> Iterator[Licitacion]:
         """Descarga el ZIP anual y recorre los .atom que contiene."""
         destino = self.dir_cache / f"{self.dataset}_{anio}.zip"
-        if not self._zip_utilizable(destino):
-            destino.unlink(missing_ok=True)
+        utilizable = self._zip_utilizable(destino)
+        if not utilizable or self._zip_caducado(destino, anio):
             log.info("Descargando histórico %s %s...", self.nombre, anio)
             # Los contadores de ficheros son del ZIP del año anterior y aquí ya no
             # significan nada. Sin reiniciarlos, la aplicación seguía enseñando
             # «fichero 1398 de 1398» con la barra clavada al 100% durante los cuarenta
             # minutos de descarga, que es exactamente como se ve una aplicación colgada.
             progreso.subtarea(0, 0)
-            net.descargar_a_fichero(self._url_zip(anio), destino)
+            if not utilizable:
+                # Solo se borra lo que no sirve para nada. Borrar aquí un ZIP caducado
+                # pero legible —1,3 GB que YA valen— y que luego fallara la descarga
+                # dejaría al usuario sin histórico ninguno.
+                destino.unlink(missing_ok=True)
+            try:
+                net.descargar_a_fichero(self._url_zip(anio), destino)
+            except (net.ErrorRed, OSError) as exc:
+                if not utilizable:
+                    # No hay nada que conservar: que lo gestione el pipeline, que
+                    # distingue el 404 («ese año no existe») de una avería.
+                    raise
+                log.warning(
+                    "No se ha podido refrescar %s (%s). Se sigue con el que ya había en "
+                    "la caché, de hace %.0f h: al año en curso le pueden faltar las "
+                    "últimas semanas. Vuelve a lanzar --backfill %s cuando la conexión "
+                    "aguante; la descarga se reanuda donde se cortó.",
+                    destino.name, exc, _horas_desde_la_descarga(destino) or 0, anio,
+                )
 
         with zipfile.ZipFile(destino) as zf:
             nombres = sorted(n for n in zf.namelist() if n.endswith(".atom"))

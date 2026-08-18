@@ -31,6 +31,7 @@ es lo que hace que la gente deje de abrir la herramienta a las dos semanas.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -39,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import progreso
-from .db import ahora
+from .db import ahora, escribir_preferencia, leer_preferencia
 from .model import normalizar
 
 log = logging.getLogger(__name__)
@@ -315,6 +316,20 @@ def preparar_perfiles(ruta: Path | str | None = None) -> Path:
     return ruta
 
 
+def solo_activos(perfiles: list[Perfil]) -> list[Perfil]:
+    """Los perfiles que de verdad se aplican. Uno desactivado es como si no estuviera.
+
+    Está en una función y no repetido en cada sitio porque durante un tiempo no lo
+    estuvo, y los dos caminos que aplican los perfiles decían cosas distintas:
+    `cargar_perfiles` —lo que lee `radar.py match`— filtraba los inactivos, pero
+    `validar_perfiles` —por donde pasa lo que se guarda desde la pestaña «Términos de
+    búsqueda»— devuelve la lista entera, porque esa lista también es la que se escribe
+    tal cual en el fichero. Resultado: quitar la marca «activo» en la pantalla no
+    quitaba nada de la bandeja, y hacerlo a mano en `perfiles.json` sí.
+    """
+    return [p for p in perfiles if p.activo]
+
+
 def cargar_perfiles(ruta: Path | str | None = None) -> list[Perfil]:
     ruta = preparar_perfiles(ruta)
     if not ruta.exists():
@@ -325,7 +340,7 @@ def cargar_perfiles(ruta: Path | str | None = None) -> list[Perfil]:
     if isinstance(datos, dict):
         datos = datos.get("perfiles", [])
     perfiles = [Perfil.desde_dict(d).preparar() for d in datos]
-    activos = [p for p in perfiles if p.activo]
+    activos = solo_activos(perfiles)
     if not activos:
         raise ValueError(f"Ningún perfil activo en {ruta}")
     return activos
@@ -384,9 +399,7 @@ def avisos_perfiles(perfiles: list[Perfil]) -> list[str]:
     respuesta empírica la da la previsualización, que dice cuántas entran y salen.
     """
     avisos = []
-    for perfil in perfiles:
-        if not perfil.activo:
-            continue
+    for perfil in solo_activos(perfiles):
         for lista, etiqueta in (
             ("terminos_fuertes", "fuerte"),
             ("terminos_debiles", "ambiguo"),
@@ -444,6 +457,10 @@ def previsualizar(con, perfiles: list[Perfil]) -> dict:
     rápida de ensuciar la bandeja, así que primero se dice cuántas coincidencias
     habría y qué entra o sale.
     """
+    # Lo que se enseña aquí tiene que ser lo que hará `reevaluar` al guardar. Contar
+    # un perfil desactivado prometería coincidencias que el guardado retira acto
+    # seguido, que es justo la duda que viene a resolver «Ver qué cambiaría».
+    perfiles = solo_activos(perfiles)
     actuales = {
         f["licitacion_id"] for f in con.execute("SELECT DISTINCT licitacion_id FROM matches")
     }
@@ -499,7 +516,8 @@ def terminos_para_consultas(perfiles: list[Perfil]) -> tuple[list[str], list[str
     """
     cpv: list[str] = []
     terminos: list[str] = []
-    for p in perfiles:
+    # Un perfil desactivado tampoco se pregunta: lo que trajera se descartaría luego.
+    for p in solo_activos(perfiles):
         for c in p.cpv_prefijos:
             if c not in cpv:
                 cpv.append(c)
@@ -513,26 +531,174 @@ def terminos_para_consultas(perfiles: list[Perfil]) -> tuple[list[str], list[str
 # --- Aplicación sobre la base ---------------------------------------------
 
 
-def reevaluar(con: sqlite3.Connection, perfiles: list[Perfil], *, solo_nuevas: bool = False) -> dict:
+# Se sube A MANO cuando cambia la LÓGICA de evaluación: `evaluar`, `patron`,
+# `prefijo_cpv` o `_casan`. Sin esto la pasada incremental es una trampa: el día que
+# `patron()` dejó de casar "formacion" dentro de "informacion" había que retirar 612 de
+# 943 matches, y ni la huella de los perfiles ni la de ninguna ficha había cambiado, así
+# que una reevaluación incremental habría dejado la bandeja mintiendo para siempre.
+VERSION_MATCHING = "1"
+
+# Donde se anota con qué perfiles se evaluó la base la última vez. Mismo idioma de
+# autocorrección que las VERSION_* de `db.py`.
+CLAVE_HUELLA_PERFILES = "huella_perfiles"
+
+# Los campos del perfil que deciden A QUIÉN casa. `terminos_consulta` queda fuera a
+# propósito: solo cambia lo que se PREGUNTA a TED y a Cataluña, no la evaluación local
+# (ver `terminos_para_consultas`), y meterlo obligaría a una pasada completa por tocar
+# algo que no mueve ni un match.
+#
+# `activo` se queda aunque el retrato solo se haga con los perfiles activos —o sea,
+# valga siempre True—: quitarlo cambiaría la huella de todas las instalaciones y les
+# costaría una pasada completa de 39 s a cambio de nada.
+CAMPOS_HUELLA_PERFIL = (
+    "nombre", "activo", "cpv_prefijos", "terminos_fuertes", "terminos_debiles",
+    "contexto_requerido", "excluir", "importe_minimo", "ccaa", "fuentes",
+)
+
+# Filas por `executemany`. No es un límite de SQLite: es para que un perfil demasiado
+# amplio sobre cientos de miles de fichas no acumule millones de tuplas en memoria
+# antes de escribir nada.
+LOTE = 5_000
+
+_SELECT_EVAL = """SELECT id, COALESCE(texto_norm, '') AS texto, cpv, importe_referencia,
+                         ccaa, fuente FROM licitaciones"""
+
+# Escrito con `IS NOT` y no con `IS NULL OR !=` porque es el WHERE del índice parcial
+# `idx_lic_pendientes` (db.py) y SQLite solo usa un índice parcial cuando la condición
+# de la consulta coincide con la suya. Hay un test que lo fija con EXPLAIN QUERY PLAN.
+_PENDIENTES = " WHERE huella_evaluada IS NOT huella"
+
+
+def huella_perfiles(perfiles: list[Perfil]) -> str:
+    """Retrato de los perfiles: si cambia, lo evaluado antes ya no vale.
+
+    El orden de los términos SÍ cuenta, y no es un descuido: el motivo que se guarda en
+    cada match cita los tres primeros, así que reordenarlos cambia lo que la bandeja
+    explica en «Por qué ha entrado».
+    """
+    retrato = [
+        {campo: getattr(perfil, campo) for campo in CAMPOS_HUELLA_PERFIL}
+        for perfil in perfiles
+    ]
+    crudo = json.dumps(retrato, ensure_ascii=False, sort_keys=True) + f"|{VERSION_MATCHING}"
+    return hashlib.sha256(crudo.encode("utf-8")).hexdigest()[:32]
+
+
+def _volcar(con: sqlite3.Connection, altas: list[tuple], bajas: list[tuple]) -> None:
+    """Escribe un lote de matches y retira otro. En bloque, no fila a fila.
+
+    Antes se emitía un DELETE por cada ficha y cada perfil que no casaba: sobre la base
+    real son 673.755 × 4 = 2,7 millones de sentencias contra una tabla de 3.705 filas,
+    casi todas para borrar algo que no existía.
+    """
+    if altas:
+        con.executemany(
+            """INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(licitacion_id, perfil) DO UPDATE SET
+                 puntuacion = excluded.puntuacion,
+                 motivo = excluded.motivo""",
+            altas,
+        )
+        altas.clear()
+    if bajas:
+        # Se retira el match, pero el triaje humano de esa licitación se conserva.
+        con.executemany(
+            "DELETE FROM matches WHERE licitacion_id = ? AND perfil = ?", bajas
+        )
+        bajas.clear()
+
+
+def _limpiar_huerfanos(con: sqlite3.Connection, nombres: set[str]) -> int:
+    """Borra de una vez los matches de los perfiles que ya no se aplican.
+
+    Los que se han borrado del fichero, los que se han renombrado y los que están
+    desactivados: para la bandeja los tres son lo mismo, un perfil que ya no está.
+    """
+    existentes = {r[0] for r in con.execute("SELECT DISTINCT perfil FROM matches")}
+    huerfanos = sorted(existentes - nombres)
+    if not huerfanos:
+        return 0
+    marcas = ", ".join("?" * len(huerfanos))
+    cur = con.execute(f"DELETE FROM matches WHERE perfil IN ({marcas})", huerfanos)
+    return cur.rowcount
+
+
+def _marcar_evaluadas(con: sqlite3.Connection) -> int:
+    """Alinea `huella_evaluada` con `huella` en todo lo que se acaba de evaluar.
+
+    Por tramos y con commit en cada uno, no con un UPDATE global: la primera pasada
+    después de actualizar marca las 673.755 filas y, como SQLite reescribe la fila
+    entera (~1 kB de media), eso serían unos 700 MB de WAL en una sola transacción.
+    """
+    total = 0
+    while True:
+        cur = con.execute(
+            "UPDATE licitaciones SET huella_evaluada = huella WHERE id IN ("
+            f"  SELECT id FROM licitaciones{_PENDIENTES} LIMIT ?)",
+            (LOTE,),
+        )
+        con.commit()
+        if not cur.rowcount:
+            return total
+        total += cur.rowcount
+
+
+def reevaluar(con: sqlite3.Connection, perfiles: list[Perfil], *,
+              incremental: bool = False) -> dict:
     """Aplica los perfiles a la base y actualiza la tabla `matches`.
 
     Se ejecuta en Python en lugar de con FTS5 MATCH porque las reglas son
     condicionales (fuerte / débil+contexto / exclusiones / umbral de importe) y
     eso no se expresa en una consulta FTS sin volverla ilegible. FTS5 se sigue
     usando para la caja de búsqueda libre de la bandeja, que sí es un MATCH.
+
+    `incremental` evalúa solo lo nuevo o lo que ha cambiado de verdad, que es lo que
+    necesita la ingesta de cada mañana: sobre la base real, evaluarlo todo son 39 s de
+    Python para acabar reescribiendo los mismos matches. La petición se ignora —y se
+    hace la pasada completa igualmente— cuando los perfiles no son los mismos con los
+    que se evaluó la última vez; de eso se encarga la huella, y sin ella «he cambiado
+    un término y la bandeja no se ha movido» sería el comportamiento normal.
+
+    Los perfiles desactivados no se evalúan, y sus coincidencias se retiran igual que
+    las de un perfil borrado.
     """
-    sql = """SELECT id, COALESCE(texto_norm, '') AS texto, cpv, importe_referencia,
-                    ccaa, fuente FROM licitaciones"""
-    if solo_nuevas:
-        sql += " WHERE id NOT IN (SELECT licitacion_id FROM matches)"
+    # Aquí se filtra, y no en quien llama, porque `reevaluar` es lo único por lo que
+    # pasan los dos caminos: `radar.py match`, que carga con `cargar_perfiles`, y el
+    # botón «Guardar» de la pestaña de términos, que valida con `validar_perfiles` y
+    # necesita conservar los inactivos para volver a escribirlos en el fichero. Un
+    # perfil desactivado se va por el camino de los huérfanos: al no estar en
+    # `nombres`, sus matches los retira `_limpiar_huerfanos`.
+    #
+    # La huella se calcula sobre los activos, que son los que de verdad se han
+    # aplicado. Así, borrar del fichero un perfil que ya estaba desactivado no obliga
+    # a otra pasada completa que no cambiaría ni un match.
+    perfiles = solo_activos(perfiles)
+    huella = huella_perfiles(perfiles)
+    guardada = leer_preferencia(con, CLAVE_HUELLA_PERFILES)
+    motivo = None
+    if incremental and guardada != huella:
+        motivo = ("los perfiles han cambiado" if guardada
+                  else "no había constancia de con qué perfiles se evaluó")
+        incremental = False
 
     momento = ahora()
-    stats = {"evaluadas": 0, "matches": 0, "por_perfil": {}}
     nombres = {p.nombre for p in perfiles}
+    # Los pares que ya están en `matches`: son unos miles y caben de sobra en memoria.
+    # Tenerlos aquí es lo que permite borrar solo lo que de verdad hay que retirar.
+    existentes = {
+        (f["licitacion_id"], f["perfil"])
+        for f in con.execute("SELECT licitacion_id, perfil FROM matches")
+    }
+
+    stats = {"evaluadas": 0, "completa": not incremental, "motivo": motivo,
+             "creados": 0, "actualizados": 0, "retirados": 0, "huerfanos": 0}
+    altas: list[tuple] = []
+    bajas: list[tuple] = []
 
     progreso.fuente("evaluando perfiles")
     progreso.fase("aplicando reglas")
-    for fila in con.execute(sql):
+    for fila in con.execute(_SELECT_EVAL + ("" if stats["completa"] else _PENDIENTES)):
         stats["evaluadas"] += 1
         progreso.fichas(stats["evaluadas"])
         cpvs = (fila["cpv"] or "").split()
@@ -542,29 +708,34 @@ def reevaluar(con: sqlite3.Connection, perfiles: list[Perfil], *, solo_nuevas: b
                 fila["importe_referencia"], fila["ccaa"], fila["fuente"],
                 ya_normalizado=True,
             )
+            par = (fila["id"], perfil.nombre)
             if res.casa:
-                con.execute(
-                    """INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)
-                       VALUES (?, ?, ?, ?, ?)
-                       ON CONFLICT(licitacion_id, perfil) DO UPDATE SET
-                         puntuacion = excluded.puntuacion,
-                         motivo = excluded.motivo""",
-                    (fila["id"], perfil.nombre, res.puntuacion, res.motivo, momento),
-                )
-                stats["matches"] += 1
-                stats["por_perfil"][perfil.nombre] = stats["por_perfil"].get(perfil.nombre, 0) + 1
-            else:
-                # Si dejó de casar (perfil endurecido), se retira el match pero
-                # el triaje humano de esa licitación se conserva.
-                con.execute(
-                    "DELETE FROM matches WHERE licitacion_id = ? AND perfil = ?",
-                    (fila["id"], perfil.nombre),
-                )
+                altas.append((*par, res.puntuacion, res.motivo, momento))
+                if par in existentes:
+                    stats["actualizados"] += 1
+                else:
+                    stats["creados"] += 1
+            elif par in existentes:
+                bajas.append(par)
+                stats["retirados"] += 1
+        if len(altas) >= LOTE or len(bajas) >= LOTE:
+            _volcar(con, altas, bajas)
+    _volcar(con, altas, bajas)
 
-    # Limpia matches de perfiles que ya no existen en el fichero de configuración.
-    existentes = {r[0] for r in con.execute("SELECT DISTINCT perfil FROM matches")}
-    for huerfano in existentes - nombres:
-        con.execute("DELETE FROM matches WHERE perfil = ?", (huerfano,))
-
+    stats["huerfanos"] = _limpiar_huerfanos(con, nombres)
     con.commit()
+    _marcar_evaluadas(con)
+    escribir_preferencia(con, CLAVE_HUELLA_PERFILES, huella)
+    con.commit()
+
+    # El total de la tabla, no lo escrito en esta pasada: con pasadas parciales son
+    # cifras distintas, y la que se enseña —en la terminal y en «Guardado · N
+    # coincidencias»— tiene que ser cuántas coincidencias hay, no cuántas se han tocado.
+    stats["matches"] = con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+    stats["por_perfil"] = {
+        f["perfil"]: f["total"]
+        for f in con.execute(
+            "SELECT perfil, COUNT(*) AS total FROM matches GROUP BY perfil"
+        )
+    }
     return stats

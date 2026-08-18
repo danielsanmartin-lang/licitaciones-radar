@@ -133,6 +133,90 @@ def _longitud(resp) -> int | None:
         return None
 
 
+def _validador(resp) -> str | None:
+    """Lo que se puede meter en `If-Range` para exigir que el fichero no haya cambiado.
+
+    Solo vale un ETag FUERTE: uno débil (`W/"..."`) declara que el contenido puede
+    haber cambiado «poco», y eso es justo lo intolerable cuando se van a coser dos
+    mitades de un ZIP de 2 GB. Si no hay ETag fuerte sirve el `Last-Modified`, que lo
+    manda cualquier servidor de ficheros estáticos.
+    """
+    etag = (resp.headers.get("ETag") or "").strip()
+    if etag and not etag.upper().startswith("W/"):
+        return etag
+    return (resp.headers.get("Last-Modified") or "").strip() or None
+
+
+def _tamano_total(resp, desde: int) -> int | None:
+    """Tamaño COMPLETO del fichero en una respuesta parcial.
+
+    El `Content-Length` de un 206 es solo lo que queda, así que pasarlo como total
+    dejaría la barra diciendo «1,2 GB de 100 MB». El total real viene en
+    `Content-Range: bytes 1200-1399/1400`; si el servidor no lo manda, se suma el
+    offset a lo que queda, que da lo mismo.
+    """
+    rango = resp.headers.get("Content-Range") or ""
+    if "/" in rango:
+        total = rango.rsplit("/", 1)[-1].strip()
+        if total.isdigit():
+            return int(total)
+    quedan = _longitud(resp)
+    return desde + quedan if quedan else None
+
+
+def _reanudacion(parcial: Path, meta: Path, url: str) -> tuple[int, str | None]:
+    """Bytes ya en disco y validador con el que pedir el resto. (0, None) = de cero.
+
+    Devuelve (0, None) siempre que no haya CERTEZA de que el `.parcial` pertenece al
+    mismo fichero que hay ahora en el servidor. El ZIP del año en curso lo reescribe
+    PLACSP cada día, y reanudar a ciegas cose dos ficheros distintos: el destrozo no
+    se ve hasta cuarenta minutos más tarde, cuando `zipfile` dice «File is not a zip
+    file» y el año entero queda marcado como fallido.
+
+    El tamaño se lee del `stat`, nunca del contador de bytes en memoria: si una
+    excepción corta un `write` a medias, en disco queda exactamente el prefijo que se
+    volcó, y el fichero es la única fuente de verdad.
+    """
+    try:
+        bytes_en_disco = parcial.stat().st_size
+    except OSError:
+        return 0, None
+    if not bytes_en_disco:
+        return 0, None
+    try:
+        datos = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # Sin saber de qué versión es lo que hay, se baja entero. Un `.meta` a medias
+        # no se puede parsear y cae aquí, que es el lado seguro de equivocarse.
+        return 0, None
+    validador = datos.get("validador")
+    if not isinstance(validador, str) or not validador or datos.get("url") != url:
+        return 0, None
+    return bytes_en_disco, validador
+
+
+def _guardar_validador(meta: Path, url: str, validador: str) -> None:
+    """Deja constancia de QUÉ versión del fichero es el `.parcial` de al lado.
+
+    Un sidecar JSON de cien bytes junto a un fichero de 2 GB, porque el dato tiene
+    que sobrevivir al proceso: la reanudación que de verdad importa es la de la
+    ejecución siguiente, no la del reintento de dentro de dos segundos. Mismo recurso
+    que `data/busqueda.lock`.
+
+    No hace falta escribirlo de forma atómica: un `.meta` roto no se parsea y
+    `_reanudacion` lo trata como «no se puede reanudar», que es exactamente lo que
+    hay que hacer si no se sabe.
+    """
+    try:
+        meta.write_text(
+            json.dumps({"url": url, "validador": validador}), encoding="utf-8"
+        )
+    except OSError:
+        # Quedarse sin poder anotar el validador cuesta la reanudación, no la
+        # descarga: se seguirá bajando entero y ya está.
+        log.debug("No se ha podido anotar el validador en %s", meta)
+
+
 def _leer_contando(resp) -> bytes:
     """Lee la respuesta a trozos, informando de lo que va llegando.
 
@@ -243,25 +327,131 @@ def post_json(url: str, payload: dict, *, timeout: int = 120, intentos: int = 4)
     return json.loads(cuerpo.decode("utf-8"))
 
 
-def descargar_a_fichero(url: str, destino: Path, *, timeout: int = 600) -> Path:
-    """Descarga en streaming a disco. Para los ZIP anuales de PLACSP, que son grandes."""
+def descargar_a_fichero(url: str, destino: Path, *, timeout: int = 600,
+                        intentos: int = 4) -> Path:
+    """Descarga en streaming a disco, reintentando y REANUDANDO lo que ya haya bajado.
+
+    Los ZIP anuales de PLACSP van de 1,3 a 2,0 GB y la plataforma contesta lenta a
+    ratos. Con un solo intento y el `.parcial` abierto en modo "wb", un corte al 95%
+    tiraba cuarenta minutos de descarga y volvía a empezar por el byte cero; y como
+    el `.parcial` se borraba al fallar, la ejecución siguiente tampoco tenía de dónde
+    tirar. Ahora se conserva entre intentos Y entre ejecuciones, y se pide el resto
+    con `Range`.
+
+    El peligro de reanudar está en el ZIP del año en curso, que el servidor reescribe
+    cada día: pegar lo nuevo detrás de lo viejo da un ZIP corrupto. Por eso el `Range`
+    va siempre acompañado de un `If-Range` con el validador que anotó el intento
+    anterior; si el fichero ya no es el mismo, el servidor responde 200 con el fichero
+    entero y aquí se trunca y se empieza de cero.
+
+    Y una medida que conviene tener presente antes de perder tiempo depurando: **hoy
+    PLACSP no admite reanudar**. Probado contra los tres ZIP (1,3 GB, 133 MB y 632 kB),
+    responde 200 al `Range`, sin `Accept-Ranges`, sin `Content-Range` y sin
+    `Content-Length` —va troceado—, o sea que manda el fichero entero otra vez. La rama
+    del 206 no se ejecuta con esta plataforma; lo que sí sirve ahora mismo son los
+    reintentos, que es lo que evita que un timeout deje un año marcado como fallido. Se
+    pide igualmente porque no cuesta nada y el día que la plataforma lo permita empieza a
+    funcionar solo, y porque el `If-Range` es lo que garantiza que nunca se cosan dos
+    mitades de ficheros distintos.
+
+    No se manda `Accept-Encoding: gzip` a propósito, al contrario que en `descargar()`:
+    un ZIP ya viene comprimido y el gzip por encima solo estorbaría al contar bytes.
+    """
     destino.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     parcial = destino.with_suffix(destino.suffix + ".parcial")
-    progreso.reiniciar_bytes()
-    progreso.fase("conectando")
-    try:
-        with _abrir(req, timeout) as resp, parcial.open("wb") as fh:
-            progreso.fase("descargando")
-            progreso.bytes_totales(_longitud(resp))
-            while trozo := resp.read(1 << 20):
-                fh.write(trozo)
-                progreso.sumar_bytes(len(trozo))
-    except urllib.error.HTTPError as exc:
+    meta = parcial.with_name(parcial.name + ".meta")
+
+    def _tirar_lo_bajado() -> None:
         parcial.unlink(missing_ok=True)
-        raise ErrorRed(f"{url} -> HTTP {exc.code} {exc.reason}", codigo=exc.code) from exc
-    except (urllib.error.URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-        parcial.unlink(missing_ok=True)
-        raise ErrorRed(f"{url} falló: {exc}") from exc
-    parcial.replace(destino)
-    return destino
+        meta.unlink(missing_ok=True)
+
+    ultimo_error: Exception | None = None
+    # No es un `for` sobre `range(intentos)` porque un 416 no gasta intento: ver más
+    # abajo. Con un `for`, un 416 en el último intento dejaría la descarga muerta sin
+    # haber probado nunca a bajarla desde cero.
+    presupuesto = intentos
+    intento = 0
+    while intento < presupuesto:
+        intento += 1
+        desde, validador = _reanudacion(parcial, meta, url)
+        cabeceras = {"User-Agent": USER_AGENT}
+        if desde:
+            cabeceras["Range"] = f"bytes={desde}-"
+            cabeceras["If-Range"] = validador
+        req = urllib.request.Request(url, headers=cabeceras)
+
+        progreso.reiniciar_bytes(heredados=desde)
+        progreso.fase(
+            "conectando" if intento == 1 else f"reconectando ({intento}/{presupuesto})"
+        )
+        try:
+            with _abrir(req, timeout) as resp:
+                if desde and resp.status == 206:
+                    modo, total = "ab", _tamano_total(resp, desde)
+                    # El prefijo «descargando» es obligatorio: la línea de la terminal
+                    # y la barra de la aplicación filtran las fases por ahí.
+                    progreso.fase("descargando, reanudando")
+                    log.info("Se reanuda %s desde %s bytes", destino.name, f"{desde:,}")
+                else:
+                    if desde:
+                        log.info(
+                            "%s llega completo (HTTP %s): o el servidor ignora el Range "
+                            "o el fichero ha cambiado. Se empieza de cero.",
+                            destino.name, resp.status,
+                        )
+                    desde, modo, total = 0, "wb", _longitud(resp)
+                    progreso.reiniciar_bytes()
+                    progreso.fase("descargando")
+                nuevo = _validador(resp)
+                if nuevo:
+                    _guardar_validador(meta, url, nuevo)
+                else:
+                    # Sin validador no se podrá reanudar, y decirlo en el `.meta` viejo
+                    # sería mentir sobre lo que hay en el `.parcial`.
+                    meta.unlink(missing_ok=True)
+                progreso.bytes_totales(total)
+                with parcial.open(modo) as fh:
+                    while trozo := resp.read(1 << 20):
+                        fh.write(trozo)
+                        progreso.sumar_bytes(len(trozo))
+            parcial.replace(destino)  # atómico: mismo directorio
+            meta.unlink(missing_ok=True)
+            return destino
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416 and desde:
+                # El rango ya no vale: el fichero encogió, o el `.parcial` era ya del
+                # tamaño completo. No es un fallo del servidor —lo que sobraba era
+                # nuestro offset—, así que no gasta intento ni espera.
+                log.info("%s: el servidor rechaza el rango; se baja desde cero",
+                         destino.name)
+                _tirar_lo_bajado()
+                if presupuesto == intentos:
+                    presupuesto += 1
+                ultimo_error = exc
+                continue
+            if 400 <= exc.code < 500 and exc.code != 429:
+                # PLACSP no publica el ZIP anual de todos los años en todos los
+                # datasets, y `pipeline.ingerir` distingue ese 404 por el código: es
+                # información, no una avería, y reintentarlo solo haría esperar.
+                _tirar_lo_bajado()
+                raise ErrorRed(
+                    f"{url} -> HTTP {exc.code} {exc.reason}", codigo=exc.code
+                ) from exc
+            ultimo_error = exc
+        except (urllib.error.URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            # A propósito NO se borra el `.parcial`: borrarlo es lo que convertía un
+            # corte al 95% de 2 GB en una descarga entera desde el principio.
+            ultimo_error = exc
+
+        if intento < presupuesto:
+            espera = min(2 ** intento, 30)  # el mismo backoff que descargar()
+            log.warning(
+                "Fallo al descargar %s (intento %d/%d): %s. Reintento en %ds",
+                url, intento, presupuesto, ultimo_error, espera,
+            )
+            _esperar(espera, f"falló el intento {intento}/{presupuesto}")
+
+    raise ErrorRed(
+        f"{url} falló tras {intentos} intentos: {ultimo_error}. Lo descargado se "
+        f"conserva en {parcial.name} y la próxima vez se reanudará desde ahí."
+    )

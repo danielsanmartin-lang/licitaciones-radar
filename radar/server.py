@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,11 @@ log = logging.getLogger(__name__)
 
 RAIZ = Path(__file__).resolve().parent.parent
 WEB = RAIZ / "web"
+
+# Los meses que acepta /api/analitica. Se comprueba la forma porque el valor acaba en una
+# comparación de texto contra `substr(fecha, 1, 7)`: '2024' o '24-01' no fallarían, solo
+# devolverían un conjunto distinto sin decir nada.
+_ES_MES = re.compile(r"^\d{4}-\d{2}$")
 
 TIPOS = {
     ".html": "text/html; charset=utf-8",
@@ -134,6 +140,21 @@ class Manejador(BaseHTTPRequestHandler):
 
         elif partes.path == "/api/motivos-descarte":
             self._json({"items": consultas.motivos_descarte(self.con)})
+
+        elif partes.path == "/api/analitica":
+            # `desde` y `hasta` son 'AAAA-MM' y los pone la propia pestaña con sus tres
+            # botones de rango, así que se validan por forma: un mes mal escrito llegaría
+            # a un `substr(fecha, 1, 7) >= ?` y devolvería silenciosamente otra cosa.
+            for clave in ("desde", "hasta"):
+                valor = params.get(clave)
+                if valor and not _ES_MES.match(valor):
+                    return self._error(f"{clave} tiene que ser 'AAAA-MM'")
+            self._json(consultas.analitica(
+                self.con,
+                perfil=params.get("perfil") or None,
+                desde=params.get("desde") or None,
+                hasta=params.get("hasta") or None,
+            ))
 
         elif partes.path == "/api/perfiles":
             from .matching import leer_fichero_perfiles

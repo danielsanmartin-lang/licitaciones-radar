@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS licitaciones (
     clave_grupo               TEXT,
     raw                       TEXT,
     huella                    TEXT NOT NULL,
+    -- Huella con la que se evaluaron los perfiles la última vez. Ver COLUMNAS_NUEVAS.
+    huella_evaluada           TEXT,
     texto_busqueda            TEXT,
     texto_norm                TEXT,
     visto_primera_vez         TEXT NOT NULL,
@@ -198,6 +200,12 @@ COLUMNAS_NUEVAS = {
         ("fecha_fin_prevista", "TEXT"),
         ("clave_grupo", "TEXT"),
         ("texto_norm", "TEXT"),
+        # Con qué huella se evaluaron los perfiles sobre esta ficha. Es lo único que
+        # distingue «modificada de verdad» de «republicada idéntica»: `visto_ultima_vez`
+        # no sirve, porque `guardar()` lo toca también en la rama «igual». Sin esta
+        # columna, cada ingesta diaria reevaluaba las 673.755 filas de la base —39 s de
+        # Python— y emitía 2,7 millones de DELETE contra una tabla `matches` de 3.705.
+        ("huella_evaluada", "TEXT"),
     ],
     "revisiones": [
         ("motivo_descarte", "TEXT"),
@@ -214,6 +222,16 @@ COLUMNAS_NUEVAS = {
 INDICES_NUEVOS = (
     "CREATE INDEX IF NOT EXISTS idx_lic_fin   ON licitaciones (fecha_fin_prevista)",
     "CREATE INDEX IF NOT EXISTS idx_lic_grupo ON licitaciones (clave_grupo)",
+    # PARCIAL a propósito: solo indexa las filas pendientes de evaluar, que después de
+    # cada pasada son cero. Así ocupa nada y convierte el «¿hay algo nuevo?» de cada
+    # mañana en una búsqueda por índice en lugar de un recorrido de las 673.755 filas
+    # (unos 700 MB de tabla leídos para casi siempre nada).
+    #
+    # El WHERE de la consulta tiene que ser LITERALMENTE éste: SQLite solo usa un
+    # índice parcial cuando su condición coincide con la de la consulta, y comprobado
+    # con EXPLAIN QUERY PLAN, escrito como `IS NULL OR <>` el índice no se usa.
+    "CREATE INDEX IF NOT EXISTS idx_lic_pendientes ON licitaciones (id) "
+    "WHERE huella_evaluada IS NOT huella",
 )
 
 

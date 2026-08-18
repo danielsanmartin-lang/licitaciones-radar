@@ -208,6 +208,20 @@ class TestPrevisualizacion(unittest.TestCase):
             self.con.execute("SELECT COUNT(*) FROM matches").fetchone()[0], antes
         )
 
+    def test_no_cuenta_los_perfiles_desactivados(self):
+        """«Ver qué cambiaría» tiene que decir lo que dejará el botón de guardar.
+
+        La pantalla manda los perfiles tal cual están en la tabla, activos e
+        inactivos, así que si aquí se contara uno desactivado la previsualización
+        prometería coincidencias que `reevaluar` retira acto seguido."""
+        p = matching.validar_perfiles([
+            perfil(),
+            perfil(nombre="Amplio", terminos_fuertes=["mobiliario"], activo=False),
+        ])
+        vista = matching.previsualizar(self.con, p)
+        self.assertEqual(vista["entran"], 0)
+        self.assertEqual(vista["despues"], vista["antes"])
+
     def test_muestra_ejemplos_de_lo_que_entra(self):
         p = matching.validar_perfiles([
             perfil(terminos_fuertes=["phishing", "mobiliario"], contexto_requerido=["ciberseguridad"])
@@ -216,6 +230,72 @@ class TestPrevisualizacion(unittest.TestCase):
         self.assertGreater(vista["entran"], 0)
         self.assertTrue(vista["muestra_entran"])
         self.assertIn("objeto", vista["muestra_entran"][0])
+
+
+class TestDesactivarDesdeLaAplicacion(unittest.TestCase):
+    """Quitar la marca «activo» en la pantalla hace lo mismo que ponerlo a mano.
+
+    Los dos caminos le dan a `reevaluar` listas distintas y esto es a propósito: la
+    pantalla guarda con `validar_perfiles`, que devuelve TODOS los perfiles porque esa
+    misma lista es la que se escribe en `perfiles.json`, y la línea de órdenes lee con
+    `cargar_perfiles`, que ya se queda solo con los activos. Durante un tiempo eso
+    quiso decir que desactivar desde la aplicación no desactivaba: las coincidencias
+    del perfil apagado seguían en la bandeja hasta que alguien relanzaba `match`.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.ruta = Path(self.dir.name) / "perfiles.json"
+        self.con = db.conectar(Path(self.dir.name) / "t.db")
+        self.addCleanup(self.con.close)
+        for i, objeto in enumerate([
+            "Plataforma de phishing simulado",
+            "Suministro de mobiliario de oficina",
+        ]):
+            db.guardar(self.con, Licitacion(
+                fuente="p", id_externo=f"a{i}", objeto=objeto, organo="Órgano",
+                valor_estimado=50000,
+            ))
+        self.con.commit()
+
+    def por_perfil(self) -> dict:
+        return {
+            f["perfil"]: f["total"] for f in self.con.execute(
+                "SELECT perfil, COUNT(*) AS total FROM matches GROUP BY perfil")
+        }
+
+    def perfiles_json(self, activo: bool) -> list[dict]:
+        return [perfil(),
+                perfil(nombre="Amplio", terminos_fuertes=["mobiliario"], activo=activo)]
+
+    def test_guardar_con_el_perfil_desactivado_retira_sus_coincidencias(self):
+        matching.reevaluar(self.con, matching.validar_perfiles(self.perfiles_json(True)))
+        self.assertEqual(self.por_perfil(), {"Prueba": 1, "Amplio": 1})
+
+        stats = matching.reevaluar(
+            self.con, matching.validar_perfiles(self.perfiles_json(False))
+        )
+        self.assertEqual(stats["por_perfil"], {"Prueba": 1})
+        self.assertEqual(self.por_perfil(), {"Prueba": 1})
+
+    def test_la_aplicacion_y_la_linea_de_ordenes_dejan_la_misma_bandeja(self):
+        """Lo mismo que hace el botón «Guardar» tiene que hacer `radar.py match`."""
+        matching.guardar_perfiles(self.perfiles_json(False), self.ruta)
+
+        matching.reevaluar(self.con, matching.validar_perfiles(self.perfiles_json(False)))
+        por_la_aplicacion = self.por_perfil()
+
+        matching.reevaluar(self.con, matching.cargar_perfiles(self.ruta))
+        self.assertEqual(self.por_perfil(), por_la_aplicacion)
+        self.assertNotIn("Amplio", por_la_aplicacion)
+
+    def test_el_perfil_desactivado_sigue_en_el_fichero_para_poder_volver(self):
+        """Desactivar no es borrar: los términos se quedan escritos para reactivarlos."""
+        matching.guardar_perfiles(self.perfiles_json(False), self.ruta)
+        guardados = json.loads(self.ruta.read_text(encoding="utf-8"))["perfiles"]
+        self.assertEqual([(p["nombre"], p["activo"]) for p in guardados],
+                         [("Prueba", True), ("Amplio", False)])
 
 
 class TestCerrojoBusqueda(unittest.TestCase):

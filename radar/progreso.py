@@ -13,7 +13,7 @@ socket y no puede imprimir nada por su cuenta.
 
 Con terminal (stdout es un TTY) pinta una sola línea que se sobrescribe:
 
-    ⠹ placsp:licitaciones · pág. 3 · descargando 12,4 MB · 2.950 fichas · 1m 12s
+    ⠹ etapa 3/4 · placsp:agregadas · el histórico de 2025 (año 2 de 3) · descargando 84,2 MB/133,0 MB (63%) a 1,4 MB/s · 2.950 fichas · 1m 12s
 
 Cuando la salida es un fichero —la tarea de cada mañana escribe en
 data/ingest.log— no hay repintado posible, así que suelta una línea cada 30 s.
@@ -127,6 +127,13 @@ class _Indicador:
         # merece la pena pagar un lock 130.000 veces por una cifra decorativa.
         self._paginas = 0
         self._bytes = 0
+        # Los bytes que ha leído ESTE intento, que no son los mismos que `_bytes`
+        # cuando una descarga se reanuda: allí `_bytes` arranca con lo que ya había
+        # en el `.parcial` para que la barra no vuelva a cero, y repartir esos 1,2 GB
+        # heredados entre los tres segundos que lleva el intento nuevo daba
+        # «400 MB/s». Dos contadores porque son dos preguntas: cuánto hay y a qué
+        # ritmo llega.
+        self._bytes_medidos = 0
         self._bytes_total = 0
         self._fichas = 0
         self._subtarea = 0
@@ -190,7 +197,7 @@ class _Indicador:
         de una fuente no dice nada de las que vienen después.
 
         `coste` y `detalle` son los textos que ya describen cada etapa en
-        `ETAPAS_PRIMERA_CARGA` («un par de horas y unos 4 GB de descarga»). Se guardan
+        `ETAPAS_PRIMERA_CARGA` («unos 5 GB de descarga y 15 min de proceso»). Se guardan
         para que la aplicación pueda decir que la espera es larga *por diseño*: es la
         diferencia entre parecer colgada y parecer ocupada.
         """
@@ -214,6 +221,7 @@ class _Indicador:
             self._fase = ""
             self._paginas = 0
             self._bytes = 0
+            self._bytes_medidos = 0
             self._bytes_total = 0
             self._fichas = 0
             self._subtarea = 0
@@ -251,10 +259,18 @@ class _Indicador:
 
     def sumar_bytes(self, n: int) -> None:
         self._bytes += n
+        self._bytes_medidos += n
 
-    def reiniciar_bytes(self) -> None:
-        """Nueva petición: el contador vuelve a cero, las páginas no."""
-        self._bytes = 0
+    def reiniciar_bytes(self, heredados: int = 0) -> None:
+        """Nueva petición: el contador vuelve a `heredados`, las páginas no.
+
+        `heredados` son los bytes que una descarga reanudada ya trae en el `.parcial`.
+        Cuentan para la barra —si no, reanudar al 95% la haría volver a cero y
+        parecería que se empieza otra vez— pero NO para la velocidad, que se mide
+        aparte: ver `_bytes_medidos`.
+        """
+        self._bytes = heredados
+        self._bytes_medidos = 0
         self._bytes_total = 0
         self._t_bytes = time.monotonic()
 
@@ -263,11 +279,14 @@ class _Indicador:
 
         El medio segundo de guarda evita la cifra absurda del primer tic, cuando el
         primer trozo de un mega se ha leído en milésimas.
+
+        Se mide sobre `_bytes_medidos` y no sobre `_bytes` justamente por las
+        reanudaciones: lo que ya estaba en disco no se ha descargado ahora.
         """
-        if not self._bytes or not self._t_bytes:
+        if not self._bytes_medidos or not self._t_bytes:
             return 0.0
         transcurrido = time.monotonic() - self._t_bytes
-        return self._bytes / transcurrido if transcurrido > 0.5 else 0.0
+        return self._bytes_medidos / transcurrido if transcurrido > 0.5 else 0.0
 
     # -- pintado ----------------------------------------------------------
 
@@ -328,19 +347,33 @@ class _Indicador:
         # Cada fase pone su propia preposición: lo que va bien detrás de «descargando»
         # no encaja detrás de «conectando», y una plantilla única obliga a escribir
         # frases que suenan a máquina.
-        if self._fase == "descargando":
+        # Se compara por prefijo y no por igualdad: la fase de una descarga reanudada
+        # es «descargando, reanudando», y con un `==` se colaba hasta la rama de las
+        # fichas y decía «Leyendo las fichas del histórico de 2026 — 118.133 leídas»
+        # mientras en realidad estaba bajando el ZIP.
+        if self._fase.startswith("descargando"):
             detalle = _tam(self._bytes)
             if self._bytes_total:
                 detalle += f" de {_tam(self._bytes_total)}"
             vel = self._velocidad()
             if vel:
                 detalle += f" · {_ritmo(vel)}"
-            frase = f"Descargando {qué} — {detalle}."
+            if "reanudando" in self._fase:
+                # Decirlo importa: quien vio cortarse la descarga no entiende por qué
+                # la barra sale ya casi llena si nadie le cuenta que se reanuda.
+                frase = f"Reanudando la descarga {_de(qué)} — {detalle}."
+            else:
+                frase = f"Descargando {qué} — {detalle}."
             if self._fichas:
                 frase += f" Ya van {_miles(self._fichas)} fichas de esta fuente."
             return frase
-        if self._fase == "conectando":
+        # Los reintentos dejaron de ser un parpadeo el día que las descargas grandes
+        # empezaron a reintentar: estas dos fases pueden estar en pantalla minutos, y
+        # sin rama propia caían en la de las fichas, que no viene a cuento.
+        if self._fase.startswith(("conectando", "reconectando")):
             return f"Conectando con el servidor para traer {qué}."
+        if self._fase.startswith("falló el intento"):
+            return f"Se ha cortado la descarga {_de(qué)}: {self._fase}."
         if self._fase == "leyendo el zip":
             return f"Abriendo el fichero comprimido {_de(qué)}."
         if self._subtareas:

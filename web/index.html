@@ -50,6 +50,7 @@
     <button class="tab activo" data-vista="bandeja">Bandeja</button>
     <button class="tab" data-vista="vencimientos">Vencimientos</button>
     <button class="tab" data-vista="adjudicatarios">Adjudicatarios</button>
+    <button class="tab" data-vista="analitica">Analítica</button>
     <button class="tab" data-vista="ajustes">Términos de búsqueda</button>
     <button class="tab novedades" id="tab-novedades" hidden></button>
   </nav>
@@ -106,6 +107,19 @@
         Quién se lleva estos contratos. Agrupa las variantes de razón social.
       </p>
       <div id="lista-adjudicatarios" class="lista"></div>
+    </section>
+
+    <section id="vista-analitica" hidden>
+      <p class="contador">
+        Los patrones de este mercado, no lo que hay hoy: cuándo se publica, a cuánto se
+        cierra y cuánto tarda en decidirse. Sale del histórico descargado.
+      </p>
+      <div class="ventanas" id="analitica-rango"></div>
+      <p class="filtros-activos" id="analitica-filtro">
+        <select id="analitica-perfil"><option value="">Todos los perfiles</option></select>
+      </p>
+      <p class="total-ventana" id="analitica-resumen"></p>
+      <div id="analitica" class="analitica"></div>
     </section>
 
     <section id="vista-ajustes" hidden>

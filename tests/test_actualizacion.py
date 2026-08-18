@@ -83,7 +83,8 @@ class Base(unittest.TestCase):
             return destino
 
         with mock.patch.object(net, "descargar_json", return_value=release), \
-             mock.patch.object(net, "descargar_a_fichero", side_effect=descarga):
+             mock.patch.object(net, "descargar_a_fichero", side_effect=descarga) as bajar:
+            self.bajar = bajar
             return actualizacion.aplicar()
 
 
@@ -145,6 +146,13 @@ class TestAplicar(Base):
     def test_no_toca_la_base_ni_el_triaje(self):
         self._aplicar()
         self.assertEqual((self.raiz / "data" / "radar.db").read_text(), "mi base de 3 GB")
+
+    def test_el_zipball_se_baja_con_dos_intentos_y_no_con_cuatro(self):
+        """`aplicar_en_subproceso` mata el proceso a los 900 s. Con los cuatro intentos
+        por defecto de `descargar_a_fichero` (600 s de timeout cada uno) el peor caso se
+        come el plazo y la actualización muere a mitad."""
+        self._aplicar()
+        self.assertEqual(self.bajar.call_args.kwargs["intentos"], 2)
 
     def test_no_toca_los_terminos_de_busqueda(self):
         """La prueba que justifica la lista blanca: el zip trae `perfiles.json` con los

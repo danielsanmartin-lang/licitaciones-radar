@@ -389,3 +389,79 @@ input[type=number], input[type=text] {
 .previsualizacion li { color: var(--texto-sec); margin-bottom: 3px; }
 
 .pie { margin-top: 30px; padding-top: 12px; border-top: 1px solid var(--borde); color: var(--texto-sec); font-size: 12px; }
+
+/* --- Analítica ----------------------------------------------------------- */
+
+/* El primer sitio del proyecto que necesita un ancho máximo: el resto de las vistas son
+   listas, que a 2.500 px se leen igual de bien, pero una barra de 2.400 px de largo no
+   dice nada. Se sigue el precedente del `min()` de `.panel`. */
+.analitica {
+  width: min(920px, 100%);
+  display: grid;
+  gap: 14px;
+}
+/* La misma idea que `.campos` —auto-fit sin un solo breakpoint— pero con el mínimo
+   ajustado: con 280 px caben tres columnas en los 920 de ancho, y como cada pareja tiene
+   dos bloques quedaba un tercio de hueco a la derecha. Con 380 caben exactamente dos, y
+   una sola cuando la ventana no da. El `min()` evita que se desborde en un móvil. */
+.analitica .pareja {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+}
+
+.bloque {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 14px 16px;
+}
+.bloque h3 { margin: 0 0 2px; font-size: 15px; }
+.bloque .pregunta { margin: 0 0 12px; font-size: 12px; color: var(--texto-sec); }
+.bloque .nota { margin: 12px 0 0; font-size: 12px; color: var(--texto-sec); }
+.bloque .titular { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bloque .titular small { font-size: 13px; font-weight: 400; color: var(--texto-sec); }
+.bloque .cifras-fila { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 4px; }
+.bloque .cifras-fila div { font-size: 12px; color: var(--texto-sec); }
+.bloque .cifras-fila b {
+  display: block; font-size: 20px; font-weight: 600; color: var(--texto);
+  font-variant-numeric: tabular-nums;
+}
+.bloque .cifras-fila .ojo b { color: var(--ambar); }
+
+/* Una fila de barra: etiqueta, carril y cifra. La cifra va SIEMPRE en texto al lado, que
+   es lo que hace que el dato se lea con un lector de pantalla y no solo se vea. */
+.fila-barra {
+  display: grid;
+  grid-template-columns: 5.5em 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.fila-barra .etiqueta { color: var(--texto-sec); }
+.fila-barra .valor { font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
+.barra { background: var(--panel-2); border-radius: 3px; height: 14px; position: relative; }
+.barra-relleno { background: var(--acento); border-radius: 3px; height: 100%; min-width: 2px; }
+/* La segunda serie (el año en curso) va superpuesta y más fina, para que la desviación se
+   vea en lugar de promediarse. */
+.barra-encima {
+  position: absolute; top: 3px; left: 0; height: 8px;
+  background: var(--texto); opacity: .55; border-radius: 2px; min-width: 2px;
+}
+/* El mes en curso, rayado: sus datos están a medias y no se puede leer como los demás. */
+.barra-parcial {
+  background: repeating-linear-gradient(
+    135deg, var(--acento), var(--acento) 4px, var(--panel-2) 4px, var(--panel-2) 8px);
+}
+.leyenda { font-size: 11px; color: var(--texto-sec); margin: 8px 0 0; }
+.leyenda .muestra { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.leyenda .muestra.media { background: var(--acento); }
+.leyenda .muestra.curso { background: var(--texto); opacity: .55; }
+
+/* Tabla escueta para los cinco mayores y para los CPV: sin bordes, que aquí lo que se
+   compara son las cifras y no las celdas. */
+.tabla-escueta { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tabla-escueta td { padding: 3px 0; vertical-align: top; }
+.tabla-escueta td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 10px; }
+.tabla-escueta .apagado { color: var(--texto-sec); }

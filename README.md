@@ -23,12 +23,21 @@ Mientras descarga, la terminal muestra una línea que se va actualizando con la
 fuente, la página, los megas que llevan llegados y el tiempo transcurrido:
 
 ```
-⠹ placsp:licitaciones · pág. 3 · descargando 12,4 MB · 2.950 fichas · 1m 12s
+⠹ etapa 3/4 · placsp:agregadas · el histórico de 2025 (año 2 de 3) · descargando 84,2 MB/133,0 MB (63%) a 1,4 MB/s · 2.950 fichas · 1m 12s
 ```
 
 Si esa línea se mueve, está trabajando. PLACSP contesta lento a ratos y cada
 intento espera hasta dos minutos antes de reintentar, así que un tramo largo en
 "conectando" es normal y no hay que cerrar nada.
+
+Y si se corta a mitad, reintenta hasta cuatro veces con esperas crecientes en lugar de
+rendirse a la primera, que es lo que antes dejaba un año entero marcado como fallido por
+un solo timeout. Lo que **no** se puede es reanudar: medido contra la plataforma, PLACSP
+ignora la cabecera `Range` y vuelve a mandar el fichero entero, así que un corte en el
+ZIP de la Plataforma del Estado significa repetir esa descarga. El programa lo pide de
+todas formas y aprovecharía lo ya bajado el día que la plataforma lo permita; mientras
+tanto se asegura de lo importante, que es no coser nunca dos mitades de ficheros
+distintos.
 
 Si prefieres la terminal:
 
@@ -36,8 +45,11 @@ Si prefieres la terminal:
 python3 radar.py ingest && python3 radar.py serve
 ```
 
-Requisitos: **Python 3.9 o superior**, que macOS ya trae. No hay que instalar nada
-más — ni librerías, ni base de datos, ni cuentas.
+Requisitos: **Python 3.9 o superior**. Ojo, que macOS ya no lo trae: Apple lo retiró
+del sistema en Catalina, así que en un Mac recién estrenado hay que instalarlo una vez
+desde [python.org](https://www.python.org/downloads/macos) —`start.command` lo detecta
+y lo explica—. Aparte de eso no hay que instalar nada más: ni librerías, ni base de
+datos, ni cuentas.
 
 ---
 
@@ -61,16 +73,16 @@ cuatro etapas, de la más barata a la más cara:
 |---|---|---|
 | 1 | anuncios europeos (TED) y de Cataluña | unos minutos, apenas ocupa |
 | 2 | histórico de plataformas agregadas y consultas previas | ~360 MB + ~4 min de proceso |
-| 3 | histórico de la Plataforma del Estado | ~4 GB + ~15 min de proceso |
+| 3 | histórico de la Plataforma del Estado | ~5 GB + ~15 min de proceso |
 | 4 | lo publicado desde la fecha de corte de los ZIP | unos minutos |
 
 Los tiempos de descarga no están porque no se pueden prometer: dependen de tu conexión y
-de lo que dé PLACSP ese día. Medido aquí, los mismos 4 GB han tardado desde unos minutos
+de lo que dé PLACSP ese día. Medido aquí, esos 5 GB han tardado desde unos minutos
 hasta casi dos horas. Lo que sí es predecible es el proceso —abrir los ZIP y volcar el
 millón y pico de fichas en la base—, porque solo depende de tu máquina.
 
-**La aplicación se abre en cuanto termina la etapa 1**, ya con unas 1.400 licitaciones
-que encajan. Las demás siguen descargando por detrás mientras trabajas: arriba aparece
+**La aplicación se abre en cuanto termina la etapa 1**, ya con unos mil expedientes que
+encajan. Las demás siguen descargando por detrás mientras trabajas: arriba aparece
 un aviso con la etapa, los megas que van llegando y una barra, y los contadores de la
 cabecera van subiendo solos sin recargar la página.
 
@@ -94,7 +106,8 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 ## Cómo se usa
 
-Hay cuatro pestañas arriba: Bandeja, Vencimientos, Adjudicatarios y Términos de búsqueda.
+Hay cinco pestañas arriba: Bandeja, Vencimientos, Adjudicatarios, Analítica y
+Términos de búsqueda.
 
 ### Los números de la cabecera
 
@@ -109,7 +122,7 @@ Todas cuentan **expedientes**, no anuncios, igual que la lista.
 | siguiendo | las que has marcado para trabajar |
 | coincidencias | todas las que han pasado el filtro, sin filtrar por plazo ni triaje |
 
-Debajo de la lista pone «110 de 1.199 coincidencias» y qué filtros están puestos, porque
+Debajo de la lista pone «110 de 2.716 coincidencias» y qué filtros están puestos, porque
 el desplegable de triaje y la casilla **«Solo abiertas» se combinan**: elegir «todo
 menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas.
 
@@ -164,6 +177,40 @@ Quién se está llevando estos contratos, agrupando las variantes de razón soci
 («S2 GRUPO …, S.L.U.» y «S2 Grupo … S.L.» son la misma empresa). Al pulsar una
 empresa se despliegan sus contratos.
 
+### Analítica
+
+Las preguntas que no son «qué hay hoy». Siete bloques, cada uno con una pregunta de venta
+delante:
+
+| Bloque | Contesta a |
+|---|---|
+| Cuándo sale el trabajo | en qué meses hay que estar preparado. Diciembre publica el doble que agosto, y eso se planifica en septiembre |
+| A cuánto tengo que ir | de qué tamaño son estas operaciones de verdad |
+| Con qué precio entro | cuánto por debajo del presupuesto se están cerrando |
+| Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
+| A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido |
+| Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
+| Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico |
+
+Se filtra por perfil y por uno de tres rangos (este año, últimos 24 meses, todo desde
+2024). Los dos bloques que hablan de *ahora* —renovaciones y cartera— ignoran el rango a
+propósito y lo dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+
+Y hay tres cosas que esta pestaña **no** hace, todas por el mismo motivo:
+
+- **No da ninguna cifra de dinero total.** La clave que agrupa los anuncios de un mismo
+  expediente no cruza fuentes, así que 126 expedientes están repetidos entre PLACSP y TED y
+  arrastran casi 1.000 M€ de aire. Solo medianas, tramos y recuentos.
+- **No da medias de importe.** La media son 4 millones y la mediana 169.000: cinco
+  contratos son la mitad del total. Esos cinco salen con nombre y órgano, y ahí se ve que
+  tres son el mismo acuerdo marco repetido.
+- **No esconde lo que descarta.** En la baja de adjudicación, la mitad de la muestra no
+  sirve —la fuente repitió el presupuesto en lugar del precio, o compara un lote contra el
+  total del marco— y sale en pantalla con su recuento, no en un asterisco.
+
+Cada bloque tiene además un mínimo por debajo del cual no se pinta: una mediana de doce
+casos presentada como una mediana es peor que un hueco.
+
 Y en cualquier vista, **Exportar CSV** baja lo que estés viendo con los filtros
 aplicados, listo para Excel.
 
@@ -180,9 +227,15 @@ python3 radar.py adjudicatarios               # quién gana estos contratos
 python3 radar.py export salida.csv            # exporta a CSV
 python3 radar.py programar                    # descarga automática cada mañana
 python3 radar.py estado                       # cifras y salud de las fuentes
+python3 radar.py doctor                       # ¿está todo en su sitio?
 python3 radar.py actualizar --solo-comprobar  # ¿hay una versión nueva del programa?
 python3 radar.py actualizar                   # la instala
 ```
+
+`ingest` solo reevalúa los perfiles sobre lo que acaba de traer, que es lo que hace que
+la descarga de cada mañana termine en segundos en vez de repasar las 673.755 fichas de
+la base. Si cambias los términos de búsqueda, lo detecta y repasa todo igualmente; y
+`match` siempre lo mira todo, para eso está.
 
 ### Actualizar el programa
 
@@ -199,6 +252,21 @@ debajo de una carga que dura horas es pedir problemas.
 Después hay que cerrar la aplicación y volver a abrirla con `start.command`, porque el
 proceso que está corriendo ya tiene en memoria la versión vieja. Los cambios en la base de
 datos que traiga la versión nueva se aplican solos en ese siguiente arranque.
+
+### Publicar una versión
+
+Lo que mira el actualizador es la **última release publicada en GitHub**, así que subir
+código al repositorio no actualiza a nadie. Para publicar una:
+
+1. Sube `__version__` en `radar/__init__.py`.
+2. Etiqueta la release con ese mismo número. Si no coinciden, el actualizador se niega a
+   instalarla —que es lo que se quiere cuando el paquete no es lo que dice ser—.
+3. Pega el SHA-256 del zip en las notas de la release. Es opcional, pero si está se
+   comprueba, y así una descarga corrompida a medio camino no llega a sustituir nada:
+
+```bash
+shasum -a 256 licitaciones-radar-1.0.2.zip
+```
 
 ### Que se actualice solo
 
@@ -290,7 +358,7 @@ quedarse en los mismos 200 buenos.
 | Fuente | Qué aporta |
 |---|---|
 | **PLACSP – licitaciones** | La mayor parte de España: Estado, comunidades, ayuntamientos. |
-| **PLACSP – plataformas agregadas** | Las comunidades con plataforma propia, que PLACSP recoge por agregación: **País Vasco, Navarra y Galicia**, además de Cataluña, Andalucía y Madrid. |
+| **PLACSP – plataformas agregadas** | Las comunidades con plataforma propia, que PLACSP recoge por agregación: **País Vasco, Navarra y Galicia**, además de Cataluña, Andalucía, Madrid y La Rioja. |
 | **PLACSP – consultas preliminares de mercado** | La administración preguntando al mercado **antes** de escribir el pliego. Es donde todavía se puede influir; en el anuncio ya solo se compite. |
 | **TED (Unión Europea)** | Lo que supera el umbral europeo, más los anuncios de adjudicación (quién ganó y por cuánto). |
 | **Cataluña** | Su plataforma propia, con más detalle que lo que llega agregado: duración del contrato, lotes y adjudicatario. |
@@ -325,8 +393,8 @@ la mayoría cae de todas formas por `importe_minimo`.
   aportarían es `adjudicatario`, `fecha_formalizacion` y `plazo_de_ejecucion_meses`,
   que es justo lo que le falta a la vista de Vencimientos. Pendiente como mejora de
   esa vista, no como fuente de licitaciones.
-- **Avisos por email o Slack.** Solo bandeja. La entrada está preparada en el código
-  pero no implementada.
+- **Avisos por email o Slack.** Solo bandeja: hay que entrar a mirar. No hay nada
+  escrito de esto, ni medio empezado.
 - **Una instancia compartida.** Cada persona tiene su base y su triaje.
 
 Sobre el conector nativo de Euskadi: se investigó y **no hace falta**. Su API existe
@@ -352,8 +420,9 @@ python3 radar.py ingest --fuente placsp:licitaciones --backfill 2024,2025,2026
 
 ## Qué esperar del filtro
 
-Sobre un histórico de 2024–2026 el filtro deja pasar en torno al **1% de lo que
-descarga** (unas 1.200 de 133.000). En la muestra de 30 mejor puntuadas revisada a
+Sobre un histórico de 2024–2026 el filtro deja pasar **medio punto porcentual de lo
+que descarga**: 3.705 anuncios de 673.755, que agrupados por expediente son 2.716
+licitaciones en la bandeja. En la muestra de 30 mejor puntuadas revisada a
 mano, unas 20 eran directamente de concienciación o protección de correo, otras 8–9
 eran contratos de ciberseguridad más amplios que a un vendedor de ciber le interesa
 ver igualmente, y 1 o 2 no venían a cuento. Si te parece que hay demasiado ruido,
@@ -362,9 +431,12 @@ endurece `contexto_requerido` o sube `importe_minimo`.
 Los perfiles cubren dos cosas distintas a propósito, y conviene saber cuál te
 interesa: **«Concienciación y phishing»** es el nicho estricto, y **«Ciberseguridad y
 seguridad de la información»** es la red amplia —oficinas de ciberseguridad, SOC,
-adecuación al ENS, seguridad gestionada—, que trae bastante más volumen. Aporta unas
-1.000 de las 1.200 coincidencias. Si solo quieres el nicho, pon ese perfil a
-`"activo": false` y relanza `match`.
+adecuación al ENS, seguridad gestionada—, que trae bastante más volumen: aporta 3.060
+de los 3.705 anuncios que pasan el filtro, cuatro de cada cinco. Si solo quieres el
+nicho, quítale la marca **«activo»** en la pestaña «Términos de búsqueda» y guarda: sus
+coincidencias salen de la bandeja en ese momento, y sus términos se quedan escritos en
+el fichero por si quieres volver a activarlo. A mano es lo mismo: `"activo": false` en
+`config/perfiles.json` y relanzar `match`.
 
 Un ejemplo de lo que sí encuentra y que se perdería de otra forma: un contrato de
 mantenimiento de hardware del Ayuntamiento de Viladecans cuyo **lote 10** era
@@ -380,6 +452,22 @@ anuncio original.
 ---
 
 ## Si algo va mal
+
+**Empieza por `python3 radar.py doctor`.** Tarda un segundo y comprueba de una vez lo
+que hay debajo de casi todos los problemas: la versión de Python, que el almacén de
+certificados siga vigente, el espacio libre, que la base se abra y esté al día, que los
+términos de búsqueda sean válidos, que ninguna fuente haya fallado, que no haya un
+cerrojo de una descarga muerta bloqueando el botón «Buscar ahora», que la caché no tenga
+ZIP ilegibles y que la tarea de cada mañana esté cargada de verdad. Cada cosa que no
+esté bien viene con el comando que la arregla.
+
+No toca nada: abre la base en solo lectura y no crea ni migra nada. Dos comprobaciones
+se piden aparte porque no son instantáneas:
+
+```bash
+python3 radar.py doctor --integridad   # ¿la base está dañada? lee los 3 GB: ~50 s
+python3 radar.py doctor --con-red      # ¿hay una versión nueva publicada?
+```
 
 **`python3 radar.py estado`** dice cuándo se ejecutó cada fuente por última vez, qué
 trajo y si falló. La bandeja avisa arriba en rojo cuando una fuente se rompe: sin ese
@@ -406,15 +494,24 @@ python3 radar.py ingest --reiniciar-cursor --dias 365
 **Quiero empezar de cero.** Borra la carpeta `data/` y vuelve a lanzar `ingest`. El
 triaje y las notas viven ahí, así que se pierden.
 
-**La base ocupa mucho.** Con todo el histórico se va a un par de GB, porque son
-cientos de miles de licitaciones. No se comparte al pasar la carpeta a un compañero:
+**La base ocupa mucho.** Con todo el histórico son unos 3 GB, porque son cientos de
+miles de licitaciones. No se comparte al pasar la carpeta a un compañero:
 `data/` está en el `.gitignore` a propósito y cada uno construye la suya, con su triaje
 y sus notas. Si no te interesa el histórico, borra `data/` y haz una ingesta normal, sin
 `--primera-carga`: te quedarás con la ventana de los últimos días.
 
-Además, los ZIP del histórico se guardan en `data/cache/` para no volver a
-descargarlos, y son otros 200 MB. `python3 radar.py estado` te dice cuánto ocupan y
-`python3 radar.py estado --limpiar-cache` los borra sin perder ningún dato.
+Y los ZIP del histórico se guardan en `data/cache/` para no volver a descargarlos, que
+son otros **5,3 GB**: entre las dos cosas, `data/` se planta en 8,5 GB. `python3
+radar.py estado` te dice cuánto ocupan y `python3 radar.py estado --limpiar-cache` los
+borra sin perder ningún dato —se volverán a bajar la próxima vez que pidas histórico—.
+Ahí pueden aparecer también ficheros `.parcial`: son descargas cortadas a medias que se
+guardan por si el servidor permitiera continuarlas. `--limpiar-cache` también se los
+lleva, y borrarlos no pierde nada.
+
+Los ZIP de años cerrados no se vuelven a pedir nunca, porque ya no cambian. El del año
+en curso sí: PLACSP lo reescribe cada día, así que si el que tienes guardado pasa de un
+día, el siguiente `--backfill` o `--primera-carga` lo refresca. Y si esa descarga falla,
+se sigue usando el viejo con un aviso en el registro en lugar de quedarte sin nada.
 
 **Venía de una versión anterior.** No hay que hacer nada: al arrancar se añaden las
 columnas que falten y se recalculan las claves de agrupación sin volver a descargar,
@@ -433,19 +530,26 @@ sin instalar nada.
 ```
 radar.py              punto de entrada de la línea de comandos
 radar/
-  net.py              descargas con TLS verificado y reintentos
+  net.py              descargas con TLS verificado, reintentos y reanudación
   model.py            el modelo común al que traducen todas las fuentes
   db.py               SQLite: esquema, migraciones, dedup e historial
   matching.py         el motor de reglas
-  consultas.py        las consultas de las tres vistas y el CSV
+  consultas.py        las consultas de las vistas, la analítica y el CSV
+  pipeline.py         orquesta la ingesta: qué fuentes, en qué orden, por etapas
   server.py           servidor local (solo 127.0.0.1)
+  busqueda.py         lanza la ingesta en segundo plano y su cerrojo
+  progreso.py         el indicador de la terminal y la instantánea que lee la app
   programar.py        la tarea diaria de macOS
+  actualizacion.py    traer una versión nueva sin salir de la aplicación
+  diagnostico.py      las comprobaciones de `radar.py doctor`
   sources/            un conector por fuente, independientes entre sí
 config/perfiles.json  tus búsquedas guardadas — esto es lo que se edita (no se versiona)
 config/perfiles.ejemplo.json  la plantilla genérica de la que se crea el anterior
 web/                  la interfaz
-tests/                144 pruebas, con datos reales de las fuentes como fixtures
+tests/                361 pruebas, con datos reales de las fuentes como fixtures
 data/radar.db         la base (se crea sola; aquí vive tu triaje)
+data/cache/           los ZIP del histórico, para no volver a bajarlos
+data/busqueda.log     lo que va contando la descarga lanzada desde la aplicación
 ```
 
 Los conectores están aislados a propósito: si Cataluña cambia su esquema una mañana,
@@ -455,9 +559,13 @@ el resto de la ingesta sigue funcionando y la bandeja lo dice.
 python3 -m unittest discover -s tests -t .
 ```
 
-Los tests incluyen ocho licitaciones reales verificadas (entre ellas la oficina de
+Se ejecutan también en cada push, en Python 3.9 —el mínimo que se declara arriba, y el
+que se rompe sin que nadie lo note en un equipo con un Python nuevo— y en 3.13, en Linux
+y en macOS. La receta está en `.github/workflows/tests.yml`.
+
+Los tests incluyen doce licitaciones reales verificadas (entre ellas la oficina de
 concienciación de LANTIK, 915.000 €, la oficina de ciberseguridad del Ministerio de
-Cultura, 1.031.857 €, y una plataforma de phishing sin CPV) y una docena de falsos
+Cultura, 1.031.857 €, y una plataforma de phishing sin CPV) y quince falsos
 positivos observados —concienciación medioambiental, seguridad vial, prevención de
 riesgos laborales, «sistemas de información» que no es «formación»— que deben seguir
 quedando fuera. Si tocas `matching.py` o los perfiles, esos tests te dicen si has

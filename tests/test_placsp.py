@@ -5,13 +5,18 @@ CODICE y los caminos de los elementos se han comprobado contra las listas oficia
 publicadas por la propia plataforma.
 """
 
+import os
 import tempfile
+import time
 import unittest
 import zipfile
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
+from radar import net
 from radar.model import ESTADO_ADJUDICADA, ESTADO_PREVIO
+from radar.sources import placsp
 from radar.sources.placsp import (
     PROCEDIMIENTOS, TIPOS_CONTRATO, FuentePLACSP, parsear_atom,
 )
@@ -189,6 +194,13 @@ class TestPrimeraPasada(unittest.TestCase):
 
 
 class TestHistoricoZip(unittest.TestCase):
+    """Ojo al año de los fixtures: tiene que seguir siendo un año CERRADO.
+
+    `test_informa_del_avance_sobre_el_total_de_ficheros` no falsea la red, y solo puede
+    permitírselo porque el ZIP del año en curso es el único que caduca. Renombrar el
+    fixture al año actual pondría esa prueba a bajar 1,3 GB de verdad.
+    """
+
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
@@ -240,6 +252,135 @@ class TestHistoricoZip(unittest.TestCase):
                         side_effect=self._zip_al_descargar) as bajar:
             list(fuente.historico(2024))
 
+        self.assertEqual(bajar.call_count, 1)
+
+
+class TestCaducidadDelZipDelAnioEnCurso(unittest.TestCase):
+    """PLACSP reescribe el ZIP del año en curso cada día.
+
+    Sin caducidad, el `licitaciones_2026.zip` bajado en agosto se reutiliza en noviembre
+    y la herramienta da por completo un año al que le faltan semanas. Y como la ingesta
+    incremental solo mira hacia delante, ese hueco no lo rellena nadie: es un fallo
+    silencioso, que es la peor clase.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.cache = Path(self.dir.name)
+        # El año se deriva de la misma fecha que usa el código: escrito a mano, esta
+        # prueba caducaría sola el 1 de enero.
+        self.anio = date.today().year
+        self.fuente = FuentePLACSP("licitaciones", dir_cache=self.cache)
+
+    def _en_cache(self, anio: int, atoms: int = 3) -> Path:
+        ruta = self.cache / f"licitaciones_{anio}.zip"
+        with zipfile.ZipFile(ruta, "w") as zf:
+            for i in range(1, atoms + 1):
+                zf.writestr(f"lote_{i}.atom",
+                            atom_vacio(i, f"{anio}-01-01T00:00:00+01:00"))
+        return ruta
+
+    def _envejecer(self, ruta: Path, horas: float) -> None:
+        cuando = time.time() - horas * 3600
+        os.utime(ruta, (cuando, cuando))
+
+    def _bajar_uno_nuevo(self, url, destino, **kw):
+        """Descarga de mentira: deja un ZIP con UN solo atom, para distinguirlo."""
+        with zipfile.ZipFile(destino, "w") as zf:
+            zf.writestr("lote_1.atom", atom_vacio(1, "2026-08-17T00:00:00+02:00"))
+        return destino
+
+    def _ficheros_leidos(self, anio: int) -> list:
+        """Los (i, total) que reporta la barra: dicen QUÉ ZIP se ha acabado leyendo."""
+        with mock.patch("radar.sources.placsp.progreso.subtarea") as subtarea:
+            list(self.fuente.historico(anio))
+        return [c.args for c in subtarea.call_args_list if c.args != (0, 0)]
+
+    def test_el_zip_del_ano_en_curso_bajado_hoy_no_se_vuelve_a_pedir(self):
+        self._en_cache(self.anio)
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero") as bajar:
+            list(self.fuente.historico(self.anio))
+        bajar.assert_not_called()
+
+    def test_el_zip_del_ano_en_curso_de_hace_dos_dias_se_vuelve_a_descargar(self):
+        self._envejecer(self._en_cache(self.anio), 48)
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero",
+                        side_effect=self._bajar_uno_nuevo) as bajar:
+            leidos = self._ficheros_leidos(self.anio)
+        self.assertEqual(bajar.call_count, 1)
+        self.assertEqual(leidos, [(1, 1)], "se leen las fichas del ZIP nuevo, no del viejo")
+
+    def test_el_zip_de_un_ano_cerrado_no_caduca_nunca(self):
+        """Los de 2024 y 2025 pesan 1,7 y 2,0 GB y ya no cambian: volver a pedirlos no
+        traería ni una licitación nueva."""
+        self._envejecer(self._en_cache(self.anio - 1), 24 * 365 * 5)
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero") as bajar:
+            list(self.fuente.historico(self.anio - 1))
+        bajar.assert_not_called()
+
+    def test_un_zip_caducado_pero_legible_no_se_borra_antes_de_bajar_el_nuevo(self):
+        """Un ZIP viejo son 1,3 GB que YA sirven. Borrarlo antes de bajar el nuevo, y
+        que la descarga falle, deja al usuario sin ningún histórico."""
+        self._envejecer(self._en_cache(self.anio), 48)
+        visto = {}
+
+        def falla(url, destino, **kw):
+            visto["existia"] = destino.exists()
+            raise net.ErrorRed("se cortó la conexión")
+
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero", side_effect=falla):
+            leidos = self._ficheros_leidos(self.anio)
+        self.assertTrue(visto["existia"], "el viejo tiene que seguir ahí mientras se baja")
+        self.assertEqual(leidos, [(1, 3), (2, 3), (3, 3)], "se sigue con el viejo")
+
+    def test_si_falla_refrescar_el_ano_en_curso_se_avisa_pero_no_se_aborta(self):
+        """La etapa no puede caerse por no poder refrescar algo que ya está: si se
+        propagara, una carga que trajo todo lo que había diría «alguna fuente falló»."""
+        self._envejecer(self._en_cache(self.anio), 48)
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero",
+                        side_effect=net.ErrorRed("timeout tras 4 intentos")):
+            with self.assertLogs("radar.sources.placsp", "WARNING") as registro:
+                list(self.fuente.historico(self.anio))
+        self.assertIn("Se sigue con el que ya había", "\n".join(registro.output))
+
+    def test_un_404_al_refrescar_no_borra_el_historico_que_ya_teniamos(self):
+        """PLACSP puede retirar el ZIP del año en curso a mitad de año."""
+        ruta = self._en_cache(self.anio)
+        self._envejecer(ruta, 48)
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero",
+                        side_effect=net.ErrorRed("no existe", codigo=404)):
+            leidos = self._ficheros_leidos(self.anio)
+        self.assertEqual(leidos, [(1, 3), (2, 3), (3, 3)])
+        self.assertTrue(zipfile.is_zipfile(ruta))
+
+    def test_un_zip_ilegible_que_tampoco_se_puede_descargar_si_deja_fallar_el_ano(self):
+        """Aquí no hay nada que conservar, así que el error tiene que subir: es lo que
+        permite al pipeline distinguir «ese año no existe» de una avería."""
+        (self.cache / f"licitaciones_{self.anio}.zip").write_text("no soy un zip")
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero",
+                        side_effect=net.ErrorRed("se cortó")):
+            with self.assertRaises(net.ErrorRed):
+                list(self.fuente.historico(self.anio))
+
+    def test_un_mtime_del_futuro_no_se_lee_como_caducado(self):
+        """Un reloj mal puesto o una copia restaurada dan una antigüedad negativa."""
+        self._envejecer(self._en_cache(self.anio), -48)
+        with mock.patch("radar.sources.placsp.net.descargar_a_fichero") as bajar:
+            list(self.fuente.historico(self.anio))
+        bajar.assert_not_called()
+
+    def test_el_ano_en_curso_se_decide_con_la_fecha_de_hoy(self):
+        self.assertTrue(placsp._es_anio_en_curso(2026, date(2026, 3, 1)))
+        self.assertFalse(placsp._es_anio_en_curso(2025, date(2026, 1, 1)))
+
+    def test_el_umbral_es_la_unica_palanca(self):
+        """Que no haya un plazo escrito por duplicado en otro sitio."""
+        self._envejecer(self._en_cache(self.anio), 1)
+        with mock.patch.object(placsp, "HORAS_CADUCIDAD_ANIO_EN_CURSO", 0), \
+             mock.patch("radar.sources.placsp.net.descargar_a_fichero",
+                        side_effect=self._bajar_uno_nuevo) as bajar:
+            list(self.fuente.historico(self.anio))
         self.assertEqual(bajar.call_count, 1)
 
 

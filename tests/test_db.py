@@ -132,6 +132,60 @@ class TestGuardar(unittest.TestCase):
                 self.assertEqual(n, 1)
 
 
+class TestMigracion(unittest.TestCase):
+    """La base de cada compañero se autocorrige al arrancar.
+
+    `CREATE TABLE IF NOT EXISTS` no toca una tabla que ya existe, así que sin la
+    migración las bases en uso —con su triaje y sus notas dentro— se quedan sin las
+    columnas nuevas y la aplicación falla al consultarlas.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.ruta = Path(self.dir.name) / "vieja.db"
+
+    def test_una_base_de_una_version_anterior_recibe_columna_e_indice(self):
+        import sqlite3
+
+        # El esquema de antes es el de ahora sin la columna nueva. Se construye quitando
+        # sus dos líneas en lugar de con DROP COLUMN, que pide SQLite 3.35 y aquí se
+        # soporta más atrás; el assert de abajo avisa si el recorte deja de aplicar.
+        viejo = db.ESQUEMA.replace(
+            "    -- Huella con la que se evaluaron los perfiles la última vez. "
+            "Ver COLUMNAS_NUEVAS.\n"
+            "    huella_evaluada           TEXT,\n",
+            "",
+        )
+        self.assertNotIn("huella_evaluada", viejo, "el recorte del esquema ya no aplica")
+
+        con = sqlite3.connect(self.ruta)
+        con.executescript(viejo)
+        con.execute(
+            "INSERT INTO licitaciones (fuente, id_externo, huella, texto_busqueda, "
+            "visto_primera_vez, visto_ultima_vez) VALUES ('prueba', 'X1', 'hhh', "
+            "'texto', '2026-01-01', '2026-01-01')"
+        )
+        con.commit()
+        con.close()
+
+        con = db.conectar(self.ruta)
+        self.addCleanup(con.close)
+        columnas = {f["name"] for f in con.execute("PRAGMA table_info(licitaciones)")}
+        self.assertIn("huella_evaluada", columnas)
+        indices = {
+            f[0] for f in con.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        self.assertIn("idx_lic_pendientes", indices)
+        # Y la ficha que ya estaba queda pendiente de evaluar, no dada por evaluada:
+        # darla por buena esconderla para siempre si nunca llegó a evaluarse.
+        self.assertEqual(
+            con.execute("SELECT COUNT(*) FROM licitaciones "
+                        "WHERE huella_evaluada IS NOT huella").fetchone()[0], 1)
+
+
 class TestSnapshots(unittest.TestCase):
     """El snapshot de cada versión guarda solo lo que se usa.
 

@@ -147,6 +147,50 @@ class TestIndicador(unittest.TestCase):
         self.assertEqual(self.ind._bytes, 0)
         self.assertEqual(self.ind._paginas, 2)
 
+    def test_los_bytes_heredados_no_inflan_la_velocidad(self):
+        """Al reanudar, lo que ya estaba en el `.parcial` no se ha descargado ahora.
+
+        Repartir 1,2 GB heredados entre los segundos que lleva el intento nuevo daba
+        «400 MB/s», que es la única cifra peor que no dar ninguna: quien mira la
+        pantalla la usa para decidir si la descarga va bien o se está atascando.
+        """
+        self.ind.reiniciar_bytes(heredados=1_200_000_000)
+        self.ind.sumar_bytes(5_000_000)
+        self.ind._t_bytes -= 10  # como si llevara diez segundos bajando
+        self.assertAlmostEqual(self.ind._velocidad(), 500_000, delta=50_000)
+        self.assertEqual(self.ind._bytes, 1_205_000_000, "la barra sí cuenta lo heredado")
+
+    def test_la_barra_no_vuelve_a_cero_al_reanudar(self):
+        """Si el porcentaje se reiniciara, reanudar al 92% parecería empezar de nuevo."""
+        self.ind._fuente = "placsp:licitaciones"
+        self.ind._fase = "descargando, reanudando"
+        self.ind.reiniciar_bytes(heredados=1_200_000_000)
+        self.ind.bytes_totales(1_300_000_000)
+        self.assertIn("(92%)", self.ind._resumen())
+
+    def test_la_frase_de_una_reanudacion_dice_que_se_reanuda(self):
+        """La fase lleva un sufijo, así que la comparación tiene que ser por prefijo:
+        con un `==` esto caía en la rama de las fichas y decía «Leyendo las fichas»
+        mientras descargaba."""
+        self.ind._titulo = "la Plataforma de Contratación del Estado"
+        self.ind._tarea = "el histórico de 2026"
+        self.ind._fase = "descargando, reanudando"
+        self.ind.reiniciar_bytes(heredados=600 << 20)
+        self.ind.bytes_totales(1200 << 20)
+        frase = self.ind._frase()
+        self.assertTrue(frase.startswith("Reanudando la descarga del histórico de 2026"),
+                        frase)
+        self.assertIn("de 1200,0 MB", frase)
+
+    def test_un_reintento_no_se_cuenta_como_lectura_de_fichas(self):
+        """Con reintentos, estas dos fases pueden estar minutos en pantalla."""
+        self.ind._titulo = "el diario oficial de la Unión Europea"
+        self.ind._fichas = 500
+        self.ind._fase = "reconectando (2/4)"
+        self.assertIn("Conectando con el servidor", self.ind._frase())
+        self.ind._fase = "falló el intento 2/4, reintento en 4s"
+        self.assertIn("Se ha cortado la descarga", self.ind._frase())
+
     def test_una_terminal_cerrada_no_tumba_la_ingesta(self):
         salida = SalidaFalsa(tty=True)
         self.iniciar(salida)
