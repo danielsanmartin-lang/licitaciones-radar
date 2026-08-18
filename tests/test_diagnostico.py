@@ -247,18 +247,32 @@ class TestCache(unittest.TestCase):
         self.assertEqual(c.datos["parciales"], ["licitaciones_2026.zip.parcial"])
         self.assertIn("reanudan", c.remedio)
 
+    def test_el_hueco_de_icloud_se_reconoce_por_los_bloques(self):
+        """Un fichero que declara 1,8 GB y no tiene ni un bloque detrás está vaciado."""
+        class Hueco:
+            st_size, st_blocks = 1_800_000_000, 0
+
+        class Entero:
+            st_size, st_blocks = 1_800_000_000, 3_515_625
+
+        class SinSoporte:  # Windows no trae st_blocks
+            st_size = 1_800_000_000
+
+        self.assertTrue(diagnostico._sin_bloques(Hueco()))
+        self.assertFalse(diagnostico._sin_bloques(Entero()))
+        self.assertFalse(diagnostico._sin_bloques(SinSoporte()),
+                         "sin el dato, lo correcto es no tocar nada")
+
     def test_un_zip_vaciado_por_icloud_no_se_abre(self):
         """Abrirlo dispara la descarga de 1,8 GB que iCloud se llevó, y este comando
-        promete no hacer nada."""
-        ruta = self._zip("licitaciones_2024.zip")
-        real = os.stat(ruta)
+        promete no hacer nada.
 
-        class Hueco:
-            st_size = 1_800_000_000
-            st_blocks = 0
-            st_mtime = real.st_mtime
-
-        with mock.patch.object(diagnostico.os, "stat", return_value=Hueco()), \
+        Se parchea `_sin_bloques` y no `os.stat`: el código llama a `Path.stat()`, que en
+        Python 3.9 no pasa por el `os` del módulo, así que parchear ahí daba un test que
+        pasaba en 3.14 y fallaba en 3.9.
+        """
+        self._zip("licitaciones_2024.zip")
+        with mock.patch.object(diagnostico, "_sin_bloques", return_value=True), \
              mock.patch.object(diagnostico.zipfile, "is_zipfile",
                                side_effect=AssertionError("no se puede abrir")):
             c = diagnostico.cache_de_historicos(self.cache)

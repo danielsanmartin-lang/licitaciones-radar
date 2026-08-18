@@ -75,6 +75,25 @@ def _gb(n: float) -> str:
     return f"{n / 1e9:.1f} GB".replace(".", ",")
 
 
+def _sin_bloques(info) -> bool:
+    """¿El fichero declara un tamaño que no está en el disco?
+
+    iCloud vacía los ficheros grandes de las carpetas sincronizadas y deja el hueco: el
+    directorio sigue diciendo 1,8 GB y detrás no hay ni un bloque. Abrirlo dispara la
+    descarga, y este comando promete no hacer nada.
+
+    Es una función con nombre y no dos líneas dentro del bucle para que se pueda probar sin
+    falsear `os.stat`: el código llama a `Path.stat()`, que en Python 3.9 no pasa por el
+    `os` de este módulo, así que un test que parchee ahí funciona en 3.14 y falla en 3.9.
+    Lo cazó el CI.
+
+    `st_blocks` no existe en todas las plataformas —Windows no lo trae— y ahí la respuesta
+    correcta es «no lo sé, no toques nada».
+    """
+    bloques = getattr(info, "st_blocks", None)
+    return bool(info.st_size) and bloques == 0
+
+
 def _abrir_solo_lectura(bd: Path) -> sqlite3.Connection:
     """Abre la base sin poder escribirla ni crearla.
 
@@ -459,8 +478,7 @@ def cache_de_historicos(dir_cache: Path | None = None) -> Comprobacion:
     for f in zips:
         info = f.stat()
         total += info.st_size
-        bloques = getattr(info, "st_blocks", None)
-        if info.st_size and bloques == 0:
+        if _sin_bloques(info):
             sin_bytes.append(f.name)
             continue
         try:

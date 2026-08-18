@@ -18,6 +18,7 @@ el servidor, y un ZIP corrupto no se descubre hasta cuarenta minutos después.
 # que es el mínimo que declara el proyecto y el que prueba el CI.
 from __future__ import annotations
 
+import io
 import json
 import ssl
 import tempfile
@@ -158,8 +159,15 @@ class TestDescargarAFicheroReanudable(unittest.TestCase):
 
     def _error_http(self, codigo: int, razon: str) -> urllib.error.HTTPError:
         """HTTPError como el que suelta urllib, y cerrado al terminar: hereda de
-        `addinfourl` y sin cerrarlo el recolector avisa de un recurso sin liberar."""
-        exc = urllib.error.HTTPError(URL, codigo, razon, {}, None)
+        `addinfourl` y sin cerrarlo el recolector avisa de un recurso sin liberar.
+
+        El cuerpo vacío no es decoración. Con `fp=None`, `HTTPError` no llega a inicializar
+        su parte de `addinfourl`, así que en Python 3.9 `close()` muere con
+        `KeyError: 'file'` —lo cazó el CI, porque en 3.14 no pasa—. Con un flujo de verdad,
+        cerrarlo funciona en las dos versiones. `descargar_a_fichero` no lee el cuerpo de
+        los 4xx, así que vacío es suficiente.
+        """
+        exc = urllib.error.HTTPError(URL, codigo, razon, {}, io.BytesIO(b""))
         self.addCleanup(exc.close)
         return exc
 
