@@ -6,4 +6,4 @@ que subir este número **y** etiquetarla igual: si no coinciden, el actualizador
 a instalarla, que es justo lo que se quiere cuando el paquete no es lo que dice ser.
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"

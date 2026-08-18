@@ -261,12 +261,21 @@ código al repositorio no actualiza a nadie. Para publicar una:
 1. Sube `__version__` en `radar/__init__.py`.
 2. Etiqueta la release con ese mismo número. Si no coinciden, el actualizador se niega a
    instalarla —que es lo que se quiere cuando el paquete no es lo que dice ser—.
-3. Pega el SHA-256 del zip en las notas de la release. Es opcional, pero si está se
-   comprueba, y así una descarga corrompida a medio camino no llega a sustituir nada:
 
 ```bash
-shasum -a 256 licitaciones-radar-1.0.2.zip
+gh release create v1.1.0 --title "v1.1.0 — …" --notes "…"
 ```
+
+Lo que se descarga es el zip que GitHub genera del propio tag, no un fichero que haya que
+subir. Y **el repositorio tiene que ser público**: si no, la comprobación de versión
+recibe un 404 y el botón no aparece —eso ya lo explica el mensaje de error—.
+
+Sobre el SHA-256: el actualizador busca uno en las notas y, si lo encuentra, exige que
+cuadre. Suena bien y es una trampa, porque ese zip lo genera GitHub al vuelo y su suma
+puede cambiar sin que cambie el código; el día que pase, nadie podría actualizar y el
+mensaje hablaría de un SHA que no le dice nada a quien lo lee. La defensa real es HTTPS
+contra este repositorio, así que las notas van sin SHA salvo que alguien se comprometa a
+mantenerlo.
 
 ### Que se actualice solo
 
