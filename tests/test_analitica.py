@@ -495,6 +495,71 @@ class TestComunidades(Base):
         self.assertEqual(d["excluidos"][0]["organo"], "Racionalización")
         self.assertEqual(d["excluidos"][0]["total_de_su_comunidad"], 400_000 + grande)
 
+    def test_los_lotes_de_un_expediente_se_suman(self):
+        """Cataluña emite una fila POR LOTE y PLACSP una por licitación.
+
+        Con un `MAX` a secas, de un contrato de tres lotes se contaba el mayor y se
+        tiraban los otros dos. Medido sobre la base real, Cataluña era la única comunidad
+        afectada: 51,9 M€ contra los 61,7 M€ reales.
+        """
+        for i, imp in enumerate((100_000, 60_000, 40_000)):
+            self._añadir(f"lote{i}", expediente="E/multi", estado="adjudicada",
+                         ccaa="Cataluña", importe_adjudicacion=imp, lote_num=str(i + 1))
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual(d["comunidades"][0]["importe"], 200_000)
+        self.assertEqual(d["comunidades"][0]["expedientes"], 1, "sigue siendo un expediente")
+
+    def test_la_republicacion_de_un_lote_no_se_suma_dos_veces(self):
+        """El otro lado de la moneda, y la razón de que la agregación sea de dos niveles.
+
+        Sumar en bruto daría 76,7 M€ para Cataluña en vez de 61,7: hay 59 pares
+        (expediente, lote) con más de un anuncio. Dentro del lote manda el MAX.
+        """
+        self._añadir("v1", expediente="E/rep", estado="adjudicada", ccaa="Cataluña",
+                     importe_adjudicacion=50_000, lote_num="1")
+        self._añadir("v2", expediente="E/rep", estado="adjudicada", ccaa="Cataluña",
+                     importe_adjudicacion=55_000, lote_num="1")
+        self._añadir("otro", expediente="E/rep", estado="adjudicada", ccaa="Cataluña",
+                     importe_adjudicacion=30_000, lote_num="2")
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual(d["comunidades"][0]["importe"], 85_000,
+                         "55.000 del lote 1 (el mayor de sus dos anuncios) + 30.000 del 2")
+
+    def test_un_expediente_sin_lotes_se_agrega_como_siempre(self):
+        """PLACSP no publica lote, así que su republicación tiene que seguir dando el MAX."""
+        self._añadir("a", expediente="E/uno", estado="adjudicada", ccaa="Madrid",
+                     importe_adjudicacion=100_000)
+        self._añadir("b", expediente="E/uno", estado="adjudicada", ccaa="Madrid",
+                     importe_adjudicacion=120_000)
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual(d["comunidades"][0]["importe"], 120_000)
+
+    def test_el_recuento_incluye_los_macro_contratos_que_el_importe_aparta(self):
+        """Es la diferencia que hace que Madrid diga 14 por número y 12 por dinero.
+
+        Un recuento no lo desequilibra un contrato grande, y apartarlo escondería una
+        licitación que existe y a la que se puede ir.
+        """
+        self._añadir("normal", expediente="E/1", estado="adjudicada", ccaa="Madrid",
+                     importe_adjudicacion=400_000)
+        self._añadir("marco", expediente="E/2", estado="adjudicada", ccaa="Madrid",
+                     importe_adjudicacion=consultas.IMPORTE_MAXIMO_COMPARABLE + 1)
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual(d["comunidades"][0]["expedientes"], 1, "en las barras de dinero")
+        self.assertEqual(d["recuento"][0]["expedientes"], 2, "en el recuento, los dos")
+        self.assertEqual(d["expedientes_contados"], 2)
+
+    def test_el_recuento_ordena_por_numero_y_no_por_dinero(self):
+        """Los dos ordenes no coinciden, y ese desajuste es el motivo del gráfico."""
+        self._añadir("caro", expediente="E/caro", estado="adjudicada", ccaa="Madrid",
+                     importe_adjudicacion=900_000)
+        for i in range(3):
+            self._añadir(f"barato{i}", expediente=f"E/b{i}", estado="adjudicada",
+                         ccaa="Cataluña", importe_adjudicacion=10_000)
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual(d["comunidades"][0]["ccaa"], "Madrid", "por dinero manda Madrid")
+        self.assertEqual(d["recuento"][0]["ccaa"], "Cataluña", "por número, Cataluña")
+
     def test_el_pie_siempre_cuadra(self):
         for i, imp in enumerate((1_000, 90_000_000, 500_000, 60_000_000)):
             self._adjudicada(f"x{i}", "Galicia", imp)

@@ -291,7 +291,43 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False) -> dict:
             )
         ],
         "fuentes": salud(con, en_marcha),
+        "cobertura": cobertura(con),
     }
+
+
+def cobertura(con) -> dict:
+    """Los agujeros de esta base, en cifras, para que la pantalla no tenga que inventarlas.
+
+    Solo lo que cambia con los datos: cuántos expedientes se quedan sin comunidad —y por
+    tanto fuera del reparto territorial y del filtro— y desde cuándo tiene histórico cada
+    fuente, que es muy desigual. El resto de las limitaciones son prosa fija y viven en la
+    interfaz, porque no dependen de la base.
+
+    Se calcula sobre expedientes y entrando por `matches`, como la Analítica, para que las
+    dos pestañas no digan cosas distintas.
+    """
+    entrada, params = _entrada_expedientes()
+    fila = con.execute(
+        "SELECT COUNT(*) AS expedientes,"
+        "       COUNT(CASE WHEN cc IS NULL THEN 1 END) AS sin_comunidad,"
+        "       COUNT(CASE WHEN cc IS NULL AND fu LIKE '%ted%' THEN 1 END) AS sin_comunidad_ted"
+        "  FROM ("
+        f"   SELECT {_GRUPO} AS g, MAX(l.ccaa) AS cc,"
+        "          GROUP_CONCAT(DISTINCT l.fuente) AS fu"
+        f"  {entrada} GROUP BY g)", params
+    ).fetchone()
+    fuentes = [
+        {"fuente": f["fuente"], "desde": f["desde"], "hasta": f["hasta"]}
+        for f in con.execute(
+            "SELECT l.fuente,"
+            "       MIN(substr(l.fecha_publicacion, 1, 7)) AS desde,"
+            "       MAX(substr(l.fecha_publicacion, 1, 7)) AS hasta"
+            f"{entrada} AND l.fecha_publicacion IS NOT NULL"
+            " GROUP BY l.fuente ORDER BY l.fuente", params)
+    ]
+    datos = {k: fila[k] for k in fila.keys()}
+    datos["fuentes"] = fuentes
+    return datos
 
 
 def _ultima_busqueda(con) -> str | None:
@@ -1325,9 +1361,22 @@ def _reparto_por_comunidad(filas: list, campo: str) -> dict:
     for f in fuera:
         total_real[f["ccaa"]] = total_real.get(f["ccaa"], 0.0) + f[campo]
 
+    # El recuento va aparte y SIN umbral. Un recuento no lo distorsiona un contrato
+    # grande, así que apartarlo solo escondería licitaciones que existen y a las que se
+    # puede ir. Es la diferencia que hace que Madrid diga 14 aquí y 12 en las barras de
+    # dinero, y por eso el bloque de número lo explica al pie en lugar de disimularlo.
+    cuantos: dict = {}
+    for f in con_comunidad:
+        cuantos[f["ccaa"]] = cuantos.get(f["ccaa"], 0) + 1
+
     en_barras = sum(v["importe"] for v in por.values())
     excluido = sum(f[campo] for f in fuera)
     return {
+        "recuento": [
+            {"ccaa": c, "expedientes": n}
+            for c, n in sorted(cuantos.items(), key=lambda x: (-x[1], x[0]))
+        ],
+        "expedientes_contados": len(con_comunidad),
         "comunidades": [
             {"ccaa": c, "importe": v["importe"], "expedientes": v["expedientes"]}
             for c, v in sorted(por.items(), key=lambda x: -x[1]["importe"])
@@ -1360,6 +1409,17 @@ def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
     Lo que sí rompía el gráfico eran los macro-contratos, y de eso se encarga
     `_reparto_por_comunidad` con `IMPORTE_MAXIMO_COMPARABLE`.
 
+    **El importe se agrega en dos niveles, y esto no es un capricho.** Las fuentes no
+    publican igual: PLACSP emite una fila por licitación y Cataluña una fila POR LOTE
+    (`catalunya.py`, `id_externo = f"{interno}#{lote}"`). Con un `MAX` a secas, de un
+    contrato catalán de ocho lotes se cuenta el lote mayor y se tiran los otros siete.
+    Medido: Cataluña es la ÚNICA comunidad donde `MAX` y suma difieren —51,9 M€ contra
+    61,7 M€, un 19%— y por eso salía cuarta cuando por actividad es la segunda. Pero
+    sumar en bruto tampoco vale: hay 59 pares (expediente, lote) con más de un anuncio,
+    que son republicaciones del mismo lote, y sumarlas daría 76,7 M€. Así que `MAX`
+    dentro de cada lote —mata la republicación— y `SUMA` entre lotes —recompone el
+    contrato—. Las demás comunidades no se mueven ni un céntimo.
+
     Una sola consulta para las dos vistas, y el reparto en Python, como todo lo demás
     aquí. El rango temporal se aplica en Python y no con un HAVING porque las dos vistas
     no lo quieren igual: las adjudicaciones son historia y se acotan, y las activas son
@@ -1371,8 +1431,8 @@ def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
     # El orden de los parámetros es el de APARICIÓN en el texto: `viva` va en el SELECT,
     # que se escribe antes del FROM donde entra el perfil. La misma trampa que ya
     # documentan `ventanas_vencimiento` y `_bloque_cartera`.
-    filas = list(con.execute(
-        f"SELECT {_GRUPO} AS g,"
+    por_lote = (
+        f"SELECT {_GRUPO} AS g, COALESCE(l.lote_num, '') AS lote,"
         " MIN(substr(l.fecha_publicacion, 1, 7)) AS mes,"
         " MAX(l.ccaa) AS ccaa,"
         " MAX(l.importe_adjudicacion) AS adj,"
@@ -1381,7 +1441,14 @@ def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
         " MAX(l.objeto) AS objeto,"
         f" MAX(CASE WHEN {viva} THEN 1 ELSE 0 END) AS abierta,"
         " MAX(CASE WHEN l.importe_adjudicacion IS NOT NULL THEN 1 ELSE 0 END) AS adjudicada"
-        f"{entrada} GROUP BY g",
+        f"{entrada} GROUP BY g, lote"
+    )
+    filas = list(con.execute(
+        "SELECT g, MIN(mes) AS mes, MAX(ccaa) AS ccaa,"
+        " SUM(adj) AS adj, SUM(pres) AS pres,"
+        " MAX(organo) AS organo, MAX(objeto) AS objeto,"
+        " MAX(abierta) AS abierta, MAX(adjudicada) AS adjudicada"
+        f" FROM ({por_lote}) GROUP BY g",
         p_viva + params,
     ))
 

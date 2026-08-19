@@ -158,6 +158,71 @@ function query(extra = {}) {
 
 // --- Resumen y cabecera ----------------------------------------------------
 
+// --- Qué cubre y qué no ----------------------------------------------------
+//
+// Los límites de la herramienta, siempre a mano y plegados. Las cifras salen del dato y
+// no escritas a mano —si TED empezara a publicar región, el número baja solo—; el resto
+// es prosa fija porque no depende de la base. Ningún porcentaje cableado aquí: eso
+// envejece en silencio y acaba mintiendo.
+const COBERTURA_ABIERTA = 'cobertura-abierta';
+
+function pintarCobertura(c) {
+  if (!c) return;
+  const caja = $('cobertura');
+  const sinCom = c.sin_comunidad.toLocaleString('es-ES');
+  const total = c.expedientes.toLocaleString('es-ES');
+  $('cobertura-resumen').textContent =
+    `Qué cubre y qué no este radar · ${sinCom} de ${total} expedientes sin comunidad`;
+
+  const desde = {};
+  for (const f of c.fuentes || []) desde[f.fuente] = f.desde;
+  const placsp = desde['placsp:licitaciones'];
+  const historico = [['PLACSP', placsp], ['TED', desde.ted], ['Cataluña', desde.catalunya]]
+    .filter(([, d]) => d).map(([n, d]) => `${n} desde ${d}`).join(', ');
+
+  const puntos = [
+    [`TED no publica región.`,
+     ` ${sinCom} de ${total} expedientes se quedan sin comunidad ` +
+     `(${c.sin_comunidad_ted.toLocaleString('es-ES')} vienen de TED): no entran en el ` +
+     `reparto por comunidad ni los encuentra el filtro territorial.`],
+    ['La comunidad es la del órgano que contrata, no la del trabajo.',
+     ' Las compras centralizadas del Estado se firman en Madrid, así que «Madrid» no es ' +
+     'el mercado madrileño: es España comprando desde Madrid.'],
+    ['El histórico es desigual.',
+     historico ? ` ${historico}.` : ' Todavía no hay histórico descargado.'],
+    ['No se busca dentro de los PDF.',
+     ' Solo en el título, el objeto y la descripción de los lotes, así que un pliego que ' +
+     'solo menciona tu producto por dentro no aparece.'],
+    ['Los contratos menores están desactivados.',
+     ' De 6.572 de muestra solo pasaban 2 el filtro, y uno traía el importe mal.'],
+    ['En el reparto por comunidad, los contratos de más de 50 M€ salen de las barras.',
+     ' No caben en la misma escala; van al pie de cada gráfico con su nombre y su importe.'],
+  ];
+  const lista = $('cobertura-lista');
+  lista.textContent = '';
+  for (const [fuerte, resto] of puntos) {
+    const li = document.createElement('li');
+    li.innerHTML = '<b></b><span></span>';
+    li.querySelector('b').textContent = fuerte;
+    li.querySelector('span').textContent = resto;
+    lista.appendChild(li);
+  }
+
+  // Se pinta una vez y se recuerda cómo lo dejaste. El listener se pone solo la primera
+  // vez: `cargarResumen()` corre cada 12 s durante una búsqueda y si no, se acumularían.
+  if (!caja.dataset.listo) {
+    try {
+      caja.open = localStorage.getItem(COBERTURA_ABIERTA) === '1';
+    } catch { /* sin almacén, plegado y ya está */ }
+    caja.addEventListener('toggle', () => {
+      try {
+        localStorage.setItem(COBERTURA_ABIERTA, caja.open ? '1' : '0');
+      } catch { /* nada que hacer: se plegará al recargar */ }
+    });
+    caja.dataset.listo = '1';
+  }
+}
+
 // --- Avisos de salud de las fuentes ----------------------------------------
 //
 // Se pueden cerrar, y se quedan cerrados hasta que se vuelvan a consultar datos. Eso no
@@ -272,6 +337,7 @@ async function cargarResumen() {
   // Salud de las fuentes: una fuente rota y una fuente sin novedades se ven
   // igual si no se avisa explícitamente.
   pintarAvisos(d.fuentes);
+  pintarCobertura(d.cobertura);
 
   // Pestaña de novedades: solo aparece si hay algo nuevo desde la última visita.
   const tabN = $('tab-novedades');
@@ -1032,9 +1098,30 @@ async function abrirPanel(id) {
   const enlaces = [];
   if (d.url_detalle) enlaces.push([d.url_detalle, 'Ficha en la plataforma oficial']);
   (d.urls_pliegos || []).forEach((u, i) => enlaces.push([u, `Pliego / documento ${i + 1}`]));
-  $('p-enlaces').innerHTML = enlaces.length
-    ? enlaces.map(([u, t]) => `<a href="${encodeURI(u)}" target="_blank" rel="noopener noreferrer">${t}</a>`).join('')
-    : '<span style="color:var(--texto-sec)">Sin enlaces publicados.</span>';
+  // Los enlaces se construyen por DOM y la URL se asigna TAL CUAL, como ya se hace en
+  // `alternarContratos`. Aquí había un `encodeURI(u)` y rompía todos los enlaces de
+  // PLACSP: sus URLs ya vienen percent-encoded del feed, y `encodeURI` no respeta el
+  // `%`, así que `%3D` se volvía `%253D`. Con el `idEvl` doblemente codificado el portal
+  // no resuelve el deeplink y suelta al usuario en la portada; con el `cifrado` del
+  // servlet de documentos, el pliego no se descarga. La URL correcta ya está en la base:
+  // lo único que hacía falta era no tocarla.
+  const caja = $('p-enlaces');
+  caja.textContent = '';
+  if (enlaces.length) {
+    for (const [u, t] of enlaces) {
+      const a = document.createElement('a');
+      a.href = u;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = t;
+      caja.appendChild(a);
+    }
+  } else {
+    const vacio = document.createElement('span');
+    vacio.style.color = 'var(--texto-sec)';
+    vacio.textContent = 'Sin enlaces publicados.';
+    caja.appendChild(vacio);
+  }
 
   // La fecha del cambio es la que publica la fuente. Cuando no hay ninguna —fichas
   // guardadas antes de que se empezara a registrar— se dice que la fecha es la del día
@@ -1512,6 +1599,39 @@ function pintarComunidades(d, titulo, pregunta) {
   return el;
 }
 
+// El hermano por número. Va aparte y no como una opción de `pintarComunidades` porque
+// no comparte casi nada: no hay umbral, no hay tabla de apartados y el pie dice otra cosa.
+function pintarComunidadesRecuento(d, titulo, pregunta) {
+  const el = bloqueAnalitica(titulo, pregunta);
+  el.classList.add('etiquetas-anchas');
+  if (!d.recuento.length) {
+    nota(el, 'No hay ningún expediente con comunidad en este periodo.');
+    return el;
+  }
+  const tope = Math.max(1, ...d.recuento.map((c) => c.expedientes));
+  for (const c of d.recuento) {
+    el.appendChild(filaBarra(c.ccaa, 100 * c.expedientes / tope,
+                             c.expedientes.toLocaleString('es-ES')));
+  }
+  // Dos tarjetas contiguas con cifras distintas para la misma comunidad parecen un
+  // fallo, así que se dice por qué no lo son.
+  if (d.excluidos.length) {
+    const n = d.excluidos.length;
+    const aparta = n === 1
+      ? 'incluido el contrato que el gráfico de importe aparta'
+      : `incluidos los ${n} contratos que el gráfico de importe aparta`;
+    nota(el, `Aquí cuentan los ${d.expedientes_contados.toLocaleString('es-ES')} ` +
+             `expedientes con comunidad, ${aparta} de su escala: un recuento no lo ` +
+             'desequilibra un contrato grande, y dejarlo fuera escondería licitaciones ' +
+             'a las que sí se puede ir.');
+  }
+  nota(el, d.sin_comunidad
+    ? `${d.sin_comunidad.toLocaleString('es-ES')} expedientes no traen comunidad —TED no ` +
+      'publica región— y no entran en el reparto.'
+    : 'Todos los expedientes del periodo traen comunidad.');
+  return el;
+}
+
 function pintarPlazo(d) {
   const el = bloqueAnalitica('Cuánto tiempo tengo para presentar',
     '¿Si lo veo publicado hoy, me da tiempo a preparar la oferta?');
@@ -1680,12 +1800,21 @@ async function cargarAnalitica() {
   const filas = [
     [pintarCalendario(d.calendario), pintarImportes(d.importes)],
     [pintarBaja(d.baja), pintarPlazo(d.plazo)],
+    // Dinero a la izquierda y número a la derecha de la MISMA pregunta: el orden de las
+    // dos listas casi nunca coincide —Cataluña es 3.ª en euros y 2.ª en operaciones, País
+    // Vasco 10.ª y 6.ª— y ese desajuste es justo lo que hay que poder ver de un vistazo.
     [pintarComunidades(d.comunidades.adjudicadas,
                        'Top comunidades por adjudicaciones',
                        '¿Dónde se ha repartido el dinero que ya está adjudicado?'),
-     pintarComunidades(d.comunidades.activas,
+     pintarComunidadesRecuento(d.comunidades.adjudicadas,
+                       'Top comunidades por número total de adjudicaciones',
+                       '¿Dónde se cierran más operaciones, cuesten lo que cuesten?')],
+    [pintarComunidades(d.comunidades.activas,
                        'Top comunidades por licitaciones activas',
-                       '¿Dónde queda dinero en juego, con el plazo todavía abierto?')],
+                       '¿Dónde queda dinero en juego, con el plazo todavía abierto?'),
+     pintarComunidadesRecuento(d.comunidades.activas,
+                       'Top comunidades por número de licitaciones activas',
+                       '¿Dónde hay más pliegos abiertos ahora mismo?')],
     [pintarOrganos(d.organos), pintarCpv(d.cpv)],
     [pintarProcedimiento(d.procedimiento), pintarCiclo(d.ciclo),
      pintarRenovaciones(d.renovaciones)],

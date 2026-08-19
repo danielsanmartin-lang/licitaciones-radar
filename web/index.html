@@ -46,6 +46,15 @@
        reescribe entero cada refresco de los contadores, y se lo llevaría por delante. -->
   <div id="aviso-version" class="avisos" hidden></div>
 
+  <!-- Qué cubre y qué no. Plegado de fábrica: es contexto permanente, no una alarma, y
+       un cartel fijo con seis puntos se deja de leer a la semana. Va fuera de #avisos
+       porque ese se reescribe entero cada refresco. El <details> abre y cierra solo, sin
+       JavaScript; lo único que pone el JS son las cifras y recordar si lo dejaste abierto. -->
+  <details id="cobertura" class="cobertura">
+    <summary id="cobertura-resumen">Qué cubre y qué no este radar</summary>
+    <ul id="cobertura-lista"></ul>
+  </details>
+
   <nav class="vistas">
     <button class="tab activo" data-vista="bandeja">Bandeja</button>
     <button class="tab" data-vista="vencimientos">Vencimientos</button>

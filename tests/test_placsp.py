@@ -96,6 +96,28 @@ class TestLicitaciones(unittest.TestCase):
                 with self.subTest(exp=l.expediente, url=url[:60]):
                     self.assertNotIn("docAccCmpnt", url)
 
+    def test_las_urls_conservan_su_codificacion_tal_y_como_vienen(self):
+        """PLACSP publica las URLs ya percent-encoded y hay que dejarlas quietas.
+
+        El `idEvl` del deeplink y el `cifrado` del servlet de documentos son base64, así
+        que llevan `%2F`, `%2B` y `%3D%3D`. Volver a codificarlos —un `encodeURI` de más
+        en la interfaz, que es lo que pasaba— convierte `%3D` en `%253D`: el portal deja
+        de resolver el deeplink y suelta al usuario en la portada, y el pliego no se
+        descarga. Aquí se protege el lado de Python; el pintado no tiene runner de JS.
+        """
+        detalles = [l.url_detalle for l in self.lics if "idEvl=" in (l.url_detalle or "")]
+        self.assertTrue(detalles, "el fixture trae deeplinks con idEvl")
+        for url in detalles:
+            with self.subTest(url=url[-40:]):
+                self.assertNotIn("%25", url, "doble codificación")
+                self.assertIn("&idEvl=", url, "el & llega desescapado, no como &amp;")
+        pliegos = [u for l in self.lics for u in l.urls_pliegos if "cifrado=" in u]
+        self.assertTrue(pliegos, "el fixture trae enlaces del servlet de documentos")
+        for url in pliegos:
+            with self.subTest(url=url[:60]):
+                self.assertNotIn("%25", url)
+                self.assertIn("%3D", url, "el padding del base64 sigue codificado una vez")
+
     def test_el_texto_de_busqueda_incluye_los_lotes(self):
         con_lotes = [l for l in self.lics if l.lote_desc]
         self.assertTrue(con_lotes, "el fixture debe tener alguna con lotes")

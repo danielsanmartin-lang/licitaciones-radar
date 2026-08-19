@@ -179,8 +179,8 @@ empresa se despliegan sus contratos.
 
 ### Analítica
 
-Las preguntas que no son «qué hay hoy». Doce bloques, cada uno con una pregunta de venta
-delante, en el orden en que se leen:
+Las preguntas que no son «qué hay hoy». Catorce bloques, cada uno con una pregunta de
+venta delante, en el orden en que se leen:
 
 | Bloque | Contesta a |
 |---|---|
@@ -189,7 +189,9 @@ delante, en el orden en que se leen:
 | Importe al que se están cerrando los contratos | cuánto por debajo del presupuesto se están cerrando |
 | Cuánto tiempo tengo para presentar | cuántos días hay del anuncio al cierre del plazo: si lo veo hoy, si da tiempo a escribir la oferta |
 | Top comunidades por adjudicaciones | dónde se ha repartido el dinero que ya está adjudicado |
+| Top comunidades por número total de adjudicaciones | dónde se cierran más operaciones, cuesten lo que cuesten |
 | Top comunidades por licitaciones activas | dónde queda dinero en juego, con el plazo todavía abierto |
+| Top comunidades por número de licitaciones activas | dónde hay más pliegos abiertos ahora mismo |
 | Quién compra | qué órganos de contratación repiten, y a quién merece la pena ir a ver |
 | Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
 | Cómo se compra | por qué puerta se entra: abierto, simplificado, restringido o por invitación |
@@ -200,6 +202,29 @@ delante, en el orden en que se leen:
 Se filtra por perfil y por uno de tres rangos (este año, últimos 24 meses, todo desde
 2024). Los dos bloques que hablan de *ahora* —renovaciones y cartera— ignoran el rango a
 propósito y lo dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+
+Los cuatro bloques de comunidades van emparejados, dinero a la izquierda y número a la
+derecha, porque **los dos órdenes casi nunca coinciden y ahí está la información**:
+Cataluña es la 3.ª por euros y la **2.ª por operaciones**, País Vasco la 10.ª y la 6.ª. Un
+mercado de muchos contratos pequeños y uno de pocos contratos grandes se trabajan distinto.
+
+Tres cosas que conviene tener en la cabeza al leer el reparto territorial:
+
+- **La comunidad es la del órgano que contrata, no la del trabajo.** Los órganos de compra
+  centralizada del Estado están en Madrid, así que Madrid absorbe las compras nacionales:
+  medido, el 67% de su dinero adjudicado son cuatro órganos estatales —Racionalización y
+  Centralización (26%), Adquisiciones de Armamento (19,5%), Administración Digital (12,9%)
+  e Infraestructura del MDE (8,3%)—, mientras que los órganos propios de la Comunidad de
+  Madrid no llegan al 7%. «Madrid» aquí no es el mercado madrileño, y compararlo con el PIB
+  regional es comparar cosas distintas.
+- **El importe de un expediente suma sus lotes, no coge el mayor.** Cataluña publica una
+  fila por lote y PLACSP una por licitación; con un máximo a secas se contaba el lote mayor
+  y se tiraban los demás. Es la única comunidad que se veía afectada: 51,9 M€ contra los
+  61,7 M€ reales, un 19% de menos, que la hacía caer del tercer puesto al cuarto.
+- **Los gráficos de número no aplican el corte de 50 M€.** Un recuento no lo desequilibra un
+  contrato grande, y apartarlo escondería licitaciones a las que sí se puede ir. Por eso una
+  comunidad puede aparecer con más expedientes en el gráfico de número que junto a su barra
+  de dinero, y el pie de cada gráfico lo dice.
 
 Y hay tres cosas que esta pestaña **no** hace, todas por el mismo motivo:
 
