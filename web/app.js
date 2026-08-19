@@ -371,6 +371,16 @@ function tarjeta(it) {
   }
 
   const pills = [];
+  // Va la primera porque es lo único de la fila que caduca solo. `es_nueva` lo decide
+  // el servidor sobre la PRIMERA publicación del expediente: una adjudicación de ayer
+  // sobre un pliego de junio no es una oportunidad nueva, y marcarla como tal manda a
+  // alguien a un contrato ya cerrado.
+  if (it.es_nueva) {
+    const dias = it.dias_desde_publicacion;
+    const cuando = dias === 0 ? 'publicada hoy'
+      : `publicada hace ${dias} ${dias === 1 ? 'día' : 'días'}`;
+    pills.push(`<span class="pill nueva" title="${cuando}">Nueva</span>`);
+  }
   // `perfil` puede traer varios separados por coma: una licitación de protección de
   // correo con formación casa con dos perfiles y antes salía duplicada en la lista.
   for (const p of (it.perfil || '').split(',').filter(Boolean)) {

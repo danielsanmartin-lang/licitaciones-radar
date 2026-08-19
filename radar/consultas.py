@@ -26,8 +26,19 @@ ORDENES = {
         "CASE WHEN orden_urgencia < 0 THEN -orden_urgencia ELSE orden_urgencia END ASC, "
         "puntuacion DESC"
     ),
-    "puntuacion": "puntuacion DESC, l.fecha_publicacion DESC",
-    "reciente": "l.fecha_publicacion DESC",
+    "puntuacion": "puntuacion DESC, primera_publicacion DESC",
+    # Las dos de fecha ordenan por la PRIMERA publicación del expediente, no por la del
+    # anuncio que se enseña. Si fuera por el anuncio, una adjudicación publicada ayer
+    # subiría a lo más alto un expediente de junio que ya está cerrado: medido, 5 de las
+    # 16 que salían arriba eran eso. Es el mismo criterio con el que la Analítica decide
+    # en qué mes «sale» un expediente, y el mismo que enciende la etiqueta «Nueva», así
+    # que ordenar por «más recientes» deja justo las nuevas arriba.
+    "reciente": "primera_publicacion DESC",
+    # El `IS NULL` primero no es adorno: SQLite considera NULL más pequeño que
+    # cualquier valor, así que un ASC a secas abre «las más antiguas» con las que no
+    # traen fecha de publicación, que no son antiguas sino desconocidas. En DESC caen
+    # solas al final y no hace falta.
+    "antigua": "primera_publicacion IS NULL, primera_publicacion ASC",
     "importe": "l.importe_referencia DESC",
 }
 
@@ -44,17 +55,33 @@ ORDENES = {clave: f"{expr}, l.id ASC" for clave, expr in ORDENES.items()}
 _GRUPO = "COALESCE(l.clave_grupo, CAST(l.id AS TEXT))"
 
 
-def _dias_restantes(limite: str | None) -> int | None:
-    if not limite:
+# Cuántos días luce la etiqueta «Nueva». Una semana es lo que tarda alguien en dar una
+# vuelta a la bandeja sin sentir que se le ha escapado algo, y coincide con el plazo más
+# corto que publica esta administración.
+DIAS_NUEVA = 7
+
+
+def _a_fecha(valor: str | None) -> date | None:
+    """Una fecha de la base a `date`, acepte o no hora y zona horaria."""
+    if not valor:
         return None
     try:
-        fecha = datetime.fromisoformat(limite).date()
+        return datetime.fromisoformat(valor).date()
     except ValueError:
         try:
-            fecha = date.fromisoformat(limite[:10])
+            return date.fromisoformat(valor[:10])
         except ValueError:
             return None
-    return (fecha - date.today()).days
+
+
+def _dias_restantes(limite: str | None) -> int | None:
+    fecha = _a_fecha(limite)
+    return None if fecha is None else (fecha - date.today()).days
+
+
+def _dias_desde(publicacion: str | None) -> int | None:
+    fecha = _a_fecha(publicacion)
+    return None if fecha is None else (date.today() - fecha).days
 
 
 def _condiciones(
@@ -195,6 +222,8 @@ def bandeja(
                                - julianday('now') AS INTEGER)
                    END AS orden_urgencia,
                    COUNT(*) OVER (PARTITION BY {_GRUPO}) AS anuncios,
+                   MIN(l.fecha_publicacion) OVER (PARTITION BY {_GRUPO})
+                       AS primera_publicacion,
                    ROW_NUMBER() OVER (
                        PARTITION BY {_GRUPO}
                        ORDER BY l.fecha_publicacion DESC, l.id DESC
@@ -228,6 +257,11 @@ def bandeja(
         d.pop("raw", None)
         d.pop("texto_busqueda", None)
         d["dias_restantes"] = _dias_restantes(d.get("fecha_limite_presentacion"))
+        # «Nueva» se decide aquí y no en la interfaz: la regla vive en un sitio, y así
+        # el CSV y la pantalla no pueden discrepar sobre qué es reciente.
+        dias = _dias_desde(d.get("primera_publicacion"))
+        d["dias_desde_publicacion"] = dias
+        d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
         items.append(d)
 
     return {"total": total, "total_sin_filtros": total_sin_filtros, "items": items}

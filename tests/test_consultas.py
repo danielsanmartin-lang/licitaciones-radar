@@ -97,6 +97,104 @@ class TestBandeja(unittest.TestCase):
         self.assertEqual(len(filas), 5)
 
 
+class TestNuevasYOrdenPorPublicacion(unittest.TestCase):
+    """La etiqueta «Nueva» y el orden por fecha de publicación.
+
+    Las dos miran la PRIMERA publicación del expediente y no la del anuncio que se
+    enseña en la tarjeta, que es el más reciente del grupo. La diferencia no es teórica:
+    sobre la base real, 5 de los 16 expedientes que el criterio ingenuo marcaba como
+    recientes eran pliegos viejos con una adjudicación publicada esta semana, y uno de
+    ellos llevaba adjudicado desde junio.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.con = db.conectar(Path(self.dir.name) / "t.db")
+        self.addCleanup(self.con.close)
+
+    def _añadir(self, nombre, publicacion, *, expediente=None, estado="publicada"):
+        db.guardar(self.con, Licitacion(
+            fuente="prueba", id_externo=nombre, expediente=expediente or nombre,
+            objeto=f"Concienciación en ciberseguridad {nombre}",
+            organo="Órgano de prueba", estado=estado,
+            fecha_publicacion=publicacion, valor_estimado=50_000,
+        ))
+        lic = self.con.execute(
+            "SELECT id FROM licitaciones WHERE id_externo = ?", (nombre,)).fetchone()["id"]
+        self.con.execute(
+            "INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)"
+            " VALUES (?, 'p', 3.0, 'm', ?)", (lic, db.ahora()))
+        self.con.commit()
+
+    def _items(self, **kw):
+        return {it["expediente"]: it for it in consultas.bandeja(self.con, **kw)["items"]}
+
+    def test_lo_publicado_esta_semana_sale_marcado(self):
+        self._añadir("hoy", dias(0), expediente="E/hoy")
+        self._añadir("hace6", dias(-6), expediente="E/hace6")
+        items = self._items(solo_vivas=False)
+        self.assertTrue(items["E/hoy"]["es_nueva"])
+        self.assertEqual(items["E/hoy"]["dias_desde_publicacion"], 0)
+        self.assertTrue(items["E/hace6"]["es_nueva"])
+
+    def test_la_etiqueta_caduca_a_los_siete_dias(self):
+        self._añadir("justo", dias(-consultas.DIAS_NUEVA), expediente="E/justo")
+        self._añadir("pasada", dias(-consultas.DIAS_NUEVA - 1), expediente="E/pasada")
+        items = self._items(solo_vivas=False)
+        self.assertTrue(items["E/justo"]["es_nueva"], "el séptimo día todavía cuenta")
+        self.assertFalse(items["E/pasada"]["es_nueva"])
+
+    def test_una_adjudicacion_reciente_no_convierte_en_nuevo_un_pliego_viejo(self):
+        """El caso que justifica todo lo demás: dos anuncios del mismo expediente."""
+        self._añadir("viejo", dias(-90), expediente="E/1")
+        self._añadir("adjudicacion", dias(-1), expediente="E/1", estado="adjudicada")
+        items = self._items(solo_vivas=False)
+        self.assertEqual(len(items), 1, "los dos anuncios son un expediente")
+        ficha = items["E/1"]
+        self.assertEqual(ficha["fecha_publicacion"][:10], dias(-1)[:10],
+                         "la tarjeta enseña el anuncio más reciente")
+        self.assertFalse(ficha["es_nueva"], "pero el expediente no es nuevo")
+        self.assertEqual(ficha["dias_desde_publicacion"], 90)
+
+    def test_sin_fecha_de_publicacion_no_se_marca_nada(self):
+        self._añadir("sinfecha", None, expediente="E/sf")
+        ficha = self._items(solo_vivas=False)["E/sf"]
+        self.assertFalse(ficha["es_nueva"])
+        self.assertIsNone(ficha["dias_desde_publicacion"])
+
+    def test_el_orden_por_publicacion_va_en_los_dos_sentidos(self):
+        self._añadir("a", dias(-30), expediente="E/a")
+        self._añadir("b", dias(-2), expediente="E/b")
+        self._añadir("c", dias(-15), expediente="E/c")
+        recientes = [i["expediente"] for i in
+                     consultas.bandeja(self.con, solo_vivas=False, orden="reciente")["items"]]
+        antiguas = [i["expediente"] for i in
+                    consultas.bandeja(self.con, solo_vivas=False, orden="antigua")["items"]]
+        self.assertEqual(recientes, ["E/b", "E/c", "E/a"])
+        self.assertEqual(antiguas, ["E/a", "E/c", "E/b"])
+
+    def test_las_sin_fecha_no_encabezan_las_mas_antiguas(self):
+        """SQLite ordena NULL antes que cualquier valor, así que un ASC a secas abría
+        «las más antiguas» con las que no tienen fecha: desconocidas, no antiguas."""
+        self._añadir("vieja", dias(-900), expediente="E/vieja")
+        self._añadir("media", dias(-100), expediente="E/media")
+        self._añadir("sinfecha", None, expediente="E/sf")
+        orden = [i["expediente"] for i in
+                 consultas.bandeja(self.con, solo_vivas=False, orden="antigua")["items"]]
+        self.assertEqual(orden, ["E/vieja", "E/media", "E/sf"])
+
+    def test_ordenar_por_reciente_usa_la_primera_publicacion(self):
+        """Si mirara el anuncio mostrado, el expediente viejo con adjudicación de ayer
+        se colocaría por delante del que salió esta semana."""
+        self._añadir("viejo", dias(-90), expediente="E/viejo")
+        self._añadir("su-adjudicacion", dias(-1), expediente="E/viejo", estado="adjudicada")
+        self._añadir("nuevo", dias(-3), expediente="E/nuevo")
+        orden = [i["expediente"] for i in
+                 consultas.bandeja(self.con, solo_vivas=False, orden="reciente")["items"]]
+        self.assertEqual(orden, ["E/nuevo", "E/viejo"])
+
+
 class TestCoherenciaContadores(unittest.TestCase):
     """Cada cifra de la cabecera tiene que ser la misma que sale al pulsarla.
 

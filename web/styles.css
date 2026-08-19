@@ -330,6 +330,14 @@ input[type=search]:focus, select:focus { outline: 2px solid var(--acento); outli
 .pill.perfil { color: var(--acento); border-color: rgba(79,140,255,.4); }
 .pill.anuncios { color: var(--texto); border-style: dashed; }
 .pill.incumbente { color: var(--ambar); border-color: rgba(226,168,56,.45); }
+/* La única píldora rellena de la fila. El resto son contorno y compiten entre sí; ésta
+   tiene que verse al pasar la vista por la lista sin leerla, que es para lo que sirve. */
+.pill.nueva {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: #fff;
+  font-weight: 600;
+}
 
 .fila-empresa { cursor: pointer; }
 .fila-empresa .cifras { display: flex; gap: 18px; font-variant-numeric: tabular-nums; }

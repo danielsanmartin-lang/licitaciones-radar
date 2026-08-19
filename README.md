@@ -132,6 +132,17 @@ Lo que ha pasado el filtro, con **los días que quedan para presentar** bien gra
 a la derecha. De cada licitación se ve el órgano, el importe, el plazo y los enlaces
 a los pliegos oficiales.
 
+Las que llevan menos de una semana publicadas salen con la etiqueta **Nueva**, la única
+rellena de la fila para que se vea sin leer. La semana se cuenta desde la **primera**
+publicación del expediente, no desde el anuncio que se enseña: si una adjudicación de
+ayer marcara como nuevo un pliego de junio, la etiqueta mandaría a alguien a un contrato
+ya cerrado. Medido sobre la base real, ese criterio ingenuo marcaba 16 y cinco eran falsas.
+
+El desplegable de orden ofrece **cierran antes**, **mejor encaje**, **publicación más
+reciente**, **publicación más antigua** y **mayor importe**. Los dos de fecha usan también
+la primera publicación del expediente, así que ordenar por «más reciente» deja justo
+arriba las que llevan la etiqueta Nueva.
+
 Al pulsar una licitación se abre el panel de detalle, donde está lo importante:
 **«Por qué ha entrado»**, que dice exactamente qué palabra o qué CPV la ha hecho
 aparecer. Si algo no debería estar ahí, eso te dice qué afinar.
