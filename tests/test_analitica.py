@@ -221,14 +221,22 @@ class TestImportes(Base):
     def test_no_se_publica_ninguna_suma_de_importes(self):
         """`clave_grupo` no deduplica entre fuentes: en la base real hay 126 expedientes
         repetidos que arrastran 1.038 M€, un 9,7% de la suma. Cualquier total sería un
-        número inventado con cara de dato."""
+        número inventado con cara de dato.
+
+        La única excepción es `comunidades`, y no es un agujero en la regla sino un sitio
+        donde el razonamiento de arriba no se sostiene: TED no publica región, así que la
+        copia de TED de cada duplicado cae en «sin comunidad» y no en el total de ninguna.
+        Eso lo prueba `TestComunidades.test_el_duplicado_de_ted_no_infla_ninguna_comunidad`,
+        y por eso ese bloque se salta aquí en vez de esquivar el guardia con un nombre de
+        clave distinto. Para todos los demás la prohibición sigue entera.
+        """
         self._añadir("uno", importe_sin_iva=100_000)
         # Nombres exactos y no subcadenas: `mediana` contiene «media» y es justo lo que
         # sí se publica. Lo prohibido es la media aritmética y cualquier total.
         prohibidas = {"media", "suma", "importe_total", "total_importe", "suma_importes"}
         d = consultas.analitica(self.con)
         for bloque, contenido in d.items():
-            if not isinstance(contenido, dict):
+            if bloque == "comunidades" or not isinstance(contenido, dict):
                 continue
             for clave in contenido:
                 with self.subTest(bloque=bloque, clave=clave):
@@ -429,6 +437,194 @@ class TestRenovaciones(Base):
         self.assertEqual(d["renovaciones"]["expedientes"], 1)
         self.assertTrue(d["renovaciones"]["siempre_a_fecha_de_hoy"])
         self.assertTrue(d["cartera"]["siempre_a_fecha_de_hoy"])
+
+
+class TestComunidades(Base):
+    """El reparto territorial: el único bloque que suma dinero, y por qué puede.
+
+    Las dos primeras pruebas protegen la excepción a la regla de «ninguna suma»; la
+    tercera protege que el gráfico se pueda leer, que es lo que se perdía cuando un
+    sistema dinámico de 2.646 M€ entraba en la misma escala que un contrato de 70.000 €.
+    """
+
+    def _adjudicada(self, nombre, ccaa, importe, **campos):
+        return self._añadir(nombre, expediente=f"E/{nombre}", estado="adjudicada",
+                            ccaa=ccaa, importe_adjudicacion=importe, **campos)
+
+    def test_suma_por_comunidad_y_ordena_de_mas_a_menos(self):
+        self._adjudicada("a", "Madrid", 300_000)
+        self._adjudicada("b", "Madrid", 200_000)
+        self._adjudicada("c", "Galicia", 400_000)
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual([(c["ccaa"], c["importe"], c["expedientes"])
+                          for c in d["comunidades"]],
+                         [("Madrid", 500_000, 2), ("Galicia", 400_000, 1)])
+
+    def test_el_duplicado_de_ted_no_infla_ninguna_comunidad(self):
+        """La prueba que sostiene la excepción a «ninguna cifra de dinero total».
+
+        El mismo contrato real llega dos veces con `clave_grupo` distinta —una por PLACSP
+        y otra por TED— y eso es lo que hace inventada cualquier suma del mercado. Pero
+        TED no expone territorio, así que su copia va a «sin comunidad»: el total de
+        Madrid sigue siendo el de un solo contrato, no el de dos.
+        """
+        self._adjudicada("placsp", "Madrid", 100_000, fuente="prueba")
+        self._añadir("ted", expediente="E/otro", estado="adjudicada", ccaa=None,
+                     importe_adjudicacion=100_000, fuente="ted")
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual([c["ccaa"] for c in d["comunidades"]], ["Madrid"])
+        self.assertEqual(d["comunidades"][0]["importe"], 100_000)
+        self.assertEqual(d["sin_comunidad"], 1)
+
+    def test_el_macro_contrato_sale_de_la_barra_pero_no_del_pie(self):
+        """Se aparta de la escala y se enseña con nombre y con el total de su comunidad.
+
+        Con los 2.646 M€ del sistema dinámico dentro, diecisiete comunidades pintaban una
+        barra de un píxel. Apartarlo sin decirlo sería peor: el pie da el total de verdad.
+        """
+        grande = consultas.IMPORTE_MAXIMO_COMPARABLE + 1
+        self._adjudicada("normal", "Madrid", 400_000)
+        self._adjudicada("marco", "Madrid", grande, organo="Racionalización")
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+
+        self.assertEqual(d["comunidades"][0]["importe"], 400_000, "la barra, sin el marco")
+        self.assertEqual(d["importe_en_barras"], 400_000)
+        self.assertEqual(d["importe_excluido"], grande)
+        self.assertEqual(d["importe_con_excluidos"], 400_000 + grande)
+        self.assertEqual(len(d["excluidos"]), 1)
+        self.assertEqual(d["excluidos"][0]["organo"], "Racionalización")
+        self.assertEqual(d["excluidos"][0]["total_de_su_comunidad"], 400_000 + grande)
+
+    def test_el_pie_siempre_cuadra(self):
+        for i, imp in enumerate((1_000, 90_000_000, 500_000, 60_000_000)):
+            self._adjudicada(f"x{i}", "Galicia", imp)
+        d = consultas.analitica(self.con)["comunidades"]["adjudicadas"]
+        self.assertEqual(d["importe_en_barras"] + d["importe_excluido"],
+                         d["importe_con_excluidos"])
+
+    def test_las_adjudicadas_se_acotan_por_el_rango_y_las_activas_no(self):
+        """Las activas hablan de hoy, como la cartera y las renovaciones, y lo declaran.
+
+        Un pliego abierto que se publicó en 2024 sigue abierto hoy: acotarlo por el rango
+        lo escondería justo cuando es lo único que se puede pelear.
+        """
+        self._adjudicada("vieja", "Madrid", 100_000, fecha_publicacion="2024-05-10")
+        self._añadir("viva", expediente="E/viva", estado="publicada", ccaa="Madrid",
+                     importe_sin_iva=70_000, fecha_publicacion="2024-05-10",
+                     fecha_limite_presentacion=self._sqlite_fecha("+10 days"))
+
+        d = consultas.analitica(self.con, desde="2025-01")["comunidades"]
+        self.assertEqual(d["adjudicadas"]["comunidades"], [], "la de 2024 queda fuera")
+        self.assertEqual(d["activas"]["comunidades"][0]["expedientes"], 1)
+        self.assertTrue(d["activas"]["siempre_a_fecha_de_hoy"])
+
+    def test_una_adjudicada_no_cuenta_como_dinero_vivo(self):
+        """La fuente a veces deja el estado en vivo después de publicar la adjudicación,
+        y ese dinero ya no está en juego."""
+        self._añadir("cerrada", expediente="E/c", estado="publicada", ccaa="Madrid",
+                     importe_sin_iva=90_000, importe_adjudicacion=80_000,
+                     fecha_limite_presentacion=self._sqlite_fecha("+10 days"))
+        d = consultas.analitica(self.con)["comunidades"]["activas"]
+        self.assertEqual(d["comunidades"], [])
+
+    def test_el_plazo_vencido_no_es_dinero_vivo(self):
+        self._añadir("vencida", expediente="E/v", estado="publicada", ccaa="Madrid",
+                     importe_sin_iva=90_000,
+                     fecha_limite_presentacion=self._sqlite_fecha("-1 day"))
+        self.assertEqual(
+            consultas.analitica(self.con)["comunidades"]["activas"]["comunidades"], [])
+
+
+class TestPlazo(Base):
+    def test_las_dos_fechas_salen_del_mismo_anuncio(self):
+        """Cruzar la publicación de un anuncio con el plazo de otro fabrica plazos que
+        nadie tuvo. Aquí el mínimo de cada columna por separado daría 14 días."""
+        self._añadir("a", expediente="E/1", fecha_publicacion="2025-03-01",
+                     fecha_limite_presentacion="2025-04-30")
+        self._añadir("b", expediente="E/1", fecha_publicacion="2025-04-01",
+                     fecha_limite_presentacion="2025-03-15")
+        d = consultas.analitica(self.con)["plazo"]
+        self.assertEqual(d["expedientes"], 1)
+        self.assertEqual(d["mediana_dias"], 60)
+
+    def test_el_plazo_ya_vencido_no_entra_como_un_cero(self):
+        """159 expedientes de la base repiten un plazo anterior a su publicación. Como
+        ceros hundirían la mediana, así que se cuentan aparte y se enseñan."""
+        self._añadir("bien", expediente="E/1", fecha_publicacion="2025-03-01",
+                     fecha_limite_presentacion="2025-03-21")
+        self._añadir("mal", expediente="E/2", fecha_publicacion="2025-03-01",
+                     fecha_limite_presentacion="2025-02-01")
+        d = consultas.analitica(self.con)["plazo"]
+        self.assertEqual(d["expedientes"], 1)
+        self.assertEqual(d["mediana_dias"], 20)
+        self.assertEqual(d["con_ambas_fechas"], 2)
+        motivos = {e["motivo"]: e["expedientes"] for e in d["excluidos"]}
+        self.assertEqual(motivos["el plazo ya estaba vencido al publicarse"], 1)
+
+    def test_los_tramos_son_una_particion_de_los_usables(self):
+        for i, dias in enumerate((3, 12, 25, 40, 90)):
+            self._añadir(f"p{i}", expediente=f"E/{i}", fecha_publicacion="2025-01-01",
+                         fecha_limite_presentacion=self._sqlite_fecha())
+            self.con.execute(
+                "UPDATE licitaciones SET fecha_limite_presentacion ="
+                " date('2025-01-01', ?) WHERE id_externo = ?", (f"+{dias} days", f"p{i}"))
+        self.con.commit()
+        d = consultas.analitica(self.con)["plazo"]
+        self.assertEqual(sum(t["expedientes"] for t in d["tramos"]), d["expedientes"])
+        self.assertEqual(d["expedientes"], 5)
+
+    def test_por_debajo_del_minimo_el_bloque_se_marca_insuficiente(self):
+        self._añadir("uno", expediente="E/1", fecha_publicacion="2025-03-01",
+                     fecha_limite_presentacion="2025-03-21")
+        self.assertFalse(consultas.analitica(self.con)["plazo"]["suficiente"])
+
+
+class TestProcedimiento(Base):
+    def test_el_catalan_y_el_castellano_son_el_mismo_procedimiento(self):
+        """Sin normalizar, «Obert» y «Abierto» salen como dos barras de lo mismo."""
+        self._añadir("es", expediente="E/1", procedimiento="Abierto")
+        self._añadir("ca", expediente="E/2", procedimiento="Obert")
+        self._añadir("ca2", expediente="E/3", procedimiento="Obert simplificat")
+        d = consultas.analitica(self.con)["procedimiento"]
+        reparto = {x["procedimiento"]: x["expedientes"] for x in d["procedimientos"]}
+        self.assertEqual(reparto["Abierto"], 2)
+        self.assertEqual(reparto["Abierto simplificado"], 1)
+
+    def test_el_reparto_mas_los_sin_dato_cuadran_con_el_total(self):
+        self._añadir("con", expediente="E/1", procedimiento="Abierto")
+        self._añadir("sin", expediente="E/2", procedimiento=None)
+        d = consultas.analitica(self.con)["procedimiento"]
+        self.assertEqual(
+            sum(x["expedientes"] for x in d["procedimientos"]) + d["sin_dato"],
+            d["expedientes"])
+        self.assertEqual(d["sin_dato"], 1)
+
+    def test_lo_que_no_cabe_en_el_top_se_agrupa_sin_perderse(self):
+        for i in range(consultas.TOP_PROCEDIMIENTOS + 3):
+            self._añadir(f"p{i}", expediente=f"E/{i}", procedimiento=f"Tipo {i}")
+        d = consultas.analitica(self.con)["procedimiento"]
+        self.assertEqual(d["procedimientos"][-1]["procedimiento"], "el resto")
+        self.assertEqual(sum(x["expedientes"] for x in d["procedimientos"]),
+                         d["expedientes"])
+
+
+class TestOrganos(Base):
+    def test_cuenta_expedientes_y_no_anuncios(self):
+        """Tres republicaciones del mismo expediente son un comprador, no tres."""
+        for i in range(3):
+            self._añadir(f"a{i}", expediente="E/1", organo="INCIBE")
+        self._añadir("otro", expediente="E/2", organo="AMTEGA")
+        d = consultas.analitica(self.con)["organos"]
+        reparto = {x["organo"]: x["expedientes"] for x in d["organos"]}
+        self.assertEqual(reparto, {"INCIBE": 1, "AMTEGA": 1})
+        self.assertEqual(d["distintos"], 2)
+
+    def test_se_queda_con_los_primeros_y_lo_dice_en_distintos(self):
+        for i in range(consultas.TOP_ORGANOS + 4):
+            self._añadir(f"o{i}", expediente=f"E/{i}", organo=f"Órgano {i}")
+        d = consultas.analitica(self.con)["organos"]
+        self.assertEqual(len(d["organos"]), consultas.TOP_ORGANOS)
+        self.assertEqual(d["distintos"], consultas.TOP_ORGANOS + 4)
 
 
 class TestCoherencia(Base):

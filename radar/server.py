@@ -76,6 +76,13 @@ class Manejador(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", TIPOS.get(destino.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(cuerpo)))
+        # `no-store` también aquí, y no solo en las respuestas JSON. Sin ninguna cabecera
+        # de caché el navegador aplica su heurística y se queda con el `app.js` viejo: el
+        # día que alguien pulsa «Actualizar ahora», el código nuevo entra en disco, el
+        # servidor arranca con él y la pantalla sigue siendo la de antes. Actualizar y no
+        # notarlo es peor que no actualizar. Son cuatro ficheros de 80 kB servidos desde
+        # el propio equipo, así que releerlos no cuesta nada medible.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(cuerpo)
 

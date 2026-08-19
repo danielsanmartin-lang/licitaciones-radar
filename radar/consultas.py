@@ -723,6 +723,63 @@ CPV_DEL_PRODUCTO = {
 
 MESES_RENOVACION = 6
 
+# Por encima de esto no es un contrato, es un continente: sistemas dinámicos de
+# adquisición y acuerdos marco de los que solo se gana un lote suelto. Medido sobre la
+# base real: el mayor de los expedientes vivos son 2.646 M€ de un sistema dinámico de
+# Racionalización y Centralización, el 86% de todo el dinero abierto de Madrid. Con él
+# dentro del gráfico, diecisiete comunidades pintan una barra de un píxel y el reparto
+# territorial deja de decir nada. Se dejan fuera de las barras y se enseñan con nombre
+# —y con el total de su comunidad—, que es lo mismo que hace el bloque de importes con
+# los cinco mayores: el outlier se ve, no se esconde.
+IMPORTE_MAXIMO_COMPARABLE = 50_000_000
+
+# Días entre la publicación y el cierre del plazo. Los cortes salen de la propia base:
+# la mediana son 20 días y la mitad de los expedientes caen entre 15 y 31, así que un
+# corte en 10 y otro en 20 son los que separan «no me da tiempo» de «me da».
+TRAMOS_PLAZO = (10, 20, 30, 45)
+MINIMO_EXPEDIENTES_PLAZO = 50
+
+# Un plazo de más de un año no es un plazo de presentación: son anuncios previos con la
+# fecha del contrato futuro, o erratas de la fuente. Medido: 11 de 1.876.
+PLAZO_MAXIMO_CREIBLE = 400
+
+# Cuántas filas se pintan en los dos bloques de nombres propios. Ocho órganos caben en
+# una tarjeta sin que haya que hacer scroll dentro de ella.
+TOP_ORGANOS = 8
+TOP_PROCEDIMIENTOS = 7
+
+# La fuente catalana publica el procedimiento en catalán, así que sin esto «Obert» y
+# «Abierto» salen como dos barras distintas de lo que es el mismo procedimiento. La clave
+# va en minúsculas porque es como se compara; el valor es lo que se pinta.
+PROCEDIMIENTOS_EN_CASTELLANO = {
+    "obert": "Abierto",
+    "obert simplificat": "Abierto simplificado",
+    "obert simplificat abreujat": "Abierto simplificado",
+    "restringit": "Restringido",
+    "negociat sense publicitat": "Negociado sin publicidad",
+    "negociat amb publicitat": "Negociado con publicidad",
+    "contracte menor": "Contrato menor",
+    "normes internes": "Normas internas",
+    "altres": "Otros",
+}
+
+
+def _condicion_viva() -> tuple[str, list]:
+    """«Está en plazo»: estado vivo Y fecha límite sin vencer.
+
+    Extraída porque la comparten el bloque de cartera y el de comunidades activas, y son
+    exactamente las dos condiciones de `_condiciones(solo_vivas=True)`. Si cada bloque la
+    escribe por su cuenta, uno se deja la mitad y la pestaña empieza a contar una cosa
+    distinta de la cabecera: es justo el fallo que `_condiciones` existe para no repetir.
+    """
+    marcas = ", ".join("?" * len(ESTADOS_VIVOS))
+    return (
+        f"l.estado IN ({marcas})"
+        " AND (l.fecha_limite_presentacion IS NULL"
+        "      OR substr(l.fecha_limite_presentacion, 1, 10) >= date('now'))",
+        sorted(ESTADOS_VIVOS),
+    )
+
 
 def _entrada_expedientes(perfil: str | None = None,
                          joins: str = "") -> tuple[str, list]:
@@ -1193,10 +1250,7 @@ def _bloque_cartera(con, perfil) -> dict:
     Ignora el rango temporal: «con plazo abierto» es de ahora, no de 2024.
     """
     entrada, params = _entrada_expedientes(perfil)
-    marcas = ", ".join("?" * len(ESTADOS_VIVOS))
-    viva = (f"l.estado IN ({marcas})"
-            " AND (l.fecha_limite_presentacion IS NULL"
-            "      OR substr(l.fecha_limite_presentacion, 1, 10) >= date('now'))")
+    viva, p_viva = _condicion_viva()
     f = con.execute(
         "SELECT COUNT(*) AS expedientes,"
         "       COUNT(CASE WHEN punt > ? THEN 1 END) AS lista_corta,"
@@ -1217,7 +1271,7 @@ def _bloque_cartera(con, perfil) -> dict:
         # subquery, en la columna `abierta`— y al final el perfil, que entra con `entrada`.
         # Es la misma trampa que ya documenta `ventanas_vencimiento`.
         [PUNTUACION_LISTA_CORTA, PUNTUACION_INTERMEDIA, PUNTUACION_LISTA_CORTA,
-         PUNTUACION_INTERMEDIA] + sorted(ESTADOS_VIVOS) + params
+         PUNTUACION_INTERMEDIA] + p_viva + params
     ).fetchone()
 
     # El estado del anuncio más reciente de cada expediente, el mismo criterio que la
@@ -1244,6 +1298,251 @@ def _bloque_cartera(con, perfil) -> dict:
     total = datos["expedientes"] or 1
     datos["es_archivo_historico"] = abiertas / total < 0.05
     return datos
+
+
+def _reparto_por_comunidad(filas: list, campo: str) -> dict:
+    """Reparte una lista de expedientes por comunidad, apartando los macro-contratos.
+
+    Devuelve las dos lecturas a la vez, y a propósito: las barras con los contratos
+    comparables, y al pie el total CON los grandes dentro. Dar solo lo primero escondería
+    que en los expedientes vivos el 96% del dinero está en cuatro operaciones; dar solo
+    lo segundo pintaría un gráfico de una sola barra. Las dos cifras juntas son el dato.
+    """
+    con_comunidad = [f for f in filas if f["ccaa"]]
+    dentro = [f for f in con_comunidad if f[campo] <= IMPORTE_MAXIMO_COMPARABLE]
+    fuera = [f for f in con_comunidad if f[campo] > IMPORTE_MAXIMO_COMPARABLE]
+
+    por: dict = {}
+    for f in dentro:
+        d = por.setdefault(f["ccaa"], {"importe": 0.0, "expedientes": 0})
+        d["importe"] += f[campo]
+        d["expedientes"] += 1
+
+    # El total de verdad de cada comunidad afectada, macro-contratos incluidos. Va en la
+    # tabla de excluidos porque es la cifra que cambia la lectura del gráfico: Madrid
+    # pasa de 70,6 M€ en la barra a 3.070,1 M€ reales.
+    total_real = {c: v["importe"] for c, v in por.items()}
+    for f in fuera:
+        total_real[f["ccaa"]] = total_real.get(f["ccaa"], 0.0) + f[campo]
+
+    en_barras = sum(v["importe"] for v in por.values())
+    excluido = sum(f[campo] for f in fuera)
+    return {
+        "comunidades": [
+            {"ccaa": c, "importe": v["importe"], "expedientes": v["expedientes"]}
+            for c, v in sorted(por.items(), key=lambda x: -x[1]["importe"])
+        ],
+        "expedientes": len(dentro),
+        "sin_comunidad": len(filas) - len(con_comunidad),
+        "excluidos": [
+            {"ccaa": f["ccaa"], "organo": f["organo"], "objeto": f["objeto"],
+             "importe": f[campo], "total_de_su_comunidad": total_real[f["ccaa"]]}
+            for f in sorted(fuera, key=lambda x: -x[campo])
+        ],
+        "importe_maximo": IMPORTE_MAXIMO_COMPARABLE,
+        "importe_en_barras": en_barras,
+        "importe_excluido": excluido,
+        "importe_con_excluidos": en_barras + excluido,
+    }
+
+
+def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
+    """Dónde se adjudica el dinero, y dónde hay dinero vivo ahora mismo.
+
+    Es el ÚNICO sitio de la pestaña donde se suman importes, y hace falta explicar por
+    qué no contradice a los otros bloques. La suma del mercado sería un número inventado
+    porque `clave_grupo` no cruza fuentes: 126 expedientes están repetidos entre PLACSP y
+    TED. Pero TED no publica región —no expone ningún campo de territorio usable—, así
+    que de cada pareja duplicada la copia de TED cae en «sin comunidad» y no en el total
+    de ninguna comunidad. El reparto territorial es, justamente, el único corte de esta
+    base que se puede sumar sin contar dos veces lo mismo.
+
+    Lo que sí rompía el gráfico eran los macro-contratos, y de eso se encarga
+    `_reparto_por_comunidad` con `IMPORTE_MAXIMO_COMPARABLE`.
+
+    Una sola consulta para las dos vistas, y el reparto en Python, como todo lo demás
+    aquí. El rango temporal se aplica en Python y no con un HAVING porque las dos vistas
+    no lo quieren igual: las adjudicaciones son historia y se acotan, y las activas son
+    de hoy —un pliego abierto publicado en 2024 sigue abierto hoy— y lo ignoran, igual
+    que la cartera y las renovaciones.
+    """
+    entrada, params = _entrada_expedientes(perfil)
+    viva, p_viva = _condicion_viva()
+    # El orden de los parámetros es el de APARICIÓN en el texto: `viva` va en el SELECT,
+    # que se escribe antes del FROM donde entra el perfil. La misma trampa que ya
+    # documentan `ventanas_vencimiento` y `_bloque_cartera`.
+    filas = list(con.execute(
+        f"SELECT {_GRUPO} AS g,"
+        " MIN(substr(l.fecha_publicacion, 1, 7)) AS mes,"
+        " MAX(l.ccaa) AS ccaa,"
+        " MAX(l.importe_adjudicacion) AS adj,"
+        " MAX(l.importe_referencia) AS pres,"
+        " MAX(l.organo) AS organo,"
+        " MAX(l.objeto) AS objeto,"
+        f" MAX(CASE WHEN {viva} THEN 1 ELSE 0 END) AS abierta,"
+        " MAX(CASE WHEN l.importe_adjudicacion IS NOT NULL THEN 1 ELSE 0 END) AS adjudicada"
+        f"{entrada} GROUP BY g",
+        p_viva + params,
+    ))
+
+    def en_rango(f) -> bool:
+        """Lo mismo que el HAVING de `_rango`, incluido que un mes NULL no pasa el filtro."""
+        if f["mes"] is None:
+            return not desde and not hasta
+        if desde and f["mes"] < desde:
+            return False
+        if hasta and f["mes"] > hasta:
+            return False
+        return True
+
+    adjudicadas = [f for f in filas
+                   if f["adjudicada"] and f["adj"] is not None and en_rango(f)]
+    # «No adjudicada» además de «en plazo»: la fuente a veces deja el estado en vivo
+    # después de publicar la adjudicación, y ese dinero ya no está en juego.
+    activas = [f for f in filas
+               if f["abierta"] and not f["adjudicada"] and f["pres"] is not None]
+
+    datos = {
+        "adjudicadas": _reparto_por_comunidad(adjudicadas, "adj"),
+        "activas": _reparto_por_comunidad(activas, "pres"),
+    }
+    datos["activas"]["siempre_a_fecha_de_hoy"] = True
+    return datos
+
+
+def _bloque_plazo(con, perfil, desde, hasta) -> dict:
+    """Cuántos días hay desde que sale el anuncio hasta que se cierra el plazo.
+
+    No es lo mismo que el ciclo: aquél mide cuándo se DECIDE —para el forecast— y éste
+    mide cuánto tiempo hay para ESCRIBIR la oferta, que es lo que decide si un expediente
+    se puede pelear o ya nació perdido. Medido: la mediana son 20 días.
+
+    Las dos fechas salen del MISMO anuncio, el primero del expediente, por el mismo
+    motivo que en la baja: cruzar la publicación de uno con el plazo de otro fabrica
+    plazos que nadie tuvo. Aun así quedan 159 expedientes con el plazo antes de la
+    publicación —anuncios que repiten un plazo ya vencido— y se cuentan aparte en vez de
+    colarlos como ceros, que hundirían la mediana.
+    """
+    entrada, params = _entrada_expedientes(perfil)
+    filtro, p_rango = _solo_en_rango(perfil, desde, hasta)
+    filas = con.execute(
+        "SELECT pub, lim FROM ("
+        "  SELECT l.fecha_publicacion AS pub, l.fecha_limite_presentacion AS lim,"
+        f"        ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+        "                            ORDER BY l.fecha_publicacion ASC, l.id ASC) AS rn"
+        f"  {entrada}{filtro}"
+        ") WHERE rn = 1 AND pub IS NOT NULL AND lim IS NOT NULL",
+        params + p_rango,
+    ).fetchall()
+
+    dias: list = []
+    ya_vencido = disparatado = ilegible = 0
+    for f in filas:
+        try:
+            d = (date.fromisoformat(f["lim"][:10]) - date.fromisoformat(f["pub"][:10])).days
+        except ValueError:
+            ilegible += 1
+            continue
+        if d < 0:
+            ya_vencido += 1
+        elif d > PLAZO_MAXIMO_CREIBLE:
+            disparatado += 1
+        else:
+            dias.append(d)
+    dias.sort()
+
+    excluidos = [
+        {"motivo": "el plazo ya estaba vencido al publicarse", "expedientes": ya_vencido},
+        {"motivo": f"más de {PLAZO_MAXIMO_CREIBLE} días (anuncios previos)",
+         "expedientes": disparatado},
+    ]
+    if ilegible:
+        excluidos.append({"motivo": "fecha ilegible", "expedientes": ilegible})
+
+    return {
+        "con_ambas_fechas": len(filas),
+        "expedientes": len(dias),
+        "mediana_dias": round(_mediana(dias)) if dias else None,
+        "p25": round(_percentil(dias, 25)) if dias else None,
+        "p75": round(_percentil(dias, 75)) if dias else None,
+        "tramos": _tramos(dias, TRAMOS_PLAZO),
+        "excluidos": excluidos,
+        "suficiente": len(dias) >= MINIMO_EXPEDIENTES_PLAZO,
+        "minimo_expedientes": MINIMO_EXPEDIENTES_PLAZO,
+    }
+
+
+def _bloque_procedimiento(con, perfil, desde, hasta) -> dict:
+    """Por qué puerta se entra: abierto, simplificado, restringido o por invitación.
+
+    Importa porque no todas se pueden pelear igual. En un negociado sin publicidad no se
+    puja: o te han invitado o no existes, y verlo contado es lo que dice cuánta parte de
+    este mercado no se gana con una oferta sino antes.
+
+    Los nombres se normalizan al castellano porque la fuente catalana publica en catalán
+    y «Obert» y «Abierto» son el mismo procedimiento partido en dos barras.
+    """
+    base, params = _expedientes(perfil, desde, hasta,
+                                columnas="MAX(l.procedimiento) AS proc")
+    cuenta: dict = {}
+    total = sin_dato = 0
+    for f in con.execute(f"SELECT proc FROM ({base})", params):
+        total += 1
+        crudo = (f["proc"] or "").strip()
+        if not crudo:
+            sin_dato += 1
+            continue
+        nombre = PROCEDIMIENTOS_EN_CASTELLANO.get(crudo.lower(), crudo)
+        cuenta[nombre] = cuenta.get(nombre, 0) + 1
+
+    orden = sorted(cuenta.items(), key=lambda x: (-x[1], x[0]))
+    procedimientos = [{"procedimiento": k, "expedientes": n}
+                      for k, n in orden[:TOP_PROCEDIMIENTOS]]
+    cola = orden[TOP_PROCEDIMIENTOS:]
+    if cola:
+        # «el resto» y no «otros»: «Otros» es un valor que la propia fuente publica, y
+        # dos filas con el mismo nombre y distinto significado no las distingue nadie.
+        procedimientos.append({"procedimiento": "el resto",
+                               "expedientes": sum(n for _, n in cola)})
+
+    return {
+        "expedientes": total,
+        "sin_dato": sin_dato,
+        "distintos": len(cuenta),
+        "procedimientos": procedimientos,
+    }
+
+
+def _bloque_organos(con, perfil, desde, hasta) -> dict:
+    """Quién compra esto de verdad, y cuáles repiten.
+
+    Se agrupa por NOMBRE y no por `nif_organo`, aunque el NIF parezca lo correcto: 947
+    expedientes no traen NIF, así que agrupar por ahí perdería más de lo que junta (865
+    nombres distintos frente a 622 NIF, con un tercio de la base fuera).
+
+    El nombre es el del órgano que firma, no el del organismo, así que la misma agencia
+    puede salir tres veces con tres firmantes. No se fusiona a mano: inventar una regla
+    de nombres parecidos junta cosas que no son la misma, y la pestaña lo advierte en vez
+    de arreglarlo por su cuenta.
+    """
+    base, params = _expedientes(perfil, desde, hasta, columnas="MAX(l.organo) AS organo")
+    cuenta: dict = {}
+    total = sin_organo = 0
+    for f in con.execute(f"SELECT organo FROM ({base})", params):
+        total += 1
+        nombre = (f["organo"] or "").strip()
+        if not nombre:
+            sin_organo += 1
+            continue
+        cuenta[nombre] = cuenta.get(nombre, 0) + 1
+
+    orden = sorted(cuenta.items(), key=lambda x: (-x[1], x[0]))
+    return {
+        "expedientes": total,
+        "sin_organo": sin_organo,
+        "distintos": len(cuenta),
+        "organos": [{"organo": k, "expedientes": n} for k, n in orden[:TOP_ORGANOS]],
+    }
 
 
 # Lo calculado, guardado hasta que la base cambie. NO es una caché por tiempo: un TTL
@@ -1317,6 +1616,10 @@ def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
         "renovaciones": _bloque_renovaciones(con, perfil),
         "ciclo": _bloque_ciclo(con, perfil, desde, hasta),
         "cpv": _bloque_cpv(con, perfil, desde, hasta),
+        "comunidades": _bloque_comunidades(con, perfil, desde, hasta),
+        "plazo": _bloque_plazo(con, perfil, desde, hasta),
+        "procedimiento": _bloque_procedimiento(con, perfil, desde, hasta),
+        "organos": _bloque_organos(con, perfil, desde, hasta),
         "cartera": _bloque_cartera(con, perfil),
     }
 

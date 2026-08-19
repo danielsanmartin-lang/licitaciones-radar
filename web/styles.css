@@ -123,7 +123,12 @@ button.kpi.activo { border-color: var(--acento); box-shadow: inset 0 0 0 1px var
   border: 1px solid rgba(229, 84, 75, .35);
   font-size: 13px;
 }
-.avisos p { margin: 3px 0; }
+/* Cada aviso lleva su «x», así que el ancla del botón es el párrafo y no la caja: con
+   `position: relative` en `.avisos` los tres botones se apilarían en la misma esquina.
+   El aspecto se hereda de `.cerrar`, que ya existe para el panel lateral. */
+.avisos p { margin: 3px 0; position: relative; padding-right: 26px; }
+.avisos .cerrar { top: -3px; right: 0; font-size: 20px; }
+.avisos .cerrar:hover { color: var(--texto); }
 
 /* Carga en segundo plano. En azul y no en rojo a propósito: no ha pasado nada malo,
    solo está entrando el histórico y se puede trabajar mientras. */
@@ -394,9 +399,14 @@ input[type=number], input[type=text] {
 
 /* El primer sitio del proyecto que necesita un ancho máximo: el resto de las vistas son
    listas, que a 2.500 px se leen igual de bien, pero una barra de 2.400 px de largo no
-   dice nada. Se sigue el precedente del `min()` de `.panel`. */
+   dice nada. Se sigue el precedente del `min()` de `.panel`.
+
+   1.280 y no 920: con doce bloques y etiquetas que son nombres de comunidad y de órgano,
+   los 920 dejaban media pantalla vacía a la derecha y partían «Comunidad Valenciana» en
+   dos líneas. A 1.280 cada pareja son dos columnas de ~630 px, que es donde una barra
+   con su etiqueta al lado se lee de un vistazo. */
 .analitica {
-  width: min(920px, 100%);
+  width: min(1280px, 100%);
   display: grid;
   gap: 14px;
 }
@@ -408,6 +418,11 @@ input[type=number], input[type=text] {
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+  /* Cada tarjeta con su altura y no estiradas a la de la más alta: medido, el calendario
+     se quedaba con 185 px de vacío dentro del recuadro al lado de un bloque más largo, y
+     un hueco enmarcado se lee como un fallo. Alineadas por arriba, la fila mantiene el
+     ritmo horizontal y el borde de abajo llega donde acaba el dato. */
+  align-items: start;
 }
 
 .bloque {
@@ -433,13 +448,33 @@ input[type=number], input[type=text] {
    es lo que hace que el dato se lea con un lector de pantalla y no solo se vea. */
 .fila-barra {
   display: grid;
-  grid-template-columns: 5.5em 1fr auto;
+  grid-template-columns: var(--ancho-etiqueta, 5.5em) 1fr auto;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   margin-bottom: 3px;
 }
 .fila-barra .etiqueta { color: var(--texto-sec); }
+/* Tres anchos de etiqueta, y los tres salen de medir el texto más largo de cada bloque
+   en pantalla, no de tantear: 5,5 em para los meses («ago *» ocupa 2,5); 8 em para los
+   tramos, donde el peor es «100k €–500k €» con 7,1; y 13 em para las categorías, donde
+   mandan «Negociado con publicidad» (12,3) y «Comunidad Valenciana» (10,7). Un solo
+   ancho para todos obligaba a elegir entre desperdiciar media tarjeta en el calendario o
+   partir las etiquetas en cuatro líneas, que es justo lo que había que arreglar. */
+.bloque.etiquetas-medias { --ancho-etiqueta: 8em; }
+.bloque.etiquetas-anchas { --ancho-etiqueta: 13em; }
+/* Y cuando la etiqueta no es una categoría sino un NOMBRE, no hay columna que valga: un
+   órgano de contratación pasa de sesenta caracteres. Ahí la etiqueta se pone encima del
+   carril y ocupa el ancho entero. */
+.fila-barra.apilada {
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "etiqueta etiqueta" "barra valor";
+  gap: 2px 8px;
+  margin-bottom: 8px;
+}
+.fila-barra.apilada .etiqueta { grid-area: etiqueta; line-height: 1.3; }
+.fila-barra.apilada .barra { grid-area: barra; }
+.fila-barra.apilada .valor { grid-area: valor; }
 .fila-barra .valor { font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
 .barra { background: var(--panel-2); border-radius: 3px; height: 14px; position: relative; }
 .barra-relleno { background: var(--acento); border-radius: 3px; height: 100%; min-width: 2px; }

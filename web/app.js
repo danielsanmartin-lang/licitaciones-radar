@@ -158,6 +158,74 @@ function query(extra = {}) {
 
 // --- Resumen y cabecera ----------------------------------------------------
 
+// --- Avisos de salud de las fuentes ----------------------------------------
+//
+// Se pueden cerrar, y se quedan cerrados hasta que se vuelvan a consultar datos. Eso no
+// necesita ningún temporizador ni ninguna fecha de caducidad: la clave del descarte
+// lleva dentro el `iniciado_en` de la ingesta que provocó el aviso, así que en cuanto
+// corre una ingesta nueva la clave deja de coincidir y el aviso vuelve a salir —solo si
+// sigue habiendo motivo, claro—.
+//
+// Hay que guardarlo fuera del DOM porque `#avisos` se reescribe entero en cada
+// `cargarResumen()`, y eso ocurre cada 12 s mientras hay una búsqueda en marcha: poner
+// `hidden` al cerrar duraría hasta el refresco siguiente. Es el mismo motivo que ya
+// documenta el comentario de `#aviso-version` en index.html.
+const AVISOS_DESCARTADOS = 'avisos-descartados';
+
+function claveAviso(f) {
+  return `${f.fuente}|${f.iniciado_en || ''}`;
+}
+
+function leerDescartados() {
+  try {
+    const guardado = JSON.parse(localStorage.getItem(AVISOS_DESCARTADOS) || '[]');
+    return new Set(Array.isArray(guardado) ? guardado : []);
+  } catch {
+    // Un almacén deshabilitado, lleno o con basura de otra versión no puede dejar a
+    // nadie sin avisos: se empieza de cero, que como mucho cuesta volver a cerrarlos.
+    return new Set();
+  }
+}
+
+function guardarDescartados(claves, vigentes) {
+  // Se podan las claves que ya no corresponden a ninguna ingesta con aviso: si no, la
+  // lista crecería una entrada por fuente y por ingesta para siempre.
+  try {
+    localStorage.setItem(AVISOS_DESCARTADOS,
+                         JSON.stringify([...claves].filter((c) => vigentes.has(c))));
+  } catch {
+    // Sin sitio donde guardarlo el aviso reaparecerá al recargar. Es mejor eso que
+    // dejar de pintarlo.
+  }
+}
+
+// Igual que `tarjeta()`: el `innerHTML` solo lleva el andamio, y el texto va por
+// `textContent` porque `error` es el mensaje crudo de una fuente que no controlamos.
+function pintarAvisos(fuentes) {
+  const conAviso = (fuentes || []).filter((f) => f.aviso);
+  const vigentes = new Set(conAviso.map(claveAviso));
+  const descartados = leerDescartados();
+  const problemas = conAviso.filter((f) => !descartados.has(claveAviso(f)));
+
+  const av = $('avisos');
+  av.textContent = '';
+  av.hidden = problemas.length === 0;
+  for (const f of problemas) {
+    const linea = document.createElement('p');
+    linea.innerHTML = '<strong></strong><span></span>' +
+      '<button class="cerrar" aria-label="Cerrar aviso" title="Cerrar aviso">×</button>';
+    linea.querySelector('strong').textContent = f.fuente;
+    linea.querySelector('span').textContent =
+      `: ${f.aviso}${f.error ? ` — ${f.error.slice(0, 180)}` : ''}`;
+    linea.querySelector('.cerrar').addEventListener('click', () => {
+      descartados.add(claveAviso(f));
+      guardarDescartados(descartados, vigentes);
+      pintarAvisos(fuentes);
+    });
+    av.appendChild(linea);
+  }
+}
+
 async function cargarResumen() {
   const r = await fetch('/api/resumen');
   const d = await r.json();
@@ -203,16 +271,7 @@ async function cargarResumen() {
 
   // Salud de las fuentes: una fuente rota y una fuente sin novedades se ven
   // igual si no se avisa explícitamente.
-  const problemas = (d.fuentes || []).filter((f) => f.aviso);
-  const av = $('avisos');
-  if (problemas.length) {
-    av.hidden = false;
-    av.innerHTML = problemas.map((f) =>
-      `<p><strong>${f.fuente}</strong>: ${f.aviso}${f.error ? ` — ${f.error.slice(0, 180)}` : ''}</p>`
-    ).join('');
-  } else {
-    av.hidden = true;
-  }
+  pintarAvisos(d.fuentes);
 
   // Pestaña de novedades: solo aparece si hay algo nuevo desde la última visita.
   const tabN = $('tab-novedades');
@@ -1136,8 +1195,13 @@ function fmtDecimal(v, decimales = 1) {
 
 function fmtImporteCorto(v) {
   if (v === null || v === undefined) return 'sin dato';
-  if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1).replace('.', ',') + ' M€';
-  if (Math.abs(v) >= 1000) return Math.round(v / 1000) + 'k €';
+  // Con separador de millar: el reparto por comunidades llega a «3.402,0 M€», y sin él
+  // ese número se lee como 340 o como 34.020 según a quién se le pregunte.
+  if (Math.abs(v) >= 1e6) {
+    return (v / 1e6).toLocaleString('es-ES', { minimumFractionDigits: 1,
+                                               maximumFractionDigits: 1 }) + ' M€';
+  }
+  if (Math.abs(v) >= 1000) return Math.round(v / 1000).toLocaleString('es-ES') + 'k €';
   return eur.format(v);
 }
 
@@ -1153,7 +1217,7 @@ function bloqueAnalitica(titulo, pregunta) {
 // `pct` y `encima` son números y se interpolan; `etiqueta` y `texto` son texto y no.
 function filaBarra(etiqueta, pct, texto, opciones = {}) {
   const fila = document.createElement('div');
-  fila.className = 'fila-barra';
+  fila.className = opciones.apilada ? 'fila-barra apilada' : 'fila-barra';
   const clase = opciones.parcial ? 'barra-relleno barra-parcial' : 'barra-relleno';
   const encima = opciones.encima == null ? ''
     : `<div class="barra-encima" style="width:${Number(opciones.encima).toFixed(1)}%"></div>`;
@@ -1257,8 +1321,9 @@ function pintarCalendario(d) {
 }
 
 function pintarImportes(d) {
-  const el = bloqueAnalitica('A cuánto tengo que ir',
+  const el = bloqueAnalitica('Tamaño de los contratos',
     '¿De qué tamaño son estas operaciones, y qué me dejo fuera si filtro por importe?');
+  el.classList.add('etiquetas-medias');
   const titular = document.createElement('p');
   titular.className = 'titular';
   titular.textContent = fmtImporte(d.mediana);
@@ -1292,8 +1357,9 @@ function pintarImportes(d) {
 }
 
 function pintarBaja(d) {
-  const el = bloqueAnalitica('Con qué precio entro',
+  const el = bloqueAnalitica('Importe al que se están cerrando los contratos',
     '¿Cuánto por debajo del presupuesto se están cerrando estos contratos?');
+  el.classList.add('etiquetas-medias');
   if (!d.suficiente) {
     return insuficiente(el, `${d.minimo_comparables} adjudicaciones comparables`, 'datos');
   }
@@ -1325,6 +1391,7 @@ function pintarBaja(d) {
 function pintarCiclo(d) {
   const el = bloqueAnalitica('Cuándo entra en el forecast',
     '¿Si veo esto publicado hoy, cuándo se decide?');
+  el.classList.add('etiquetas-medias');
   if (!d.suficiente) {
     return insuficiente(el, `${d.minimo_expedientes} expedientes con recorrido`, 'historial');
   }
@@ -1373,9 +1440,11 @@ function pintarCpv(d) {
     '¿En qué epígrafes cae mi producto, y merece la pena afinar el radar por ahí?');
   const tope = Math.max(1, ...d.divisiones.map((x) => x.expedientes));
   for (const x of d.divisiones) {
+    // Apilada: «79 servicios para empresas y seguridad» pide 18,7 em medidos, y en una
+    // columna de ese ancho no queda barra que mirar.
     el.appendChild(filaBarra(x.division, 100 * x.expedientes / tope,
-                             x.expedientes.toLocaleString('es-ES')));
-    // El nombre de la división va aparte: en la etiqueta no cabe.
+                             x.expedientes.toLocaleString('es-ES'), { apilada: true }));
+    // El nombre de la división va aparte: no lo trae la etiqueta.
     el.lastChild.querySelector('.etiqueta').textContent = `${x.division} ${x.nombre}`;
   }
   nota(el, 'Los tres códigos que son literalmente tu producto:');
@@ -1389,6 +1458,126 @@ function pintarCpv(d) {
   el.appendChild(boton);
   nota(el, `Un expediente tiene varios CPV, así que los recuentos no suman el total y no ` +
            `se pueden repartir en porcentajes. ${d.sin_cpv} expedientes no traen ninguno.`);
+  return el;
+}
+
+// Los dos repartos territoriales comparten pintado porque son el mismo gráfico con dos
+// preguntas distintas: dónde se ha repartido lo ya cerrado y dónde queda dinero en juego.
+function pintarComunidades(d, titulo, pregunta) {
+  const el = bloqueAnalitica(titulo, pregunta);
+  el.classList.add('etiquetas-anchas');
+  if (!d.comunidades.length) {
+    nota(el, 'No hay ningún expediente con comunidad e importe en este periodo.');
+    return el;
+  }
+  const tope = Math.max(1, ...d.comunidades.map((c) => c.importe));
+  for (const c of d.comunidades) {
+    el.appendChild(filaBarra(c.ccaa, 100 * c.importe / tope,
+                             `${fmtImporteCorto(c.importe)} · ${c.expedientes}`));
+  }
+
+  // El total con los grandes dentro va al pie, no en un asterisco: en lo que está vivo
+  // son el 96% del dinero, y callarlo dejaría un gráfico que dice que el mercado está
+  // repartido cuando son cuatro plataformas de compra.
+  if (d.excluidos.length) {
+    const n = d.excluidos.length;
+    const uno = n === 1;
+    const pct = Math.round(100 * d.importe_excluido / d.importe_con_excluidos);
+    nota(el, `Las barras suman ${fmtImporteCorto(d.importe_en_barras)}. Contando ` +
+             `${uno ? 'el contrato' : `los ${n} contratos`} de más de ` +
+             `${fmtImporteCorto(d.importe_maximo)} que se ${uno ? 'deja' : 'dejan'} ` +
+             `fuera de la escala, el total es ` +
+             `${fmtImporteCorto(d.importe_con_excluidos)}: el ${pct}% del dinero está ` +
+             `${uno ? 'en ese contrato' : `en esos ${n}`}.`);
+    tablaEscueta(el, d.excluidos.map((e) => [
+      `${e.ccaa} · ${(e.objeto || '(sin objeto)').slice(0, 55)} — su comunidad suma en ` +
+      `realidad ${fmtImporteCorto(e.total_de_su_comunidad)}`,
+      fmtImporteCorto(e.importe), true,
+    ]));
+    nota(el, `Se ${uno ? 'aparta' : 'apartan'} de las barras porque no son contratos ` +
+             'sino continentes —sistemas dinámicos y acuerdos marco de los que se gana ' +
+             'un lote—: en la misma escala, el resto de comunidades pintaría una raya ' +
+             'de un píxel.');
+  } else {
+    nota(el, `Total repartido: ${fmtImporteCorto(d.importe_con_excluidos)}. Ningún ` +
+             `contrato pasa de ${fmtImporteCorto(d.importe_maximo)}, así que no se ha ` +
+             'dejado nada fuera de la escala.');
+  }
+
+  nota(el, 'De cada expediente se toma su mayor importe publicado, no la suma de sus ' +
+           'lotes.' + (d.sin_comunidad
+             ? ` ${d.sin_comunidad.toLocaleString('es-ES')} expedientes no traen ` +
+               'comunidad —TED no publica región— y no entran en el reparto.'
+             : ''));
+  return el;
+}
+
+function pintarPlazo(d) {
+  const el = bloqueAnalitica('Cuánto tiempo tengo para presentar',
+    '¿Si lo veo publicado hoy, me da tiempo a preparar la oferta?');
+  el.classList.add('etiquetas-medias');
+  if (!d.suficiente) {
+    return insuficiente(el, `${d.minimo_expedientes} expedientes con plazo`, 'datos');
+  }
+  const titular = document.createElement('p');
+  titular.className = 'titular';
+  titular.textContent = `${d.mediana_dias} días`;
+  const pie = document.createElement('small');
+  pie.textContent = ` de plazo mediano · la mitad entre ${d.p25} y ${d.p75}`;
+  titular.appendChild(pie);
+  el.appendChild(titular);
+
+  const tope = Math.max(1, ...d.tramos.map((t) => t.expedientes));
+  for (const t of d.tramos) {
+    const etiqueta = t.hasta === null ? `más de ${t.desde} d`
+      : (t.desde === 0 ? `hasta ${t.hasta} d` : `${t.desde}–${t.hasta} d`);
+    el.appendChild(filaBarra(etiqueta, 100 * t.expedientes / tope,
+                             t.expedientes.toLocaleString('es-ES')));
+  }
+  nota(el, `Medido sobre ${d.expedientes.toLocaleString('es-ES')} expedientes, con las ` +
+           'dos fechas tomadas del mismo anuncio. De ' +
+           `${d.con_ambas_fechas.toLocaleString('es-ES')} con ambas fechas se han ` +
+           'dejado fuera:');
+  tablaEscueta(el, d.excluidos.map((e) => [
+    e.motivo, e.expedientes.toLocaleString('es-ES'), true,
+  ]));
+  return el;
+}
+
+function pintarProcedimiento(d) {
+  const el = bloqueAnalitica('Cómo se compra',
+    '¿Por qué puerta se entra, y en cuántos casos no se puede ni pujar?');
+  el.classList.add('etiquetas-anchas');
+  const tope = Math.max(1, ...d.procedimientos.map((x) => x.expedientes));
+  for (const x of d.procedimientos) {
+    el.appendChild(filaBarra(x.procedimiento, 100 * x.expedientes / tope,
+                             x.expedientes.toLocaleString('es-ES')));
+  }
+  nota(el, 'En un negociado sin publicidad no se puja: o te han invitado o no existes, ' +
+           'así que esa barra no es mercado al que presentarse sino trabajo comercial ' +
+           'de antes del pliego.');
+  if (d.sin_dato) {
+    nota(el, `${d.sin_dato.toLocaleString('es-ES')} expedientes no publican el ` +
+             `procedimiento. Los nombres en catalán se cuentan con su equivalente en ` +
+             'castellano.');
+  }
+  return el;
+}
+
+function pintarOrganos(d) {
+  const el = bloqueAnalitica('Quién compra',
+    '¿Qué compradores repiten, y a quién merece la pena ir a ver?');
+  const tope = Math.max(1, ...d.organos.map((x) => x.expedientes));
+  for (const x of d.organos) {
+    el.appendChild(filaBarra(x.organo, 100 * x.expedientes / tope,
+                             x.expedientes.toLocaleString('es-ES'), { apilada: true }));
+  }
+  nota(el, `${d.distintos.toLocaleString('es-ES')} órganos distintos han publicado algo ` +
+           'que casa con el radar; aquí están los que más repiten.');
+  // Se advierte en lugar de fusionar: una regla de «nombres parecidos» junta cosas que
+  // no son la misma, y aquí el coste de equivocarse lo paga quien coja el teléfono.
+  nota(el, 'La fuente publica el órgano que firma, no el organismo, así que una misma ' +
+           'agencia puede aparecer varias veces con firmantes distintos.');
   return el;
 }
 
@@ -1483,14 +1672,31 @@ async function cargarAnalitica() {
     ? ` · perfil «${g.perfil}» (algunos cuentan también en otros perfiles)`
     : '';
 
-  cont.appendChild(pintarCalendario(d.calendario));
-  for (const par of [[pintarImportes(d.importes), pintarBaja(d.baja)],
-                     [pintarCiclo(d.ciclo), pintarRenovaciones(d.renovaciones)]]) {
+  // Las filas se escriben aquí y no las decide el CSS porque el emparejado no es
+  // estético: cada fila junta dos bloques que se leen del mismo tirón, y el orden es el
+  // de la venta —cuándo sale, cuánto vale, a qué precio, cuánto tiempo hay, dónde está,
+  // quién compra, cómo— y no el del cálculo. `.pareja` reparte por igual los bloques que
+  // le eches, así que la fila de tres no necesita ninguna clase nueva.
+  const filas = [
+    [pintarCalendario(d.calendario), pintarImportes(d.importes)],
+    [pintarBaja(d.baja), pintarPlazo(d.plazo)],
+    [pintarComunidades(d.comunidades.adjudicadas,
+                       'Top comunidades por adjudicaciones',
+                       '¿Dónde se ha repartido el dinero que ya está adjudicado?'),
+     pintarComunidades(d.comunidades.activas,
+                       'Top comunidades por licitaciones activas',
+                       '¿Dónde queda dinero en juego, con el plazo todavía abierto?')],
+    [pintarOrganos(d.organos), pintarCpv(d.cpv)],
+    [pintarProcedimiento(d.procedimiento), pintarCiclo(d.ciclo),
+     pintarRenovaciones(d.renovaciones)],
+  ];
+  for (const fila of filas) {
     const caja = document.createElement('div');
     caja.className = 'pareja';
-    par.forEach((b) => caja.appendChild(b));
+    fila.forEach((b) => caja.appendChild(b));
     cont.appendChild(caja);
   }
-  cont.appendChild(pintarCpv(d.cpv));
+  // Va sola y a lo ancho, y la última: es la que dice si todo lo de arriba es un
+  // pipeline o un archivo histórico.
   cont.appendChild(pintarCartera(d.cartera));
 }

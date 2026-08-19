@@ -179,17 +179,22 @@ empresa se despliegan sus contratos.
 
 ### Analítica
 
-Las preguntas que no son «qué hay hoy». Siete bloques, cada uno con una pregunta de venta
-delante:
+Las preguntas que no son «qué hay hoy». Doce bloques, cada uno con una pregunta de venta
+delante, en el orden en que se leen:
 
 | Bloque | Contesta a |
 |---|---|
 | Cuándo sale el trabajo | en qué meses hay que estar preparado. Diciembre publica el doble que agosto, y eso se planifica en septiembre |
-| A cuánto tengo que ir | de qué tamaño son estas operaciones de verdad |
-| Con qué precio entro | cuánto por debajo del presupuesto se están cerrando |
+| Tamaño de los contratos | de qué tamaño son estas operaciones de verdad |
+| Importe al que se están cerrando los contratos | cuánto por debajo del presupuesto se están cerrando |
+| Cuánto tiempo tengo para presentar | cuántos días hay del anuncio al cierre del plazo: si lo veo hoy, si da tiempo a escribir la oferta |
+| Top comunidades por adjudicaciones | dónde se ha repartido el dinero que ya está adjudicado |
+| Top comunidades por licitaciones activas | dónde queda dinero en juego, con el plazo todavía abierto |
+| Quién compra | qué órganos de contratación repiten, y a quién merece la pena ir a ver |
+| Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
+| Cómo se compra | por qué puerta se entra: abierto, simplificado, restringido o por invitación |
 | Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
 | A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido |
-| Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
 | Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico |
 
 Se filtra por perfil y por uno de tres rangos (este año, últimos 24 meses, todo desde
@@ -198,9 +203,19 @@ propósito y lo dicen, porque un filtro que se ignora en silencio es peor que un
 
 Y hay tres cosas que esta pestaña **no** hace, todas por el mismo motivo:
 
-- **No da ninguna cifra de dinero total.** La clave que agrupa los anuncios de un mismo
-  expediente no cruza fuentes, así que 126 expedientes están repetidos entre PLACSP y TED y
-  arrastran casi 1.000 M€ de aire. Solo medianas, tramos y recuentos.
+- **No da cifras de dinero total, salvo en el reparto por comunidad.** La clave que agrupa
+  los anuncios de un mismo expediente no cruza fuentes, así que 126 expedientes están
+  repetidos entre PLACSP y TED y arrastran casi 1.000 M€ de aire: en el resto de los
+  bloques solo hay medianas, tramos y recuentos. El reparto territorial es la excepción, y
+  no por comodidad: TED no publica región, así que de cada pareja duplicada su copia cae
+  en «sin comunidad» y no en el total de ninguna. Es el único corte de esta base que se
+  puede sumar sin contar dos veces lo mismo, y hay una prueba que lo vigila.
+- **Y aun ahí aparta los macro-contratos, pero los enseña.** Un sistema dinámico de
+  adquisición de 2.646 M€ no es un contrato al que presentarse, y en la misma escala deja
+  a diecisiete comunidades pintando una raya de un píxel. Los de más de 50 M€ salen de las
+  barras y van al pie con su nombre, su importe y el total de verdad de su comunidad. En
+  lo que está vivo son el 96% del dinero, y ése es justo el dato: hoy no hay un mercado
+  repartido, hay cuatro plataformas de compra.
 - **No da medias de importe.** La media son 4 millones y la mediana 169.000: cinco
   contratos son la mitad del total. Esos cinco salen con nombre y órgano, y ahí se ve que
   tres son el mismo acuerdo marco repetido.
