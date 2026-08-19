@@ -222,10 +222,17 @@ class TestInstantanea(unittest.TestCase):
     """
 
     def setUp(self):
-        self.ind = progreso._Indicador()
-        self.addCleanup(self.ind.parar)
+        # El orden importa, y cuesta un CI en rojo aprenderlo: `addCleanup` ejecuta al
+        # revés de como se registra, así que el temporal se apunta ANTES para que se
+        # borre DESPUÉS de parar el hilo. Al revés —que era como estaba— el publicador
+        # sigue vivo mientras `rmtree` recorre el directorio, y como `_publicar` hace
+        # `mkdir(parents=True)` cada segundo, recrea la carpeta entre el borrado del
+        # fichero y el `rmdir`: «Directory not empty». Fallaba solo en macOS y solo a
+        # veces, que es lo peor que puede hacer una prueba.
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
+        self.ind = progreso._Indicador()
+        self.addCleanup(self.ind.parar)
         self.estado = Path(self.dir.name) / "progreso.json"
 
     def _esperar_fichero(self, plazo=2.0):
