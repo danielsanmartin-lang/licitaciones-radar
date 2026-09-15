@@ -29,7 +29,7 @@ import webbrowser
 from datetime import date
 from pathlib import Path
 
-from radar import consultas, db, pipeline, progreso
+from radar import consultas, db, pipeline, progreso, rutas
 from radar.matching import cargar_perfiles, reevaluar
 
 RAIZ = Path(__file__).resolve().parent
@@ -377,7 +377,7 @@ def cmd_doctor(args) -> int:
 
 def cmd_estado(args) -> int:
     if args.limpiar_cache:
-        cache = RAIZ / "data" / "cache"
+        cache = rutas.CACHE
         borrados = 0
         # También los `.parcial`: una descarga cortada deja ahí lo que llevaba bajado
         # para poder reanudarla, y con el glob a secas de `*.zip` un resto de 900 MB

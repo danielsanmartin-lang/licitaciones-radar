@@ -38,10 +38,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from . import net
+from . import net, rutas
 from . import __version__
 
-RAIZ = Path(__file__).resolve().parent.parent
+RAIZ = rutas.CODIGO
 REPO = "danielsanmartin-lang/licitaciones-radar"
 API_ULTIMA = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -60,10 +60,21 @@ REEMPLAZABLES = (
     # El almacén de certificados sí se actualiza: caduca, y si se queda atrás PLACSP
     # deja de validar. `config/perfiles.json`, en cambio, no se toca jamás.
     "config/certs",
+    # El fuente del envoltorio de macOS y su binario prefabricado. Lo que NO se sustituye
+    # es «Radar de Licitaciones.app»: un bundle no se puede cambiar por debajo de sí
+    # mismo mientras se está ejecutando, y no hace falta, porque se reconstruye desde
+    # esto. La propia app detecta al abrirse que su versión ya no cuadra con
+    # `radar/__init__.py` y ofrece rehacerse.
+    "macos",
 )
 
 # Sin estas tres no hay aplicación: si el zip descargado no las trae, no es lo que
 # esperábamos y no se sustituye nada.
+#
+# `macos` NO está aquí a propósito, aunque esté en REEMPLAZABLES: la ventana nativa es
+# una comodidad y `start.command` sigue haciendo lo mismo sin ella. Exigirla haría que
+# una release publicada sin el binario prefabricado se negara a instalarse para todo el
+# mundo, incluido quien nunca ha usado la app.
 IMPRESCINDIBLES = ("radar", "web", "radar.py")
 
 log = logging.getLogger(__name__)
@@ -116,6 +127,11 @@ def comprobar(timeout: int = 15) -> dict:
         "hay_nueva": False,
         "notas": "",
         "url_zip": None,
+        # Para la app empaquetada: de dónde se baja el .app nuevo, y la página de la
+        # release como recurso si la release no trae el adjunto.
+        "url_app": None,
+        "url_release": None,
+        "empaquetada": rutas.empaquetada(),
         "error": None,
     }
     try:
@@ -140,8 +156,24 @@ def comprobar(timeout: int = 15) -> dict:
     respuesta["version_nueva"] = datos["tag_name"]
     respuesta["notas"] = datos.get("body") or ""
     respuesta["url_zip"] = datos.get("zipball_url")
+    respuesta["url_app"] = _app_publicada(datos)
+    respuesta["url_release"] = datos.get("html_url")
     respuesta["hay_nueva"] = _tupla(datos["tag_name"]) > _tupla(__version__)
     return respuesta
+
+
+def _app_publicada(datos: dict) -> str | None:
+    """La URL del `.app` comprimido que viaje como fichero adjunto de la release.
+
+    Es lo que necesita la app empaquetada, que no puede actualizarse sustituyendo
+    ficheros: su código va dentro del bundle. Se busca por nombre y no por posición
+    porque una release puede llevar varios adjuntos.
+    """
+    for adjunto in datos.get("assets") or []:
+        nombre = (adjunto.get("name") or "").lower()
+        if nombre.endswith(".zip") and "radar" in nombre:
+            return adjunto.get("browser_download_url")
+    return None
 
 
 def _raiz_del_zip(extraido: Path) -> Path:
@@ -181,6 +213,33 @@ def aplicar(timeout: int = 600) -> dict:
     vieja. Y lo que se sustituye se guarda como «.anterior» para poder volver atrás.
     """
     from . import busqueda
+
+    if rutas.empaquetada():
+        # Sustituir ficheros aquí sería escribir DENTRO del .app, y eso invalida la
+        # firma y no se puede hacer si la app está en /Applications, que no es del
+        # usuario. Un programa tampoco puede reemplazarse a sí mismo mientras corre.
+        # En Mac esto se resuelve como siempre: se baja la versión nueva y se arrastra
+        # encima. Aquí solo se dice, con la URL a mano.
+        info = comprobar()
+        if info.get("error"):
+            return {"ok": False, "mensaje": info["error"]}
+        if not info["hay_nueva"]:
+            return {"ok": True, "sin_cambios": True, "mensaje":
+                    f"Ya tienes la última versión ({info['version_actual']})."}
+        destino = info.get("url_app") or info.get("url_release")
+        return {
+            "ok": False,
+            "hay_que_descargar": True,
+            "url": destino,
+            "version_nueva": info["version_nueva"],
+            "mensaje": (
+                f"Hay publicada la versión {info['version_nueva']}. Esta copia lleva el "
+                "programa dentro de la aplicación, así que se actualiza descargando la "
+                "nueva y arrastrándola encima de la vieja, como cualquier programa de "
+                "Mac.\n\nTu base de datos, tu triaje y tus términos de búsqueda están "
+                "fuera de la aplicación y no se tocan."
+            ),
+        }
 
     activa = busqueda.en_marcha()
     if activa:

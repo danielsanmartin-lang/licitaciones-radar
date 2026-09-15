@@ -39,18 +39,20 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import progreso
+from . import progreso, rutas
 from .db import ahora, escribir_preferencia, leer_preferencia
 from .model import normalizar
 
 log = logging.getLogger(__name__)
 
-RAIZ = Path(__file__).resolve().parent.parent
-PERFILES_POR_DEFECTO = RAIZ / "config" / "perfiles.json"
+RAIZ = rutas.CODIGO
+# Los perfiles se editan, así que van con los datos y no con el código: dentro de un
+# .app no se puede escribir, y la actualización se lleva el bundle entero por delante.
+PERFILES_POR_DEFECTO = rutas.PERFILES
 # El de ejemplo sí se versiona; el de verdad no. Los términos con los que cada uno busca
 # son su trabajo —las raíces, las erratas de los pliegos, las lenguas cooficiales— y no
 # tienen por qué acabar en un repositorio público ni viajar en una actualización.
-PERFILES_EJEMPLO = RAIZ / "config" / "perfiles.ejemplo.json"
+PERFILES_EJEMPLO = rutas.PERFILES_PLANTILLA
 
 
 def patron(termino: str) -> re.Pattern | None:
@@ -536,7 +538,11 @@ def terminos_para_consultas(perfiles: list[Perfil]) -> tuple[list[str], list[str
 # `patron()` dejó de casar "formacion" dentro de "informacion" había que retirar 612 de
 # 943 matches, y ni la huella de los perfiles ni la de ninguna ficha había cambiado, así
 # que una reevaluación incremental habría dejado la bandeja mintiendo para siempre.
-VERSION_MATCHING = "1"
+#
+# La "2" es por dejar de casar el nombre del órgano: `_SELECT_EVAL` pasó de
+# `texto_norm` a `texto_reglas_norm`. Mismo caso exacto que el de arriba —cambia lo que
+# se evalúa sin que cambie ninguna huella— y había 125 matches que retirar.
+VERSION_MATCHING = "2"
 
 # Donde se anota con qué perfiles se evaluó la base la última vez. Mismo idioma de
 # autocorrección que las VERSION_* de `db.py`.
@@ -560,8 +566,8 @@ CAMPOS_HUELLA_PERFIL = (
 # antes de escribir nada.
 LOTE = 5_000
 
-_SELECT_EVAL = """SELECT id, COALESCE(texto_norm, '') AS texto, cpv, importe_referencia,
-                         ccaa, fuente FROM licitaciones"""
+_SELECT_EVAL = """SELECT id, COALESCE(texto_reglas_norm, '') AS texto, cpv,
+                         importe_referencia, ccaa, fuente FROM licitaciones"""
 
 # Escrito con `IS NOT` y no con `IS NULL OR !=` porque es el WHERE del índice parcial
 # `idx_lic_pendientes` (db.py) y SQLite solo usa un índice parcial cuando la condición

@@ -34,8 +34,10 @@ from . import progreso
 
 log = logging.getLogger(__name__)
 
-RAIZ = Path(__file__).resolve().parent.parent
-BUNDLE_CA = RAIZ / "config" / "certs" / "ca-bundle.pem"
+from . import rutas
+
+RAIZ = rutas.CODIGO
+BUNDLE_CA = rutas.CERTIFICADOS
 
 # Huellas SHA-256 de las raíces españolas que el bundle DEBE contener. No es una
 # comprobación de integridad del bundle completo: es un canario para detectar que

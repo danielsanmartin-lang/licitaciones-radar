@@ -17,13 +17,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import busqueda, consultas, db, pipeline
+from . import busqueda, consultas, db, pipeline, rutas
 from .db import ESTADOS_REVISION
 
 log = logging.getLogger(__name__)
 
-RAIZ = Path(__file__).resolve().parent.parent
-WEB = RAIZ / "web"
+RAIZ = rutas.CODIGO
+WEB = rutas.WEB
 
 # Los meses que acepta /api/analitica. Se comprueba la forma porque el valor acaba en una
 # comparación de texto contra `substr(fecha, 1, 7)`: '2024' o '24-01' no fallarían, solo
@@ -115,7 +115,7 @@ class Manejador(BaseHTTPRequestHandler):
                     ),
                     busqueda=params.get("q") or None,
                     solo_novedades=params.get("novedades") == "1",
-                    orden=params.get("orden", "urgencia"),
+                    orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
                     limite=min(int(params.get("limite", 200)), 1000),
                     offset=int(params.get("offset", 0)),
                 ))

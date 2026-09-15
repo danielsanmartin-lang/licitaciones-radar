@@ -17,11 +17,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent.parent
+from . import rutas
+
+RAIZ = rutas.CODIGO
 ETIQUETA = "com.licitaciones-radar.ingesta"
 DIR_AGENTES = Path.home() / "Library" / "LaunchAgents"
 PLIST = DIR_AGENTES / f"{ETIQUETA}.plist"
-LOG = RAIZ / "data" / "ingest.log"
+LOG = rutas.DIR_DATOS / "ingest.log"
 
 
 def _definicion(hora: int, minuto: int) -> dict:

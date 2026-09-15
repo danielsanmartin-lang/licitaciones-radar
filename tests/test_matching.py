@@ -23,18 +23,33 @@ CASOS = [
      ["80533100"], 915000, "ted", "LANTIK 915k vía TED"),
     (True, "Implantación de DMARC y protección del correo electrónico institucional",
      ["72500000"], 60000, "placsp:licitaciones", "protección de correo"),
-    # J260047, Junta de Contratación del Ministerio de Cultura, 1.031.857 € de valor
-    # estimado. Durante un tiempo entró por accidente: "formacion" casaba dentro de
-    # "sistemas de información" y el motivo guardado hablaba de una formación que el
-    # pliego no menciona. Tiene que entrar por lo que es, un contrato de ciberseguridad.
-    (True, "Servicio de oficina de ciberseguridad en el ministerio de cultura, en el "
-           "ámbito de los sistemas de información gestionados por la División de "
-           "Tecnologías de la Información",
+
+    # --- Ciberseguridad amplia: fuera del alcance a propósito -------------
+    # Estos tres entraban, y entraban bien: son contratos de ciberseguridad de verdad,
+    # verificados en las fuentes. Lo que cambió no es el matcher, es el catálogo. El
+    # producto es concienciación y protección del correo, y a una oficina de
+    # ciberseguridad, a un SOC o a una adecuación al ENS no hay nada que presentar. El
+    # perfil «Ciberseguridad y seguridad de la información» aportaba 3.123 de las 3.780
+    # coincidencias —cuatro de cada cinco fichas de la bandeja— y está desactivado.
+    #
+    # Se quedan aquí, en el bando de los que NO deben entrar, en lugar de borrarse, por
+    # dos razones: si alguien reactiva el perfil amplio sin darse cuenta, estos tres lo
+    # dicen; y el día que Zepo amplíe catálogo, aquí está escrito qué hay que devolver
+    # al otro bando.
+    #
+    # El primero arrastra además su propia historia, que sigue vigente: J260047, Junta
+    # de Contratación del Ministerio de Cultura, 1.031.857 € de valor estimado. Durante
+    # un tiempo entró por accidente, porque "formacion" casaba dentro de "sistemas de
+    # información", y el motivo guardado hablaba de una formación que el pliego no
+    # menciona. Ahora no debe entrar por ningún camino, y ese es justo el de antes.
+    (False, "Servicio de oficina de ciberseguridad en el ministerio de cultura, en el "
+            "ámbito de los sistemas de información gestionados por la División de "
+            "Tecnologías de la Información",
      ["72514300"], 1031857, "placsp:licitaciones", "oficina de ciberseguridad Min. Cultura"),
-    (True, "Servicios de seguridad de los sistemas de información de la Gerencia de "
-           "Informática de la Seguridad Social",
+    (False, "Servicios de seguridad de los sistemas de información de la Gerencia de "
+            "Informática de la Seguridad Social",
      ["72500000"], 22925795, "placsp:licitaciones", "seguridad de la información Seg. Social"),
-    (True, "Asistencia para la gestión del ENS y centro de operaciones de seguridad (SOC)",
+    (False, "Asistencia para la gestión del ENS y centro de operaciones de seguridad (SOC)",
      [], 328727, "placsp:licitaciones", "SOC + ENS"),
 
     # --- Deben quedar fuera: falsos positivos observados ------------------

@@ -36,7 +36,9 @@ import threading
 import time
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent.parent
+from . import rutas
+
+RAIZ = rutas.CODIGO
 
 RUEDA = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 INTERVALO_PINTADO = 0.1   # s entre repintados cuando hay terminal
@@ -48,7 +50,7 @@ BORRAR_LINEA = "\r\x1b[K"
 # no le sirven a la aplicación: se publica una instantánea aquí y el servidor la lee.
 # Es lo que permite que la carga inicial se vea avanzar en la pantalla mientras la
 # base sigue creciendo por detrás.
-ESTADO = RAIZ / "data" / "progreso.json"
+ESTADO = rutas.DIR_DATOS / "progreso.json"
 
 
 def _miles(n: int) -> str:
