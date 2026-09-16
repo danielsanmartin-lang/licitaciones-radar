@@ -13,6 +13,14 @@ config/perfiles.json.tmp
 # Lo que aparta el actualizador para poder volver atrás (radar.anterior/, web.anterior/…).
 *.anterior
 
+# La app de macOS montada. Se reconstruye en un segundo con
+# `python3 herramientas/construir_app.py`, así que no tiene sentido versionarla. Lo que
+# SÍ se versiona es `macos/prefabricado/`, que es el binario ya compilado del que tira
+# quien no tiene las herramientas de Apple instaladas.
+Radar de Licitaciones.app/
+# Y el zip que se adjunta a la release, que se genera con --zip.
+Radar de Licitaciones *.zip
+
 # Python
 __pycache__/
 *.py[cod]

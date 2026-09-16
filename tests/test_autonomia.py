@@ -24,7 +24,7 @@ STDLIB_PERMITIDA = {
     "ssl", "sys", "tempfile", "threading", "time", "typing", "unicodedata",
     "unittest", "urllib", "webbrowser", "xml", "zipfile", "collections",
     "functools", "itertools", "shutil", "textwrap", "plistlib", "subprocess",
-    "getpass", "signal",
+    "getpass", "signal", "importlib",
 }
 # certifi solo se usa en la herramienta de regeneración del bundle, que es
 # opcional y se ejecuta a mano una vez al año.

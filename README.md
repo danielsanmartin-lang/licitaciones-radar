@@ -14,10 +14,41 @@ y funciona igual en cualquier Mac.
 
 ## Arranque en 30 segundos
 
-Doble clic en **`start.command`**.
+Doble clic en **`Radar de Licitaciones.app`**.
 
-Descarga las novedades y abre la bandeja en el navegador. Un día normal tarda unos
-segundos. La primera vez es distinta y merece su propio apartado, justo abajo.
+Se abre como cualquier programa del Mac: su ventana, su icono en el Dock, su menú. Por
+dentro arranca el servidor de Python, espera a que conteste y enseña la bandeja; tarda
+dos o tres segundos. No hay que dejar ninguna terminal abierta, y al salir con ⌘Q el
+servidor se para con ella.
+
+**La app se lleva el programa dentro** —`radar/`, `web/` y los certificados van en
+`Contents/Resources`— así que es **un solo fichero de 1,7 MB** que se puede arrastrar a
+Aplicaciones, comprimir y mandar por correo. Lo único que hace falta en el otro Mac es
+Python 3.9 o superior.
+
+Si no está, se monta en un segundo:
+
+```bash
+python3 herramientas/construir_app.py
+```
+
+**`start.command`** sigue ahí y hace lo mismo sin la ventana propia: descarga las
+novedades y abre la bandeja en el navegador. Es el camino de siempre y el que conviene
+si algo va raro, porque va contando lo que hace por la terminal.
+
+> **La primera vez, macOS desconfía.** La app no está firmada con un certificado de
+> Apple —eso cuesta 99 $ al año y no los vale para una herramienta de uso interno—, así
+> que si te la has descargado de GitHub el sistema se negará a abrirla de un doble clic.
+> Se resuelve una sola vez: **clic derecho sobre la app → Abrir**, y confirmar. Desde
+> entonces se abre normal. Si prefieres la terminal:
+>
+> ```bash
+> xattr -dr com.apple.quarantine "Radar de Licitaciones.app"
+> ```
+>
+> Y si te la construyes tú con el comando de arriba, no pasa nada de esto.
+
+La primera vez es distinta y merece su propio apartado, justo abajo.
 
 Mientras descarga, la terminal muestra una línea que se va actualizando con la
 fuente, la página, los megas que llevan llegados y el tiempo transcurrido:
@@ -52,6 +83,63 @@ y lo explica—. Aparte de eso no hay que instalar nada más: ni librerías, ni 
 datos, ni cuentas.
 
 ---
+
+### Pasársela a un compañero
+
+Un fichero y una advertencia.
+
+```bash
+python3 herramientas/construir_app.py --zip
+```
+
+Deja un **«Radar de Licitaciones X.Y.Z.zip» de unos 1.000 KB**. Eso es todo lo que hay
+que mandar: por correo, por Slack o por AirDrop. Tu compañero lo descomprime, arrastra la
+app a Aplicaciones y la abre. No hay que copiar carpetas, ni respetar rutas, ni instalar
+nada más allá de Python.
+
+La advertencia: **esa copia lleva la plantilla genérica de términos de búsqueda, no los
+tuyos.** Es a propósito —los términos afinados durante meses no viajan dentro de un
+paquete que se reparte— pero significa que arrancaría con un filtro que no encuentra
+nada. Si quieres que empiece con tu configuración, mándale aparte tu
+`config/perfiles.json` y que lo deje en:
+
+```
+~/Library/Application Support/Radar de Licitaciones/config/perfiles.json
+```
+
+Lo que **no** viaja nunca dentro de la app, y conviene saberlo: tu base de datos, tu
+triaje y tus notas. Hay un test que lo vigila (`tests/test_rutas.py`), porque mandar la
+app a alguien no puede ser mandarle por accidente en qué oportunidades estás trabajando.
+
+Y la primera vez, macOS desconfiará de la app igual que de cualquier programa sin firmar
+descargado de internet: clic derecho → Abrir. Está explicado arriba.
+
+### Dónde viven tus datos
+
+Depende de cómo la uses, y la regla es explícita:
+
+| | |
+|---|---|
+| App montada **dentro de la carpeta del proyecto** | `data/` y `config/` del proyecto, como siempre |
+| App **en Aplicaciones** o recibida de alguien | `~/Library/Application Support/Radar de Licitaciones` |
+| `RADAR_DATOS` en el entorno | donde diga esa variable, y manda sobre las otras dos |
+
+Es decir: **si trabajas con el repositorio, nada cambia y tu base no se mueve de sitio.**
+La app que montas ahí usa ese código y esa base. Si arrastras la app a Aplicaciones se
+convierte en una instalación independiente y empezaría de cero, con su propia base
+vacía; si quieres llevarte la que ya tienes, muévela una vez:
+
+```bash
+mkdir -p ~/Library/Application\ Support/Radar\ de\ Licitaciones
+mv data ~/Library/Application\ Support/Radar\ de\ Licitaciones/
+mkdir -p ~/Library/Application\ Support/Radar\ de\ Licitaciones/config
+mv config/perfiles.json ~/Library/Application\ Support/Radar\ de\ Licitaciones/config/
+```
+
+Nunca se escribe dentro de la app. No es una preferencia: un `.app` puede estar en
+`/Applications`, que no es tuyo; está firmado, y escribir dentro invalida la firma; y la
+actualización lo sustituye entero, así que cualquier cosa guardada ahí se perdería en la
+versión siguiente.
 
 ## La primera vez
 
@@ -129,8 +217,26 @@ menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas.
 ### Bandeja
 
 Lo que ha pasado el filtro, con **los días que quedan para presentar** bien grandes
-a la derecha. De cada licitación se ve el órgano, el importe, el plazo y los enlaces
-a los pliegos oficiales.
+a la derecha, y debajo, en pequeño, cuánto lleva publicada —que es lo que explica por
+qué está en ese sitio de la lista, ahora que la bandeja abre por lo último publicado—.
+De cada licitación se ve el órgano, el importe, el plazo y los enlaces a los pliegos
+oficiales.
+
+**Lo que marcas como «siguiendo» o «presentada» no se va de la bandeja nunca**, aunque
+dejes de tener un perfil que lo case. Es a propósito: marcar algo es una decisión tuya y
+pesa más que el filtro automático. La ficha aparece sin píldora de perfil y su apartado
+«Por qué ha entrado» dice que está en la base pero no casa con ningún perfil activo, que
+es la verdad.
+
+Lo aprendimos por las malas. Al estrechar los perfiles se fue de la bandeja un contrato
+de 6,25 M€ de Canal de Isabel II que estaba en seguimiento, con 23 días de plazo: su
+triaje y sus notas seguían en la base, intactos, pero no había manera de verlo —ni el
+filtro de estado ni la búsqueda libre pasan por fuera de las coincidencias—, y el
+contador de la cabecera decía 1 donde había 2. Ajustar los términos no puede esconderte
+algo en lo que estás trabajando.
+
+Lo **descartado** que deja de casar sí desaparece, y también a propósito: ahí el filtro y
+tu decisión dicen lo mismo.
 
 Las que llevan menos de una semana publicadas salen con la etiqueta **Nueva**, la única
 rellena de la fila para que se vea sin leer. La semana se cuenta desde la **primera**
@@ -294,15 +400,26 @@ La aplicación mira al abrirse si hay una versión publicada más nueva que la i
 si la hay, ofrece un botón para traerla. Se puede hacer también desde la terminal con los
 dos comandos de arriba.
 
-Sustituye el código —`radar/`, `web/`, `radar.py`, `start.command` y los certificados— y
-guarda lo anterior al lado como `.anterior` para poder volver atrás. **No toca `data/`**,
-donde están tu base, tu triaje y tus notas, **ni `config/perfiles.json`**, que son tus
-términos de búsqueda. Si hay una descarga en marcha, se niega: cambiar el código por
-debajo de una carga que dura horas es pedir problemas.
+Sustituye el código —`radar/`, `web/`, `radar.py`, `start.command`, `macos/` y los
+certificados— y guarda lo anterior al lado como `.anterior` para poder volver atrás. **No
+toca `data/`**, donde están tu base, tu triaje y tus notas, **ni `config/perfiles.json`**,
+que son tus términos de búsqueda. Si hay una descarga en marcha, se niega: cambiar el
+código por debajo de una carga que dura horas es pedir problemas.
 
-Después hay que cerrar la aplicación y volver a abrirla con `start.command`, porque el
-proceso que está corriendo ya tiene en memoria la versión vieja. Los cambios en la base de
-datos que traiga la versión nueva se aplican solos en ese siguiente arranque.
+Después hay que cerrar la aplicación y volver a abrirla, porque el proceso que está
+corriendo ya tiene en memoria la versión vieja. Los cambios en la base de datos que traiga
+la versión nueva se aplican solos en ese siguiente arranque.
+
+Todo eso vale para una **copia de trabajo**, donde el código está en la carpeta y se
+puede sustituir. `Radar de Licitaciones.app` no se toca: un programa no puede cambiarse a
+sí mismo mientras corre. No hace falta, porque lo que sí se sustituye es de lo que está
+hecha; al volver a abrirla se da cuenta de que su versión ya no coincide con la del código
+y se ofrece a rehacerse. A mano es `python3 herramientas/construir_app.py --forzar`.
+
+En una **app recibida de alguien**, que lleva el programa dentro, no hay ficheros que
+sustituir y el botón hace otra cosa: dice que hay versión nueva y ofrece **descargarla**.
+Se arrastra encima de la vieja, como cualquier programa de Mac. Los datos están fuera de
+la app, así que no se pierde nada al reemplazarla.
 
 ### Publicar una versión
 
@@ -310,7 +427,21 @@ Lo que mira el actualizador es la **última release publicada en GitHub**, así 
 código al repositorio no actualiza a nadie. Para publicar una:
 
 1. Sube `__version__` en `radar/__init__.py`.
-2. Etiqueta la release con ese mismo número. Si no coinciden, el actualizador se niega a
+2. Reconstruye la app, deja el binario compilado en el repositorio y empaqueta el
+   `.app` para adjuntarlo:
+
+   ```bash
+   python3 herramientas/construir_app.py --forzar --prefabricar --zip
+   ```
+
+   `--prefabricar` actualiza `macos/prefabricado/radar`, de donde saca la ventana nativa
+   quien no tenga las herramientas de Apple. `--zip` deja un
+   «Radar de Licitaciones X.Y.Z.zip» y te dice su SHA-256.
+3. **Adjunta ese zip a la release.** Es lo que busca la app empaquetada cuando ofrece
+   actualizarse; lo localiza por el nombre, así que basta con que lleve «Radar» y acabe
+   en `.zip`. Si te lo olvidas, la app lleva al usuario a la página de la release en
+   lugar de dejarlo sin salida, pero le toca buscar el fichero a mano.
+4. Etiqueta la release con ese mismo número. Si no coinciden, el actualizador se niega a
    instalarla —que es lo que se quiere cuando el paquete no es lo que dice ser—.
 
 ```bash
@@ -321,12 +452,17 @@ Lo que se descarga es el zip que GitHub genera del propio tag, no un fichero que
 subir. Y **el repositorio tiene que ser público**: si no, la comprobación de versión
 recibe un 404 y el botón no aparece —eso ya lo explica el mensaje de error—.
 
-Sobre el SHA-256: el actualizador busca uno en las notas y, si lo encuentra, exige que
-cuadre. Suena bien y es una trampa, porque ese zip lo genera GitHub al vuelo y su suma
-puede cambiar sin que cambie el código; el día que pase, nadie podría actualizar y el
-mensaje hablaría de un SHA que no le dice nada a quien lo lee. La defensa real es HTTPS
-contra este repositorio, así que las notas van sin SHA salvo que alguien se comprometa a
-mantenerlo.
+Sobre el SHA-256, que tiene dos mitades y conviene no confundirlas.
+
+Para la **copia de trabajo**, el actualizador busca un SHA en las notas y, si lo
+encuentra, exige que cuadre. Suena bien y es una trampa, porque ese zip lo genera GitHub
+al vuelo desde el tag y su suma puede cambiar sin que cambie el código; el día que pase,
+nadie podría actualizar y el mensaje hablaría de un SHA que no le dice nada a quien lo
+lee. La defensa real es HTTPS contra este repositorio, así que las notas van sin SHA.
+
+Para el **zip del `.app`** es distinto: ese fichero lo subes tú y su hash es estable, así
+que el que imprime `--zip` sí es una comprobación de verdad. Ponerlo en las notas de la
+release es útil, y quien reciba la app por otro camino puede contrastarlo.
 
 ### Que se actualice solo
 
@@ -480,23 +616,49 @@ python3 radar.py ingest --fuente placsp:licitaciones --backfill 2024,2025,2026
 
 ## Qué esperar del filtro
 
-Sobre un histórico de 2024–2026 el filtro deja pasar **medio punto porcentual de lo
-que descarga**: 3.705 anuncios de 673.755, que agrupados por expediente son 2.716
-licitaciones en la bandeja. En la muestra de 30 mejor puntuadas revisada a
-mano, unas 20 eran directamente de concienciación o protección de correo, otras 8–9
-eran contratos de ciberseguridad más amplios que a un vendedor de ciber le interesa
-ver igualmente, y 1 o 2 no venían a cuento. Si te parece que hay demasiado ruido,
-endurece `contexto_requerido` o sube `importe_minimo`.
+Sobre un histórico de 2024–2026 el filtro deja pasar **menos de una diezmilésima de lo
+que descarga**: 519 anuncios de 686.302. Es un filtro deliberadamente estrecho, y esa es
+la decisión de fondo: la bandeja está calibrada para lo que se vende —concienciación y
+protección del correo— y no para la ciberseguridad en general.
 
-Los perfiles cubren dos cosas distintas a propósito, y conviene saber cuál te
-interesa: **«Concienciación y phishing»** es el nicho estricto, y **«Ciberseguridad y
-seguridad de la información»** es la red amplia —oficinas de ciberseguridad, SOC,
-adecuación al ENS, seguridad gestionada—, que trae bastante más volumen: aporta 3.060
-de los 3.705 anuncios que pasan el filtro, cuatro de cada cinco. Si solo quieres el
-nicho, quítale la marca **«activo»** en la pestaña «Términos de búsqueda» y guarda: sus
-coincidencias salen de la bandeja en ese momento, y sus términos se quedan escritos en
-el fichero por si quieres volver a activarlo. A mano es lo mismo: `"activo": false` en
-`config/perfiles.json` y relanzar `match`.
+La configuración de referencia trae cuatro perfiles y **solo tres activos**:
+
+| Perfil | Anuncios | |
+|---|---|---|
+| Concienciación y phishing | 412 | el nicho: simulaciones, formación, cultura de seguridad |
+| Protección del correo electrónico | 107 | DMARC, pasarelas, antiphishing, antispam |
+| Consultas previas al mercado | 0 hoy | vigilancia: avisa cuando salga una consulta preliminar del nicho |
+| ~~Ciberseguridad y seguridad de la información~~ | desactivado | SOC, ENS, pentesting, seguridad gestionada |
+
+El cuarto está **desactivado a propósito**, y merece la pena saber por qué: aportaba
+3.123 de las 3.780 coincidencias que había antes, cuatro de cada cinco fichas de la
+bandeja, y ninguna era presentable. Si algún día el catálogo se amplía a servicios de
+ciberseguridad más generales, se reactiva marcando **«activo»** en la pestaña «Términos
+de búsqueda»: sus 41 términos siguen escritos en el fichero. A mano es lo mismo,
+`"activo": true` en `config/perfiles.json` y relanzar `match`.
+
+El de **consultas previas** está en cero y también es a propósito. Son las consultas
+preliminares al mercado, el único momento en que todavía se puede influir en un pliego
+antes de que se escriba, así que vale la pena tener el canal abierto aunque hoy no pase
+nada por él. Estuvo dando catorce fichas hasta que se miraron una por una: boletines
+oficiales, remolques carrozados, recambios de SAI y transporte de datos IP. Nueve de las
+catorce entraban solo porque el órgano que las publicaba se llama «Agència de
+Digitalització, **Ciberseguretat** i Telecomunicacions».
+
+Lo cual lleva a la otra cosa que se arregló midiendo, y que conviene no volver a
+romper: **el nombre del organismo no entra en las reglas**. Lo que se indexa para la
+caja de búsqueda sí lo lleva —buscar «Viladecans» tiene que funcionar— pero lo que se
+evalúa son objeto, descripción y lotes, y nada más. Con el nombre dentro, «Instituto
+Nacional de **Ciberseguridad**», «Departament d'Educació i **Formació** Professional» o
+«**Ens** d'Abastament d'Aigua Ter-Llobregat» regalaban el término ambiguo, el contexto
+requerido, o los dos: eran 125 de las 535 coincidencias del perfil de concienciación, el
+23 %, entre ellas «Formación en Gestión de Proyectos Europeos y soft-skills» del INCIBE
+y unas obras de un módulo prefabricado. Ninguna de las 125 llevaba un término fuerte, así
+que quitar el órgano no costó ni un verdadero positivo. Está en
+`Licitacion.texto_reglas`, con los tests en `tests/test_reevaluacion.py`.
+
+Si te sigue pareciendo que hay ruido, endurece `contexto_requerido` o sube
+`importe_minimo`.
 
 Un ejemplo de lo que sí encuentra y que se perdería de otra forma: un contrato de
 mantenimiento de hardware del Ayuntamiento de Viladecans cuyo **lote 10** era
@@ -528,6 +690,20 @@ se piden aparte porque no son instantáneas:
 python3 radar.py doctor --integridad   # ¿la base está dañada? lee los 3 GB: ~50 s
 python3 radar.py doctor --con-red      # ¿hay una versión nueva publicada?
 ```
+
+**La app se queda en «Arrancando el radar…».** Significa que el servidor de Python no
+ha llegado a contestar. Para ver por qué, arranca el binario desde la terminal en lugar
+de con doble clic: escribe por la salida de error lo que va encontrando —la carpeta del
+proyecto, qué Python ha elegido, si ha podido lanzar el servidor—.
+
+```bash
+"./Radar de Licitaciones.app/Contents/MacOS/radar"
+```
+
+La causa habitual es que no haya un Python 3.9+ instalado; la app no lo empaqueta y
+macOS ya no lo trae de serie. La otra es una copia de la app montada a medias, sin el
+programa dentro: se arregla volviéndola a montar. Mientras tanto, `start.command` sigue
+funcionando.
 
 **`python3 radar.py estado`** dice cuándo se ejecutó cada fuente por última vez, qué
 trajo y si falló. La bandeja avisa arriba en rojo cuando una fuente se rompe: sin ese
@@ -587,9 +763,18 @@ Python 3 con **cero dependencias externas** (solo biblioteca estándar) y un fro
 estático sin compilar. Es deliberado: cualquiera puede clonar la carpeta y arrancar
 sin instalar nada.
 
+Con una excepción, que conviene decir clara: la ventana nativa de macOS es un programa
+de Swift compilado, y su binario **sí está en el repositorio** (`macos/prefabricado/`).
+No es una dependencia —nada de Python lo necesita, y `start.command` funciona igual sin
+él— pero es el único trozo de este proyecto que no se puede leer antes de ejecutarlo. Se
+comprometió porque el zip de una release de GitHub solo lleva fuentes, y un compañero sin
+las herramientas de Apple instaladas no podría compilarlo. El fuente está al lado, en
+`macos/Radar.swift`, y se reconstruye con `python3 herramientas/construir_app.py`.
+
 ```
 radar.py              punto de entrada de la línea de comandos
 radar/
+  rutas.py            dónde está el código y dónde se escriben los datos
   net.py              descargas con TLS verificado, reintentos y reanudación
   model.py            el modelo común al que traducen todas las fuentes
   db.py               SQLite: esquema, migraciones, dedup e historial
@@ -606,7 +791,11 @@ radar/
 config/perfiles.json  tus búsquedas guardadas — esto es lo que se edita (no se versiona)
 config/perfiles.ejemplo.json  la plantilla genérica de la que se crea el anterior
 web/                  la interfaz
-tests/                361 pruebas, con datos reales de las fuentes como fixtures
+macos/Radar.swift     la ventana nativa: arranca el servidor y lo enseña
+macos/icono.svg       el icono, en texto; se rasteriza al montar la app
+macos/prefabricado/   el binario ya compilado, para quien no tenga las herramientas
+herramientas/construir_app.py  monta «Radar de Licitaciones.app»
+tests/                442 pruebas, con datos reales de las fuentes como fixtures
 data/radar.db         la base (se crea sola; aquí vive tu triaje)
 data/cache/           los ZIP del histórico, para no volver a bajarlos
 data/busqueda.log     lo que va contando la descarga lanzada desde la aplicación
@@ -614,6 +803,20 @@ data/busqueda.log     lo que va contando la descarga lanzada desde la aplicació
 
 Los conectores están aislados a propósito: si Cataluña cambia su esquema una mañana,
 el resto de la ingesta sigue funcionando y la bandeja lo dice.
+
+**`radar/rutas.py` merece un párrafo**, porque es lo que permite repartir el programa en
+un solo fichero. Durante mucho tiempo todo colgaba de la carpeta del proyecto: ahí vivían
+`radar/` y también `data/radar.db`. Para una copia clonada del repositorio eso está bien
+y sigue siendo lo que pasa. Lo que no permitía era meter el código dentro de un `.app`,
+porque ahí no se puede escribir. Así que hay dos raíces y no una: `CODIGO`, de donde se
+lee —`web/`, los certificados, la plantilla de perfiles—, y `DATOS`, donde se escribe
+—la base, la caché, el `perfiles.json` de cada uno—. La regla que las separa está en el
+docstring del módulo y se resume en la tabla de «Dónde viven tus datos», más arriba.
+
+Si algún día hay que añadir un fichero que el programa escriba, va en `DATOS`. Si es algo
+que solo se lee, en `CODIGO`. Ponerlo en el sitio equivocado no falla en una copia de
+trabajo —las dos raíces son la misma— y falla en la app empaquetada, que es el peor sitio
+donde enterarse.
 
 ```bash
 python3 -m unittest discover -s tests -t .
@@ -623,13 +826,19 @@ Se ejecutan también en cada push, en Python 3.9 —el mínimo que se declara ar
 que se rompe sin que nadie lo note en un equipo con un Python nuevo— y en 3.13, en Linux
 y en macOS. La receta está en `.github/workflows/tests.yml`.
 
-Los tests incluyen doce licitaciones reales verificadas (entre ellas la oficina de
-concienciación de LANTIK, 915.000 €, la oficina de ciberseguridad del Ministerio de
-Cultura, 1.031.857 €, y una plataforma de phishing sin CPV) y quince falsos
-positivos observados —concienciación medioambiental, seguridad vial, prevención de
-riesgos laborales, «sistemas de información» que no es «formación»— que deben seguir
-quedando fuera. Si tocas `matching.py` o los perfiles, esos tests te dicen si has
-roto la precisión.
+Los tests incluyen licitaciones reales verificadas (entre ellas la oficina de
+concienciación de LANTIK, 915.000 €, y una plataforma de phishing sin CPV ni más pista
+que la errata «phising») y una colección de falsos positivos observados
+—concienciación medioambiental, seguridad vial, prevención de riesgos laborales,
+«sistemas de información» que no es «formación», crema solar con SPF 50— que deben
+seguir quedando fuera. Si tocas `matching.py` o los perfiles, esos tests te dicen si
+has roto la precisión.
+
+Y hay un grupo que está en el bando de los que NO deben entrar aunque sean contratos de
+ciberseguridad de verdad: la oficina de ciberseguridad del Ministerio de Cultura
+(1.031.857 €), la seguridad de la información de la Seguridad Social (22,9 M€) y una
+asistencia de ENS y SOC. Entraban, y entraban bien; lo que cambió no fue el matcher sino
+el catálogo. Están ahí para avisar si alguien reactiva el perfil amplio sin querer.
 
 Uno de ellos merece atención especial:
 `test_los_terminos_casan_a_principio_de_palabra_pero_siguen_siendo_raices` fija las

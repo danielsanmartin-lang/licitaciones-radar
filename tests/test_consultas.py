@@ -97,6 +97,109 @@ class TestBandeja(unittest.TestCase):
         self.assertEqual(len(filas), 5)
 
 
+class TestElTriajeProtegeLaFicha(unittest.TestCase):
+    """Lo que sigues no se pierde al estrechar los perfiles.
+
+    El incidente: al desactivar la red amplia de ciberseguridad, un contrato de 6,25 M€
+    de Canal de Isabel II que estaba en seguimiento —con 23 días de plazo— se fue de la
+    bandeja. Su fila de `revisiones` seguía intacta, pero no había forma de verlo: ni el
+    filtro de estado ni la búsqueda libre pasan por fuera de `matches`, así que la ficha
+    era invisible en las tres vistas y el contador de la cabecera decía 1 donde había 2.
+
+    Marcar algo es una decisión explícita y pesa más que el filtro automático.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.con = db.conectar(Path(self.dir.name) / "t.db")
+        self.addCleanup(self.con.close)
+
+    def _guardar(self, nombre, *, con_match: bool, estado_triaje=None):
+        db.guardar(self.con, Licitacion(
+            fuente="prueba", id_externo=nombre, expediente=f"E/{nombre}",
+            objeto=f"Servicios de ciberseguridad {nombre}",
+            organo="Órgano de prueba", estado="publicada",
+            valor_estimado=6_250_000, fecha_limite_presentacion=dias(23),
+        ))
+        lic = self.con.execute(
+            "SELECT id FROM licitaciones WHERE id_externo = ?", (nombre,)).fetchone()["id"]
+        if con_match:
+            self.con.execute(
+                "INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)"
+                " VALUES (?, 'Perfil activo', 3.0, 'motivo', ?)", (lic, db.ahora()))
+        if estado_triaje:
+            db.fijar_revision(self.con, lic, estado=estado_triaje,
+                              motivo_descarte="fuera de nicho"
+                              if estado_triaje == "descartado" else None)
+        self.con.commit()
+        return lic
+
+    def _ids(self, **kw):
+        return [it["id"] for it in consultas.bandeja(self.con, **kw)["items"]]
+
+    def test_lo_que_sigues_se_queda_aunque_deje_de_casar(self):
+        seguida = self._guardar("seguida", con_match=False, estado_triaje="siguiendo")
+        self.assertIn(seguida, self._ids(solo_vivas=False))
+        self.assertIn(seguida, self._ids(solo_vivas=True),
+                      "y también en la vista de cada día, «solo abiertas»")
+
+    def test_lo_presentado_tambien(self):
+        """Si se ha llegado a presentar oferta, esconderlo sería aún peor."""
+        p = self._guardar("presentada", con_match=False, estado_triaje="presentada")
+        self.assertIn(p, self._ids(solo_vivas=False))
+
+    def test_lo_descartado_que_deja_de_casar_no_resucita(self):
+        """La otra mitad del contrato. Aquí el filtro y la decisión dicen lo mismo, y
+        traerlo de vuelta sería justo el ruido que se venía a quitar."""
+        d = self._guardar("descartada", con_match=False, estado_triaje="descartado")
+        self.assertNotIn(d, self._ids(solo_vivas=False))
+        self.assertNotIn(d, self._ids(solo_vivas=False, estado_revision="descartado"))
+
+    def test_lo_que_nunca_se_toco_y_no_casa_sigue_fuera(self):
+        """Sin triaje no hay nada que proteger: la bandeja no es la base entera."""
+        suelta = self._guardar("sin-tocar", con_match=False)
+        self.assertNotIn(suelta, self._ids(solo_vivas=False))
+
+    def test_el_filtro_de_estado_la_encuentra(self):
+        seguida = self._guardar("seguida", con_match=False, estado_triaje="siguiendo")
+        self._guardar("normal", con_match=True)
+        self.assertEqual(self._ids(solo_vivas=False, estado_revision="siguiendo"), [seguida])
+
+    def test_el_contador_de_la_cabecera_cuadra_con_la_lista(self):
+        """El síntoma que delató el problema: la cabecera decía una cifra y la lista otra.
+
+        `resumen()` calcula sus KPI con `contar()`, así que las dos tienen que moverse
+        juntas; esto lo fija.
+        """
+        self._guardar("seguida", con_match=False, estado_triaje="siguiendo")
+        self._guardar("seguida-2", con_match=True, estado_triaje="siguiendo")
+        r = consultas.resumen(self.con, en_marcha=False)
+        self.assertEqual(r["siguiendo"], 2)
+        self.assertEqual(
+            r["siguiendo"],
+            consultas.bandeja(self.con, solo_vivas=False,
+                              estado_revision="siguiendo")["total"])
+
+    def test_la_ficha_protegida_no_finge_tener_perfil(self):
+        """Llega con `perfil` a nulo, que es lo que hace que la ficha diga «está en la
+        base pero no casa con ningún perfil activo» en lugar de inventarse un motivo."""
+        self._guardar("seguida", con_match=False, estado_triaje="siguiendo")
+        ficha = consultas.bandeja(self.con, solo_vivas=False)["items"][0]
+        self.assertIsNone(ficha["perfil"])
+        self.assertIsNone(ficha["motivo"])
+        self.assertEqual(ficha["estado_revision"], "siguiendo")
+
+    def test_filtrar_por_perfil_no_la_arrastra(self):
+        """Si se pide un perfil concreto, se quiere ese perfil: una ficha que no casa
+        con ninguno no tiene nada que hacer en esa lista."""
+        seguida = self._guardar("seguida", con_match=False, estado_triaje="siguiendo")
+        normal = self._guardar("normal", con_match=True)
+        ids = self._ids(solo_vivas=False, perfil="Perfil activo")
+        self.assertIn(normal, ids)
+        self.assertNotIn(seguida, ids)
+
+
 class TestNuevasYOrdenPorPublicacion(unittest.TestCase):
     """La etiqueta «Nueva» y el orden por fecha de publicación.
 
@@ -183,6 +286,38 @@ class TestNuevasYOrdenPorPublicacion(unittest.TestCase):
         orden = [i["expediente"] for i in
                  consultas.bandeja(self.con, solo_vivas=False, orden="antigua")["items"]]
         self.assertEqual(orden, ["E/vieja", "E/media", "E/sf"])
+
+    def test_la_bandeja_abre_por_lo_ultimo_publicado(self):
+        """El orden de fábrica, fijado aquí para que no se deshaga sin querer.
+
+        Hasta la 1.3.0 era «urgencia», y poner arriba lo que cierra antes deja lo
+        primero de la lista fuera de plazo para preparar nada. El valor vive en
+        `consultas.ORDEN_POR_DEFECTO` y lo leen también el servidor y el `<select>` de
+        la interfaz; si alguien cambia uno de los tres y no los otros, la API y la
+        pantalla dejan de decir lo mismo y nadie se enterará hasta que un filtro
+        devuelva un orden que nadie pidió.
+        """
+        self.assertEqual(consultas.ORDEN_POR_DEFECTO, "reciente")
+        self._añadir("a", dias(-30), expediente="E/a")
+        self._añadir("b", dias(-2), expediente="E/b")
+        self._añadir("c", dias(-15), expediente="E/c")
+        sin_pedir_orden = [i["expediente"] for i in
+                           consultas.bandeja(self.con, solo_vivas=False)["items"]]
+        self.assertEqual(sin_pedir_orden, ["E/b", "E/c", "E/a"])
+
+    def test_un_orden_que_no_existe_cae_en_el_de_fabrica(self):
+        """El respaldo de `ORDENES.get` tiene que ser el mismo valor por defecto.
+
+        Estuvo apuntando a «urgencia» cuando el de fábrica ya era otro: una petición
+        con `orden=loquesea` devolvía un orden distinto del que da no pedir nada.
+        """
+        self._añadir("a", dias(-30), expediente="E/a")
+        self._añadir("b", dias(-2), expediente="E/b")
+        inventado = [i["expediente"] for i in
+                     consultas.bandeja(self.con, solo_vivas=False, orden="no-existe")["items"]]
+        por_defecto = [i["expediente"] for i in
+                       consultas.bandeja(self.con, solo_vivas=False)["items"]]
+        self.assertEqual(inventado, por_defecto)
 
     def test_ordenar_por_reciente_usa_la_primera_publicacion(self):
         """Si mirara el anuncio mostrado, el expediente viejo con adjudicación de ayer

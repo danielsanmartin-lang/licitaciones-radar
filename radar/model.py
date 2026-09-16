@@ -280,8 +280,38 @@ class Licitacion:
 
     @property
     def texto_busqueda(self) -> str:
-        """Lo que se indexa en FTS5 y sobre lo que corre el matching por texto."""
+        """Lo que se indexa en FTS5, para la caja de búsqueda libre de la bandeja.
+
+        Lleva el expediente y el nombre del órgano a propósito: buscar «Ayuntamiento de
+        Viladecans» o un número de expediente es exactamente lo que se espera de una
+        caja de búsqueda. Lo que NO puede llevarlos es el texto sobre el que corren las
+        reglas; para eso está `texto_reglas`.
+        """
         partes = [self.objeto, self.descripcion, self.lote_desc, self.expediente, self.organo]
+        return " \n".join(p for p in partes if p)
+
+    @property
+    def texto_reglas(self) -> str:
+        """Sobre lo que corre el motor de reglas: el CONTRATO, no quién lo saca.
+
+        Durante un tiempo esto y `texto_busqueda` eran el mismo campo, y el nombre del
+        organismo contratante entraba en el matching. En España los organismos se
+        llaman «Instituto Nacional de CIBERSEGURIDAD», «Departament d'Educació i
+        FORMACIÓ Professional», «Fundación Estatal para la FORMACIÓN en el Empleo» o
+        «ENS d'Abastament d'Aigua Ter-Llobregat», así que el nombre regalaba el término
+        débil, el contexto requerido, o los dos.
+
+        Medido antes de arreglarlo: de las 535 coincidencias del perfil de
+        concienciación, 125 —el 23 %, una de cada cuatro fichas de la bandeja— entraban
+        solo por el nombre del órgano. Entre ellas, «Formación en Gestión de Proyectos
+        Europeos y soft-skills» del INCIBE, formación en riesgos laborales de una
+        empresa de aguas y obras de un módulo prefabricado. Ninguna de las 125 llevaba
+        un término fuerte, así que quitar el órgano no costó ni un verdadero positivo.
+
+        El expediente también se queda fuera: es un código, y lo que casara dentro de
+        «F260000477_492» sería casualidad, no señal.
+        """
+        partes = [self.objeto, self.descripcion, self.lote_desc]
         return " \n".join(p for p in partes if p)
 
     @property
@@ -314,7 +344,10 @@ class Licitacion:
         d["raw"] = json.dumps(self.raw, ensure_ascii=False, default=str)
         d["huella"] = self.huella()
         d["texto_busqueda"] = self.texto_busqueda
-        # Se guarda ya normalizado: es lo que consulta el motor de reglas.
+        # Los dos ya normalizados: `texto_norm` lo usa la búsqueda libre y
+        # `texto_reglas_norm` el motor de reglas. Normalizar en la ingesta y no en cada
+        # evaluación es lo que permite pasarle `ya_normalizado=True` a `evaluar()`.
         d["texto_norm"] = normalizar(self.texto_busqueda)
+        d["texto_reglas_norm"] = normalizar(self.texto_reglas)
         d["importe_referencia"] = self.importe_referencia
         return d

@@ -305,6 +305,94 @@ class TestPerfilesDesactivados(Base):
         self.assertEqual((fila["estado"], fila["notas"]), ("descartado", "ya lo miré"))
 
 
+class TestElNombreDelOrganoNoCasa(Base):
+    """El nombre del organismo contratante no puede entrar en las reglas.
+
+    En España los organismos se llaman «Instituto Nacional de CIBERSEGURIDAD»,
+    «Departament d'Educació i FORMACIÓ Professional» o «ENS d'Abastament d'Aigua
+    Ter-Llobregat», así que mientras el matcher leyó `texto_norm` —que lleva el órgano
+    dentro— el nombre regalaba el término débil, el contexto requerido, o los dos.
+    Medido sobre la base real: 125 de las 535 coincidencias del perfil de
+    concienciación, el 23 %, y ninguna con un término fuerte.
+    """
+
+    def test_un_termino_solo_en_el_nombre_del_organo_no_hace_casar(self):
+        """El caso exacto que se midió: «Formación en ... soft-skills» del INCIBE.
+
+        El objeto trae el término débil («formacion») y el contexto («ciberseguridad»)
+        lo pone el nombre del órgano. Antes entraba; no es una licitación de
+        concienciación en ciberseguridad, es formación en gestión de proyectos.
+        """
+        self.guardar(
+            1,
+            objeto="Formación en Gestión de Proyectos Europeos y soft-skills",
+            organo="Dirección General del Instituto Nacional de Ciberseguridad (INCIBE)",
+        )
+        matching.reevaluar(self.con, [perfil()])
+        self.assertEqual(self.matches(), 0)
+
+    def test_ni_siquiera_un_termino_fuerte_cuenta_si_solo_esta_en_el_organo(self):
+        """Sin señal en el contrato no hay match, venga de donde venga el nombre."""
+        self.guardar(
+            1,
+            objeto="Suministro de mobiliario de oficina",
+            organo="Agència de Ciberseguretat i Simulació de Phishing de Prueba",
+        )
+        matching.reevaluar(self.con, [perfil()])
+        self.assertEqual(self.matches(), 0)
+
+    def test_lo_que_casa_por_el_objeto_sigue_casando(self):
+        """La otra mitad del contrato: quitar el órgano no podía costar precisión.
+
+        Sobre la base real no costó ni un verdadero positivo —0 de 535—, y esta es la
+        prueba de que el camino bueno sigue abierto.
+        """
+        self.guardar(1, objeto="Servicio de simulación de phishing",
+                     organo="Ayuntamiento sin nada que delate el sector")
+        matching.reevaluar(self.con, [perfil()])
+        self.assertEqual(self.matches(), 1)
+
+    def test_el_contexto_tambien_vale_si_esta_en_la_descripcion_o_en_el_lote(self):
+        """`texto_reglas` son tres columnas, no una: el lote es donde aparece la señal
+        en los contratos grandes. El caso que lo justifica está en el README: un
+        mantenimiento de hardware de Viladecans cuyo lote 10 era «programa de
+        conscienciació en CIBERSEGURETAT»."""
+        self.guardar(1, objeto="Mantenimiento de hardware",
+                     organo="Ayuntamiento de Prueba",
+                     lote_desc="Lote 10: programa de concienciación en ciberseguridad")
+        matching.reevaluar(self.con, [perfil()])
+        self.assertEqual(self.matches(), 1)
+
+    def test_la_busqueda_libre_sigue_encontrando_por_organo(self):
+        """Lo que NO se ha roto: buscar «Viladecans» tiene que seguir funcionando.
+
+        Son dos columnas con dos usos, y ese es el motivo de separarlas en lugar de
+        quitar el órgano de todas partes.
+        """
+        self.guardar(1, organo="Ayuntamiento de Viladecans")
+        fila = self.con.execute(
+            "SELECT texto_norm, texto_reglas_norm FROM licitaciones").fetchone()
+        self.assertIn("viladecans", fila["texto_norm"])
+        self.assertNotIn("viladecans", fila["texto_reglas_norm"])
+
+    def test_una_base_vieja_se_rellena_al_migrar(self):
+        """`texto_reglas_norm` no existía: la base de cada compañero llega sin ella.
+
+        Si la migración no la rellenara, `COALESCE(texto_reglas_norm, '')` dejaría la
+        bandeja vacía al actualizar, que es peor que el ruido que se venía a quitar.
+        """
+        self.guardar(1)
+        self.con.execute("UPDATE licitaciones SET texto_reglas_norm = NULL")
+        db.escribir_preferencia(self.con, "version_texto_reglas", "0")
+        self.con.commit()
+
+        aplicadas = db.migrar(self.con)
+        self.assertTrue(any("texto de reglas" in a for a in aplicadas), aplicadas)
+        fila = self.con.execute(
+            "SELECT texto_reglas_norm FROM licitaciones").fetchone()
+        self.assertIn("phishing", fila["texto_reglas_norm"])
+
+
 class TestEscrituras(Base):
     def test_no_emite_un_solo_delete_cuando_nada_ha_dejado_de_casar(self):
         """El incidente: 673.755 fichas × 4 perfiles = 2,7 millones de DELETE contra

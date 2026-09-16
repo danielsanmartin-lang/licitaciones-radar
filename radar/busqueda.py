@@ -24,9 +24,11 @@ from pathlib import Path
 
 from . import progreso
 
-RAIZ = Path(__file__).resolve().parent.parent
-CERROJO = RAIZ / "data" / "busqueda.lock"
-SALIDA = RAIZ / "data" / "busqueda.log"
+from . import rutas
+
+RAIZ = rutas.CODIGO
+CERROJO = rutas.DIR_DATOS / "busqueda.lock"
+SALIDA = rutas.DIR_DATOS / "busqueda.log"
 
 
 def _ahora() -> str:
@@ -125,7 +127,7 @@ def lanzar(*, reiniciar_cursor: bool = False, dias: int | None = None,
 
     # -u desactiva el buffer del hijo: sin él, las líneas del registro que lee la
     # aplicación llegarían a ráfagas en lugar de a medida que pasan las cosas.
-    orden = [sys.executable, "-u", str(RAIZ / "radar.py"), "ingest"]
+    orden = [sys.executable, "-u", str(rutas.ENTRADA_CLI), "ingest"]
     if primera_carga:
         orden.append("--primera-carga")
         if etapas:

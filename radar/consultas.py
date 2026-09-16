@@ -42,6 +42,14 @@ ORDENES = {
     "importe": "l.importe_referencia DESC",
 }
 
+# El de fábrica es «reciente», y no «urgencia» como lo fue hasta la 1.3.0. Ordenar por
+# lo que cierra antes pone arriba plazos que ya no se pueden cazar: lo primero que hay
+# que ver al abrir es lo último publicado, que es donde queda margen para preparar una
+# oferta. Está escrito aquí, en el respaldo de `bandeja()` y en el `<select>` de la
+# interfaz, y los tres tienen que decir lo mismo: un valor por defecto que no coincide
+# entre la API y la pantalla es una avería con fecha.
+ORDEN_POR_DEFECTO = "reciente"
+
 # Todas las ordenaciones terminan en `l.id`. Sin un criterio único al final, SQLite
 # no garantiza el mismo orden entre dos consultas, y con LIMIT/OFFSET eso significa
 # que la página 2 puede repetir filas de la página 1 y perder otras. Hay cientos de
@@ -53,6 +61,40 @@ ORDENES = {clave: f"{expr}, l.id ASC" for clave, expr in ORDENES.items()}
 # vuelven a ingerir, y el COALESCE hace que entonces cada uno sea su propio grupo:
 # la vista funciona igual, solo que sin agrupar todavía.
 _GRUPO = "COALESCE(l.clave_grupo, CAST(l.id AS TEXT))"
+
+
+# Estados de triaje que mantienen una ficha en la bandeja aunque deje de casar con
+# ningún perfil activo.
+#
+# Marcar algo como «siguiendo» o «presentada» es una decisión explícita, y tiene que
+# pesar más que el filtro automático. El caso que lo motiva: al estrechar los perfiles
+# —quitando la red amplia de ciberseguridad— se fue de la bandeja un contrato de 6,25 M€
+# de Canal de Isabel II que estaba en seguimiento, con 23 días de plazo por delante. La
+# fila de `revisiones` seguía ahí, intacta, pero la interfaz no tenía por dónde
+# enseñarla: ni el filtro de estado ni la búsqueda libre pasan por fuera de `matches`.
+# Ajustar los términos no puede esconderte algo en lo que estás trabajando.
+#
+# «descartado» NO está aquí a propósito: ahí el filtro y la decisión dicen lo mismo, y
+# resucitar lo descartado sería justo el ruido que se venía a quitar.
+ESTADOS_PROTEGIDOS = ("siguiendo", "presentada")
+
+# El FROM de la bandeja. Lo comparten la lista y los contadores por el mismo motivo por
+# el que comparten `_condiciones()`: cuando cada uno tenía el suyo, acabaron contando
+# cosas distintas.
+#
+# `LEFT JOIN matches` y no `JOIN`: una ficha protegida por su triaje puede no tener
+# ninguna coincidencia. Eso deja `perfil`, `puntuacion` y `motivo` a NULL, que es
+# exactamente lo que la ficha ya sabe contar —«está en la base pero no casa con ningún
+# perfil activo»—.
+_DESDE_BANDEJA = """FROM licitaciones l
+              LEFT JOIN matches m ON m.licitacion_id = l.id
+              LEFT JOIN revisiones r ON r.licitacion_id = l.id"""
+
+_marcas_protegidos = ", ".join("?" * len(ESTADOS_PROTEGIDOS))
+_VISIBLE = (
+    f"(m.licitacion_id IS NOT NULL"
+    f" OR COALESCE(r.estado, 'nuevo') IN ({_marcas_protegidos}))"
+)
 
 
 # Cuántos días luce la etiqueta «Nueva». Una semana es lo que tarda alguien en dar una
@@ -162,13 +204,11 @@ def contar(con: sqlite3.Connection, **filtros) -> int:
     return con.execute(
         f"""SELECT COUNT(*) FROM (
                 SELECT {_GRUPO} AS g
-                  FROM licitaciones l
-                  JOIN matches m ON m.licitacion_id = l.id
-                  LEFT JOIN revisiones r ON r.licitacion_id = l.id
-                 WHERE {" AND ".join(where)}
+                  {_DESDE_BANDEJA}
+                 WHERE {_VISIBLE} AND {" AND ".join(where)}
                  GROUP BY g
             )""",
-        params,
+        [*ESTADOS_PROTEGIDOS, *params],
     ).fetchone()[0]
 
 
@@ -184,18 +224,22 @@ def bandeja(
     importe_min: float | None = None,
     busqueda: str | None = None,
     solo_novedades: bool = False,
-    orden: str = "urgencia",
+    orden: str = ORDEN_POR_DEFECTO,
     limite: int = 200,
     offset: int = 0,
 ) -> dict:
-    """Licitaciones que han casado con algún perfil, con su estado de triaje."""
+    """Licitaciones que han casado con algún perfil, con su estado de triaje.
+
+    Y también lo que sigues o has presentado aunque ya no case: ver
+    `ESTADOS_PROTEGIDOS`.
+    """
     filtros = dict(
         perfil=perfil, estado_revision=estado_revision, solo_vivas=solo_vivas,
         cierran_en_dias=cierran_en_dias, ccaa=ccaa, fuente=fuente,
         importe_min=importe_min, busqueda=busqueda, solo_novedades=solo_novedades,
     )
     where, params = _condiciones(con, **filtros)
-    orden_sql = ORDENES.get(orden, ORDENES["urgencia"])
+    orden_sql = ORDENES.get(orden, ORDENES[ORDEN_POR_DEFECTO])
 
     # Dos agrupaciones encadenadas, cada una arreglando un problema distinto:
     #
@@ -228,17 +272,17 @@ def bandeja(
                        PARTITION BY {_GRUPO}
                        ORDER BY l.fecha_publicacion DESC, l.id DESC
                    ) AS _rn
-              FROM licitaciones l
-              JOIN matches m ON m.licitacion_id = l.id
-              LEFT JOIN revisiones r ON r.licitacion_id = l.id
-             WHERE {" AND ".join(where)}
+              {_DESDE_BANDEJA}
+             WHERE {_VISIBLE} AND {" AND ".join(where)}
              GROUP BY l.id
         ) l
          WHERE _rn = 1
          ORDER BY {orden_sql}
          LIMIT ? OFFSET ?
     """
-    filas = con.execute(sql, [*params, limite, offset]).fetchall()
+    filas = con.execute(
+        sql, [*ESTADOS_PROTEGIDOS, *params, limite, offset]
+    ).fetchall()
 
     total = contar(con, **filtros)
 

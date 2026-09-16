@@ -22,8 +22,12 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent.parent
-BD_POR_DEFECTO = RAIZ / "data" / "radar.db"
+from . import rutas
+
+# La raíz se conserva para lo que de verdad cuelga del código; lo que se ESCRIBE va
+# por `rutas`, que sabe distinguir una copia de trabajo de la app empaquetada.
+RAIZ = rutas.CODIGO
+BD_POR_DEFECTO = rutas.BD
 
 ESQUEMA = """
 PRAGMA journal_mode = WAL;
@@ -69,6 +73,8 @@ CREATE TABLE IF NOT EXISTS licitaciones (
     huella_evaluada           TEXT,
     texto_busqueda            TEXT,
     texto_norm                TEXT,
+    -- Texto sobre el que corren las reglas: sin el nombre del órgano. Ver COLUMNAS_NUEVAS.
+    texto_reglas_norm         TEXT,
     visto_primera_vez         TEXT NOT NULL,
     visto_ultima_vez          TEXT NOT NULL,
     UNIQUE (fuente, id_externo)
@@ -200,6 +206,14 @@ COLUMNAS_NUEVAS = {
         ("fecha_fin_prevista", "TEXT"),
         ("clave_grupo", "TEXT"),
         ("texto_norm", "TEXT"),
+        # El texto sobre el que corren las reglas, sin el nombre del organismo
+        # contratante. `texto_norm` sí lo lleva, porque la caja de búsqueda tiene que
+        # encontrar por órgano; el matcher no, porque «Instituto Nacional de
+        # CIBERSEGURIDAD» o «Departament d'Educació i FORMACIÓ Professional» le
+        # regalaban el término y el contexto. Eran 125 de 535 coincidencias del perfil
+        # de concienciación —el 23 %— y ninguna llevaba un término fuerte. El detalle
+        # está en `Licitacion.texto_reglas`.
+        ("texto_reglas_norm", "TEXT"),
         # Con qué huella se evaluaron los perfiles sobre esta ficha. Es lo único que
         # distingue «modificada de verdad» de «republicada idéntica»: `visto_ultima_vez`
         # no sirve, porque `guardar()` lo toca también en la rama «igual». Sin esta
@@ -248,6 +262,11 @@ VERSION_SNAPSHOT = "2"
 # Se sube cuando hay que rellenar `texto_norm` en las bases que vienen de antes.
 VERSION_TEXTO_NORM = "1"
 
+# Igual, para `texto_reglas_norm`. Va en su propia versión y no reusa la de arriba
+# porque son dos columnas con dos contenidos distintos: compartir marcador obligaría a
+# recalcular las dos cada vez que cambiara cualquiera de ellas, y son 686.302 filas.
+VERSION_TEXTO_REGLAS = "1"
+
 
 def rellenar_texto_norm(con: sqlite3.Connection) -> int:
     """Calcula `texto_norm` de las filas que no lo tengan."""
@@ -260,6 +279,40 @@ def rellenar_texto_norm(con: sqlite3.Connection) -> int:
         con.executemany(
             "UPDATE licitaciones SET texto_norm = ? WHERE id = ?",
             [(normalizar(f["texto_busqueda"]), f["id"]) for f in filas],
+        )
+        con.commit()
+    return len(filas)
+
+
+def rellenar_texto_reglas(con: sqlite3.Connection) -> int:
+    """Calcula `texto_reglas_norm` de las filas que no lo tengan.
+
+    Se recompone desde las columnas y no desde `texto_busqueda`, que es de donde
+    saldría la tentación: a `texto_busqueda` ya se le ha pegado el nombre del órgano y
+    no hay manera fiable de despegárselo —los separadores son saltos de línea y los
+    propios objetos de los pliegos traen saltos de línea a puñados—. Las tres columnas
+    que hacen falta están en la tabla, así que se leen de ahí.
+    """
+    from .model import normalizar
+
+    filas = con.execute(
+        "SELECT id, objeto, descripcion, lote_desc FROM licitaciones"
+        " WHERE texto_reglas_norm IS NULL"
+    ).fetchall()
+    if filas:
+        con.executemany(
+            "UPDATE licitaciones SET texto_reglas_norm = ? WHERE id = ?",
+            [
+                (
+                    normalizar(
+                        " \n".join(
+                            p for p in (f["objeto"], f["descripcion"], f["lote_desc"]) if p
+                        )
+                    ),
+                    f["id"],
+                )
+                for f in filas
+            ],
         )
         con.commit()
     return len(filas)
@@ -419,6 +472,13 @@ def migrar(con: sqlite3.Connection) -> list[str]:
             if n:
                 aplicadas.append(f"texto normalizado calculado ({n} filas)")
 
+        if leer_preferencia(con, "version_texto_reglas") != VERSION_TEXTO_REGLAS:
+            n = rellenar_texto_reglas(con)
+            escribir_preferencia(con, "version_texto_reglas", VERSION_TEXTO_REGLAS)
+            con.commit()
+            if n:
+                aplicadas.append(f"texto de reglas calculado ({n} filas)")
+
         if leer_preferencia(con, "version_snapshot") != VERSION_SNAPSHOT:
             n = recortar_snapshots(con)
             escribir_preferencia(con, "version_snapshot", VERSION_SNAPSHOT)
@@ -440,7 +500,7 @@ CAMPOS = (
     "url_detalle", "urls_pliegos", "lote_num", "lote_desc", "adjudicatario",
     "importe_adjudicacion", "fecha_adjudicacion", "duracion_meses",
     "fecha_inicio_ejecucion", "fecha_fin_prevista", "clave_grupo",
-    "raw", "huella", "texto_busqueda", "texto_norm",
+    "raw", "huella", "texto_busqueda", "texto_norm", "texto_reglas_norm",
 )
 
 # Lo que hace que un cambio merezca una entrada en el historial. Antes se guardaba

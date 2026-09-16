@@ -237,6 +237,12 @@ function pintarCobertura(c) {
 // documenta el comentario de `#aviso-version` en index.html.
 const AVISOS_DESCARTADOS = 'avisos-descartados';
 
+// El orden elegido en la bandeja. Se recuerda porque el de fábrica cambió en esta
+// versión —de «cierran antes» a «publicación más reciente»— y cambiar el valor por
+// defecto sin dar manera de fijar el propio es cambiárselo dos veces a quien prefería
+// el anterior.
+const ORDEN_BANDEJA = 'orden-bandeja';
+
 function claveAviso(f) {
   return `${f.fuente}|${f.iniciado_en || ''}`;
 }
@@ -357,65 +363,133 @@ async function cargarResumen() {
 
 // --- Lista -----------------------------------------------------------------
 
+// Un `<svg><use>` al sprite de `index.html`. Se crea como elemento y no como cadena
+// porque todo lo que se monta en una tarjeta va por este camino: en cuanto una píldora
+// se construye con `innerHTML`, el texto del pliego que lleva dentro se interpreta.
+function icono(nombre) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'ico');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#' + nombre);
+  svg.appendChild(use);
+  return svg;
+}
+
+// Una píldora. `texto` SIEMPRE por `textContent`: viene de los pliegos.
+//
+// Antes se montaban con plantillas de cadena, y el comentario de aquí abajo decía —con
+// razón— que el objeto y el órgano iban por `textContent`... pero el adjudicatario, la
+// comunidad, el procedimiento y la fuente se interpolaban en el `innerHTML`. Son campos
+// que llegan de PLACSP, de TED y de Cataluña; el riesgo práctico es bajo, pero la regla
+// que el fichero se da a sí mismo no admite excepciones que nadie ha decidido.
+function pildora(texto, { clase = '', ico = null, titulo = '' } = {}) {
+  const el = document.createElement('span');
+  el.className = clase ? `pill ${clase}` : 'pill';
+  if (ico) el.appendChild(icono(ico));
+  const t = document.createElement('span');
+  t.textContent = texto;
+  el.appendChild(t);
+  if (titulo) el.title = titulo;
+  return el;
+}
+
 function tarjeta(it) {
   const d = it.dias_restantes;
-  let clase = '', etiqueta = '';
-  if (d === null || d === undefined) {
-    etiqueta = '<div class="dias"><small>sin plazo</small></div>';
-  } else if (d < 0) {
-    clase = 'vencido';
-    etiqueta = `<div class="dias vencido">${d}<small>días</small></div>`;
-  } else {
-    clase = d <= 7 ? 'pronto' : '';
-    etiqueta = `<div class="dias ${clase}">${d}<small>días</small></div>`;
+
+  const el = document.createElement('article');
+  el.className = `tarjeta rev-${it.estado_revision}`;
+  el.dataset.id = it.id;
+  // El andamio, sin un solo dato dentro: los datos se meten abajo, uno a uno.
+  el.innerHTML = `
+    <div class="principal">
+      <h3></h3>
+      <div class="organo"></div>
+    </div>
+    <div class="derecha"></div>
+    <div class="meta"></div>`;
+
+  el.querySelector('h3').textContent = it.objeto || '(sin objeto)';
+  const organo = el.querySelector('.organo');
+  if (it.organo) {
+    organo.appendChild(icono('ico-organo'));
+    const n = document.createElement('span');
+    n.textContent = it.organo;
+    organo.appendChild(n);
   }
 
-  const pills = [];
+  // --- La columna de la derecha ---------------------------------------------
+  //
+  // La cifra grande sigue siendo los días al cierre, que es la que se decide mirando:
+  // la antigüedad de la publicación ordena la lista, pero no dice qué hacer. Lo que se
+  // añade debajo es esa antigüedad, en pequeño, porque desde que la bandeja abre por
+  // «publicación más reciente» hace falta poder ver por qué una ficha está donde está.
+  const derecha = el.querySelector('.derecha');
+  const dias = document.createElement('div');
+  if (d === null || d === undefined) {
+    dias.className = 'dias';
+    dias.innerHTML = '<small>sin plazo</small>';
+  } else {
+    dias.className = d < 0 ? 'dias vencido' : d <= 7 ? 'dias pronto' : 'dias';
+    const n = document.createElement('span');
+    n.textContent = String(d);
+    dias.appendChild(n);
+    const u = document.createElement('small');
+    u.textContent = 'días';
+    dias.appendChild(u);
+  }
+  derecha.appendChild(dias);
+
+  const desde = it.dias_desde_publicacion;
+  if (desde !== null && desde !== undefined) {
+    const p = document.createElement('div');
+    p.className = it.es_nueva ? 'publicada recien' : 'publicada';
+    p.textContent = desde === 0 ? 'hoy'
+      : desde === 1 ? 'hace 1 día'
+      : `hace ${desde.toLocaleString('es-ES')} días`;
+    p.title = 'primera publicación del expediente';
+    derecha.appendChild(p);
+  }
+
+  // --- Las píldoras ---------------------------------------------------------
+  //
+  // Dos rangos, y el orden importa porque es el orden en que se leen. Primero las que
+  // deciden —si es nueva, de qué perfil es, cuánto vale, cuándo cierra—, después las
+  // descriptivas, que se reconocen de un vistazo y no se leen.
+  const meta = el.querySelector('.meta');
+
   // Va la primera porque es lo único de la fila que caduca solo. `es_nueva` lo decide
   // el servidor sobre la PRIMERA publicación del expediente: una adjudicación de ayer
   // sobre un pliego de junio no es una oportunidad nueva, y marcarla como tal manda a
   // alguien a un contrato ya cerrado.
   if (it.es_nueva) {
-    const dias = it.dias_desde_publicacion;
-    const cuando = dias === 0 ? 'publicada hoy'
-      : `publicada hace ${dias} ${dias === 1 ? 'día' : 'días'}`;
-    pills.push(`<span class="pill nueva" title="${cuando}">Nueva</span>`);
+    const cuando = desde === 0 ? 'publicada hoy'
+      : `publicada hace ${desde} ${desde === 1 ? 'día' : 'días'}`;
+    meta.appendChild(pildora('Nueva', { clase: 'nueva', ico: 'ico-destello', titulo: cuando }));
   }
   // `perfil` puede traer varios separados por coma: una licitación de protección de
   // correo con formación casa con dos perfiles y antes salía duplicada en la lista.
   for (const p of (it.perfil || '').split(',').filter(Boolean)) {
-    pills.push(`<span class="pill perfil">${p}</span>`);
+    meta.appendChild(pildora(p.trim(), { clase: 'perfil' }));
   }
-  pills.push(`<span class="pill importe">${fmtImporte(it.importe_referencia)}</span>`);
+  meta.appendChild(pildora(fmtImporte(it.importe_referencia), { clase: 'importe' }));
   if (it.fecha_limite_presentacion) {
     const c = d === null ? '' : d < 0 ? 'plazo-vencido' : d <= 7 ? 'plazo-pronto' : 'plazo-ok';
-    pills.push(`<span class="pill ${c}">cierra ${fmtFecha(it.fecha_limite_presentacion)}</span>`);
-  }
-  if (it.ccaa) pills.push(`<span class="pill">${it.ccaa}</span>`);
-  if (it.procedimiento) pills.push(`<span class="pill">${it.procedimiento}</span>`);
-  pills.push(`<span class="pill">${it.fuente}</span>`);
-  // Varios anuncios del mismo expediente colapsados en una fila.
-  if ((it.anuncios || 1) > 1) {
-    pills.push(`<span class="pill anuncios">${it.anuncios} anuncios</span>`);
+    meta.appendChild(pildora(`cierra ${fmtFecha(it.fecha_limite_presentacion)}`,
+                             { clase: c, ico: 'ico-reloj' }));
   }
   if (it.adjudicatario) {
-    pills.push(`<span class="pill incumbente">ganó ${it.adjudicatario.slice(0, 38)}</span>`);
+    meta.appendChild(pildora(`ganó ${it.adjudicatario.slice(0, 38)}`, { clase: 'incumbente' }));
   }
-  if (it.estado_revision !== 'nuevo') pills.push(`<span class="pill">${it.estado_revision}</span>`);
+  // Varios anuncios del mismo expediente colapsados en una fila.
+  if ((it.anuncios || 1) > 1) {
+    meta.appendChild(pildora(`${it.anuncios} anuncios`, { clase: 'anuncios' }));
+  }
+  if (it.ccaa) meta.appendChild(pildora(it.ccaa));
+  if (it.procedimiento) meta.appendChild(pildora(it.procedimiento));
+  meta.appendChild(pildora(it.fuente));
+  if (it.estado_revision !== 'nuevo') meta.appendChild(pildora(it.estado_revision));
 
-  const el = document.createElement('article');
-  el.className = `tarjeta rev-${it.estado_revision}`;
-  el.dataset.id = it.id;
-  el.innerHTML = `
-    <div>
-      <h3></h3>
-      <div class="organo"></div>
-    </div>
-    <div class="derecha">${etiqueta}</div>
-    <div class="meta">${pills.join('')}</div>`;
-  // textContent para no inyectar HTML procedente de los pliegos.
-  el.querySelector('h3').textContent = it.objeto || '(sin objeto)';
-  el.querySelector('.organo').textContent = it.organo || '';
   el.addEventListener('click', () => abrirPanel(it.id));
   return el;
 }
@@ -978,13 +1052,29 @@ async function guardarAjustes() {
 
 // --- Cambio de vista -------------------------------------------------------
 
+// El panel y su fondo se abren y se cierran juntos. Antes había tres sitios distintos
+// poniendo `$('panel').hidden` a mano, y con el fondo serían seis.
+function abrirCajon() {
+  $('panel-fondo').hidden = false;
+  $('panel').hidden = false;
+}
+
+function cerrarCajon() {
+  $('panel').hidden = true;
+  $('panel-fondo').hidden = true;
+}
+
 function mostrarVista(vista) {
   for (const v of ['bandeja', 'vencimientos', 'adjudicatarios', 'analitica', 'ajustes']) {
     $('vista-' + v).hidden = v !== vista;
   }
   $('filtros').hidden = vista !== 'bandeja';
   for (const b of document.querySelectorAll('.tab[data-vista]')) {
-    b.classList.toggle('activo', b.dataset.vista === vista);
+    const activa = b.dataset.vista === vista;
+    b.classList.toggle('activo', activa);
+    // La clase es para el ojo; `aria-selected` para quien no lo usa. Alternar solo la
+    // primera dejaba a un lector de pantalla seis pestañas sin ninguna seleccionada.
+    b.setAttribute('aria-selected', activa ? 'true' : 'false');
   }
   if (vista === 'vencimientos') cargarVencimientos();
   if (vista === 'adjudicatarios') cargarAdjudicatarios();
@@ -994,11 +1084,13 @@ function mostrarVista(vista) {
 
 // --- Panel de detalle ------------------------------------------------------
 
+// Estado, etiqueta e icono. El icono importa aquí más que en ningún otro sitio: son
+// cuatro botones idénticos en fila y el único que se pulsa por error es el de descartar.
 const ESTADOS = [
-  ['nuevo', 'Sin revisar'],
-  ['siguiendo', 'Seguir'],
-  ['presentada', 'Presentada'],
-  ['descartado', 'Descartar'],
+  ['nuevo', 'Sin revisar', 'ico-punto'],
+  ['siguiendo', 'Seguir', 'ico-ojo'],
+  ['presentada', 'Presentada', 'ico-visto'],
+  ['descartado', 'Descartar', 'ico-cruz'],
 ];
 
 // Debe coincidir con db.MOTIVOS_DESCARTE; el servidor rechaza cualquier otro.
@@ -1070,16 +1162,16 @@ async function abrirPanel(id) {
     : 'Esta licitación está en la base pero no casa con ningún perfil activo.';
   if (d.descripcion) {
     const p = document.createElement('p');
-    p.style.fontSize = '13px';
-    p.style.color = 'var(--texto-sec)';
+    p.className = 'descripcion';
     p.textContent = d.descripcion;
     $('p-motivo').after(p);
   }
 
   // Acciones de triaje
   const actual = d.estado_revision || 'nuevo';
-  $('p-acciones').innerHTML = ESTADOS.map(([v, t]) =>
-    `<button class="boton-sec ${v === actual ? 'activo' : ''}" data-e="${v}">${t}</button>`
+  $('p-acciones').innerHTML = ESTADOS.map(([v, t, ico]) =>
+    `<button class="boton-sec ${v === actual ? 'activo' : ''}" data-e="${v}">` +
+    `<svg class="ico" aria-hidden="true"><use href="#${ico}"/></svg>${t}</button>`
   ).join('');
   for (const b of $('p-acciones').querySelectorAll('button')) {
     b.addEventListener('click', async () => {
@@ -1128,7 +1220,7 @@ async function abrirPanel(id) {
     }
   } else {
     const vacio = document.createElement('span');
-    vacio.style.color = 'var(--texto-sec)';
+    vacio.className = 'pista';
     vacio.textContent = 'Sin enlaces publicados.';
     caja.appendChild(vacio);
   }
@@ -1144,7 +1236,7 @@ async function abrirPanel(id) {
     `${h.adjudicatario ? ` · adjudicada a ${h.adjudicatario}` : ''}</li>`
   ).join('') || '<li>Solo se ha visto una versión.</li>';
 
-  $('panel').hidden = false;
+  abrirCajon();
 }
 
 async function guardar(id, cambios) {
@@ -1169,12 +1261,17 @@ for (const id of ['perfil', 'estado', 'ccaa', 'importe_min', 'orden', 'vivas']) 
       kpiActivo = null;
       cierranEnDias = '';
       for (const b of $('kpis').querySelectorAll('button.kpi')) b.classList.remove('activo');
+    } else {
+      try {
+        localStorage.setItem(ORDEN_BANDEJA, $('orden').value);
+      } catch { /* sin almacén, volverá al de fábrica al recargar */ }
     }
     cargarLista();
   });
 }
 $('mas').addEventListener('click', () => cargarLista(false));
-$('cerrar').addEventListener('click', () => ($('panel').hidden = true));
+$('cerrar').addEventListener('click', cerrarCajon);
+$('panel-fondo').addEventListener('click', cerrarCajon);
 for (const b of document.querySelectorAll('.tab[data-vista]')) {
   b.addEventListener('click', () => mostrarVista(b.dataset.vista));
 }
@@ -1197,7 +1294,7 @@ $('tab-novedades').addEventListener('click', async () => {
   }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $('panel').hidden = true;
+  if (e.key === 'Escape') cerrarCajon();
 });
 
 // --- Versión nueva ---------------------------------------------------------
@@ -1242,6 +1339,13 @@ async function comprobarVersion() {
     else btn.disabled = false;
   });
 }
+
+try {
+  const guardado = localStorage.getItem(ORDEN_BANDEJA);
+  if (guardado && [...$('orden').options].some((o) => o.value === guardado)) {
+    $('orden').value = guardado;
+  }
+} catch { /* sin almacén se abre con el de fábrica, que es lo correcto */ }
 
 cargarResumen();
 cargarLista();

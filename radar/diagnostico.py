@@ -32,7 +32,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import busqueda, consultas, db, matching, net, programar
+from . import busqueda, consultas, db, matching, net, programar, rutas
 from .sources import placsp
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -466,7 +466,7 @@ def cache_de_historicos(dir_cache: Path | None = None) -> Comprobacion:
     abrir uno de esos dispara una descarga de 1,8 GB. Desde un comando que promete no
     hacer nada, eso es lo último que puede pasar.
     """
-    dir_cache = Path(dir_cache) if dir_cache else (RAIZ / "data" / "cache")
+    dir_cache = Path(dir_cache) if dir_cache else rutas.CACHE
     zips = sorted(dir_cache.glob("*.zip"))
     parciales = sorted(dir_cache.glob("*.zip.parcial"))
     if not zips and not parciales:
