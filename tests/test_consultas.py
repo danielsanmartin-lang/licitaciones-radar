@@ -475,6 +475,35 @@ class TestResumen(unittest.TestCase):
         self.assertTrue(f["en_curso"])
         self.assertIsNone(f["aviso"])
 
+    def test_un_perfil_activo_sin_coincidencias_tambien_sale(self):
+        """El desplegable de la bandeja se llena con este desglose, y un perfil que
+        acabas de activar todavía no está en `matches`: sin esto no aparecería hasta
+        que entrara la primera licitación por él, y quien lo acaba de activar lo lee
+        como que la aplicación no le ha hecho caso."""
+        r = consultas.resumen(self.con, perfiles_activos=["Recién activado"])
+        (p,) = r["por_perfil"]
+        self.assertEqual(p["perfil"], "Recién activado")
+        self.assertEqual(p["total"], 0)
+        self.assertEqual(p["nuevos"], 0)
+
+    def test_un_perfil_con_coincidencias_no_sale_dos_veces(self):
+        """Está en `matches` y en la lista de activos; es el caso normal."""
+        db.guardar(self.con, Licitacion(
+            fuente="placsp:licitaciones", id_externo="x", expediente="EXP/9",
+            objeto="Concienciación en ciberseguridad", organo="Órgano",
+            estado="publicada",
+        ))
+        lic_id = self.con.execute("SELECT id FROM licitaciones").fetchone()[0]
+        self.con.execute(
+            """INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)
+               VALUES (?, 'Con datos', 3.0, 'm', ?)""", (lic_id, db.ahora()))
+        self.con.commit()
+
+        r = consultas.resumen(self.con, perfiles_activos=["Con datos", "Vacío"])
+        self.assertEqual([p["perfil"] for p in r["por_perfil"]], ["Con datos", "Vacío"],
+                         "el que tiene coincidencias va primero y no se repite")
+        self.assertEqual(r["por_perfil"][0]["total"], 1)
+
     def test_una_ingesta_cortada_a_lo_bruto_si_es_un_fallo(self):
         """La fila abierta se queda abierta para siempre si se mata el proceso. Con
         `en_marcha` en falso —nadie está descargando— eso sí hay que contarlo."""

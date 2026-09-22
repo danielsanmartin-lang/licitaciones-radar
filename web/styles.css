@@ -422,6 +422,59 @@ button.kpi.activo .t { color: var(--acento); }
    preferible a inventarse un porcentaje. */
 .carga-barras progress:not([value]) { opacity: .7; }
 
+/* --- Pantalla de arranque --------------------------------------------------
+   Lo primero que se ve al abrir, mientras se traen las licitaciones nuevas. Del color
+   del fondo y no un velo translúcido: debajo hay una bandeja a medio pintar con los
+   datos de la sesión anterior, y dejarla entrever invita a leer números que están a
+   punto de cambiar. */
+.arranque {
+  position: fixed;
+  inset: 0;
+  /* Por encima del panel (20) y de su fondo (19): mientras esto está, no hay nada
+     más con lo que interactuar. */
+  z-index: 60;
+  background: var(--fondo);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--e-5);
+}
+/* `display: flex` le gana al `hidden` del navegador, así que hay que decirlo a mano o
+   la pantalla no se va nunca. */
+.arranque[hidden] { display: none; }
+
+.arranque-caja {
+  width: min(520px, 100%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-3);
+}
+.arranque-caja h2 {
+  font-size: var(--txt-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+/* La frase la redacta `progreso._frase()` en Python, la misma que sale en la terminal.
+   Altura reservada para dos líneas: sin ella, cada cambio de fase mueve la barra y el
+   botón de sitio, y eso se lee como un parpadeo. */
+.arranque-frase {
+  font-size: var(--txt-md);
+  color: var(--texto-sec);
+  line-height: 1.5;
+  min-height: 2.9em;
+}
+.arranque progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--acento);
+}
+.arranque progress:not([value]) { opacity: .7; }
+/* Discreto a propósito: es la puerta de atrás para quien no quiera esperar, no la
+   acción principal. La principal es esperar, que dura un minuto. */
+.arranque-caja .boton-sec { margin-top: var(--e-2); }
+
 /* --- Pestañas -------------------------------------------------------------- */
 
 .vistas {
@@ -679,6 +732,49 @@ input[type=search] { flex: 1 1 260px; min-width: 0; }
   white-space: nowrap;
 }
 .publicada.recien { color: var(--acento); font-weight: 600; }
+
+/* La búsqueda manual, al final de «Términos de búsqueda». Encuadrada como una tarjeta
+   para que se lea como una herramienta aparte y no como un tercer botón de la fila de
+   «Guardar y aplicar», que hace algo muy distinto. */
+.buscar-manual {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--e-4);
+  flex-wrap: wrap;
+  margin-top: var(--e-5);
+  padding: var(--e-3) var(--e-4);
+  background: var(--panel-2);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+.buscar-manual p { margin-top: 2px; max-width: 52ch; }
+
+/* El detalle de la búsqueda en marcha, en su propia fila dentro del recuadro. Separado
+   por una línea porque no es parte de la explicación de arriba: es lo que está pasando
+   ahora mismo, y cuando no pasa nada no está. */
+.busqueda-progreso {
+  flex-basis: 100%;
+  border-top: 1px solid var(--borde);
+  padding-top: var(--e-3);
+}
+.busqueda-progreso[hidden] { display: none; }
+.busqueda-progreso p {
+  /* Sin `max-width`: la frase de la descarga es larga y aquí hay ancho de sobra. La
+     altura reservada evita que la barra salte al cambiar de fase. */
+  max-width: none;
+  min-height: 2.6em;
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+  line-height: 1.5;
+}
+.busqueda-progreso progress {
+  width: 100%;
+  height: 6px;
+  margin-top: var(--e-1);
+  accent-color: var(--acento);
+}
+.busqueda-progreso progress:not([value]) { opacity: .7; }
 
 /* --- Adjudicatarios -------------------------------------------------------- */
 

@@ -65,12 +65,38 @@
       <symbol id="ico-punto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></symbol>
     </defs>
   </svg>
+  <!-- Pantalla de arranque. Tapa la aplicación entera mientras se traen las
+       licitaciones publicadas desde la última vez, que es lo primero que se hace al
+       abrir. Antes salía la bandeja con los datos de ayer y había que acordarse de
+       pulsar «Buscar ahora» para ponerla al día.
+
+       Va SIN `hidden` a propósito: si se pintara la bandeja y el JavaScript la tapara
+       después, se vería el parpadeo. La quita `cerrarArranque()`, que es también la
+       única salida si algo va mal, así que se llama desde todos los finales posibles
+       —búsqueda terminada, fallo, carga inicial en marcha y tope de tiempo—.
+
+       No hay barra de etapas como en `#carga`: una búsqueda normal no las tiene, y la
+       carga inicial (la de horas) ni siquiera espera aquí. -->
+  <div id="arranque" class="arranque" role="status" aria-live="polite">
+    <div class="arranque-caja">
+      <h2 id="arranque-titulo">Abriendo el radar…</h2>
+      <p id="arranque-frase" class="arranque-frase"></p>
+      <progress id="arranque-barra" max="100"></progress>
+      <p id="arranque-tiempo" class="pista"></p>
+      <button id="arranque-entrar" class="boton-sec">Ver la bandeja sin esperar</button>
+    </div>
+  </div>
+
   <header class="cabecera">
     <div class="titulo">
       <h1>Radar de Licitaciones</h1>
       <p class="sub">Concienciación en ciberseguridad · protección del correo · administración pública española</p>
+      <!-- Aquí vivía «Buscar ahora». Se ha ido a «Términos de búsqueda»: desde que la
+           aplicación busca sola al abrirse, era un botón que no hay que pulsar nunca
+           ocupando el sitio más visible de la pantalla. Lo que queda es la línea de
+           estado, que sí se lee: cuándo fue la última búsqueda y, si hay una en
+           marcha, por dónde va. -->
       <div class="busqueda-ahora">
-        <button id="buscar-ahora" class="boton-pri"><svg class="ico" aria-hidden="true"><use href="#ico-buscar"/></svg>Buscar ahora</button>
         <span id="ultima-busqueda" class="pista"></span>
       </div>
     </div>
@@ -208,6 +234,29 @@
         <span id="ajustes-aviso" class="pista"></span>
       </div>
       <div id="previsualizacion" class="previsualizacion" hidden></div>
+
+      <!-- La palanca manual, en la única pantalla donde apetece pulsarla: después de
+           tocar los términos de arriba, para ver qué entra con ellos. En el uso normal
+           no hace falta —la aplicación busca al abrirse y la tarea programada cada
+           mañana—, y por eso es un botón secundario y está al final. -->
+      <div class="buscar-manual">
+        <div>
+          <strong>Buscar ahora</strong>
+          <p class="pista">El radar busca solo al abrir la aplicación y cada mañana.
+            Esto fuerza una búsqueda ahora mismo: trae lo publicado desde la última.</p>
+        </div>
+        <button id="buscar-ahora" class="boton-sec"><svg class="ico" aria-hidden="true"><use href="#ico-buscar"/></svg><span id="buscar-ahora-txt">Buscar ahora</span></button>
+
+        <!-- Qué está haciendo, aquí y no solo en la línea de la cabecera: quien pulsa el
+             botón se queda mirando el botón, y «Buscando…» a secas no dice si está
+             bajando un ZIP de 130 MB o esperando a que TED conteste. Es la misma frase
+             que enseña la pantalla de arranque, que la escribe Python. -->
+        <div id="busqueda-progreso" class="busqueda-progreso" role="status"
+             aria-live="polite" hidden>
+          <p id="busqueda-frase"></p>
+          <progress id="busqueda-barra" max="100"></progress>
+        </div>
+      </div>
     </section>
   </main>
 

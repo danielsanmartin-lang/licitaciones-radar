@@ -297,6 +297,30 @@ function pintarAvisos(fuentes) {
   }
 }
 
+// Rellena un desplegable de filtro con lo que hay ahora mismo, conservando lo elegido.
+//
+// Antes esto se hacía una sola vez por carga de página («si solo tiene la opción de
+// todos, llénalo»), y el resultado era que activar un perfil en «Términos de búsqueda»
+// no lo ponía en el desplegable de la bandeja hasta recargar la ventana: la lista ya
+// lo filtraba bien, el desplegable no lo ofrecía.
+//
+// Se compara antes de tocar nada porque `cargarResumen()` se llama cada doce segundos
+// mientras hay una búsqueda en marcha, y rehacer las opciones de un <select> que está
+// desplegado lo cierra en las narices de quien lo estaba mirando.
+function llenarSelect(sel, opciones) {
+  const firma = JSON.stringify(opciones);
+  if (sel.dataset.firma === firma) return;
+  sel.dataset.firma = firma;
+
+  const elegido = sel.value;
+  // La primera opción es el «todos», que la escribe el HTML y no se toca.
+  while (sel.options.length > 1) sel.remove(1);
+  for (const [valor, etiqueta] of opciones) sel.add(new Option(etiqueta, valor));
+  // Si lo que estaba elegido ya no está —se ha desactivado ese perfil— se vuelve a
+  // «todos», que es lo que la lista está enseñando de todas formas.
+  sel.value = [...sel.options].some((o) => o.value === elegido) ? elegido : '';
+}
+
 async function cargarResumen() {
   const r = await fetch('/api/resumen');
   const d = await r.json();
@@ -323,22 +347,13 @@ async function cargarResumen() {
       : 'todavía no se ha buscado nada';
   }
 
-  const sel = $('perfil');
-  if (sel.options.length <= 1) {
-    for (const p of d.por_perfil) {
-      sel.add(new Option(`${p.perfil} (${p.total})`, p.perfil));
-    }
-  }
-  const selC = $('ccaa');
-  if (selC.options.length <= 1) {
-    for (const c of d.ccaa) selC.add(new Option(`${c.ccaa} (${c.total})`, c.ccaa));
-  }
+  llenarSelect($('perfil'),
+               d.por_perfil.map((p) => [p.perfil, `${p.perfil} (${p.total})`]));
+  llenarSelect($('ccaa'),
+               d.ccaa.map((c) => [c.ccaa, `${c.ccaa} (${c.total})`]));
   // El de la Analítica es otro control, no el mismo: el de arriba vive dentro de
   // #filtros, que se oculta en cualquier vista que no sea la bandeja.
-  const selA = $('analitica-perfil');
-  if (selA.options.length <= 1) {
-    for (const p of d.por_perfil) selA.add(new Option(p.perfil, p.perfil));
-  }
+  llenarSelect($('analitica-perfil'), d.por_perfil.map((p) => [p.perfil, p.perfil]));
 
   // Salud de las fuentes: una fuente rota y una fuente sin novedades se ven
   // igual si no se avisa explícitamente.
@@ -473,6 +488,18 @@ function tarjeta(it) {
     meta.appendChild(pildora(p.trim(), { clase: 'perfil' }));
   }
   meta.appendChild(pildora(fmtImporte(it.importe_referencia), { clase: 'importe' }));
+  // La fecha en la que salió, al lado de la del cierre. La cifra pequeña de la derecha
+  // dice «hace 3 días», que es la antigüedad y sirve para ordenar; esto dice el día, que
+  // es lo que se pregunta al mirar la lista («¿esto de cuándo es?») y lo que se copia al
+  // correo. Se usa `primera_publicacion` —la del primer anuncio del expediente— y no la
+  // del anuncio más reciente: es la misma con la que se decide «Nueva», así que la
+  // píldora y la etiqueta no pueden contradecirse.
+  const publicada = it.primera_publicacion || it.fecha_publicacion;
+  if (publicada) {
+    meta.appendChild(pildora(`publicada ${fmtFecha(publicada)}`,
+                             { ico: 'ico-calendario',
+                               titulo: 'primera publicación del expediente' }));
+  }
   if (it.fecha_limite_presentacion) {
     const c = d === null ? '' : d < 0 ? 'plazo-vencido' : d <= 7 ? 'plazo-pronto' : 'plazo-ok';
     meta.appendChild(pildora(`cierra ${fmtFecha(it.fecha_limite_presentacion)}`,
@@ -546,7 +573,7 @@ async function cargarLista(reset = true) {
   if (d.total === 0) {
     $('vacio').textContent = activos.length
       ? 'Nada con estos filtros.'
-      : 'Sin coincidencias. Pulsa «Buscar ahora» para traer licitaciones.';
+      : 'Sin coincidencias todavía. En «Términos de búsqueda» puedes forzar una búsqueda.';
   }
   offset += d.items.length;
   $('mas').hidden = offset >= d.total;
@@ -554,6 +581,13 @@ async function cargarLista(reset = true) {
 }
 
 // --- Buscar ahora ----------------------------------------------------------
+
+// El texto del botón va en su propio <span>: el botón lleva dentro un <svg>, y
+// asignarle `textContent` al botón entero se llevaba el icono por delante en cuanto
+// empezaba la primera búsqueda.
+function etiquetaBoton(texto) {
+  $('buscar-ahora-txt').textContent = texto;
+}
 
 let vigilando = null;
 let seVioEnMarcha = false;
@@ -577,6 +611,28 @@ function fmtVelocidad(bytesPorS) {
 }
 
 // Mismo formato que la línea de la terminal: 45s, 12m, 1h 39m.
+// Qué está pasando, en una frase. La compone `progreso._frase()` en Python y se usa
+// tal cual en los tres sitios que lo cuentan —la terminal, la pantalla de arranque y el
+// detalle del botón— para que no puedan discrepar. Lo único que se añade aquí es la
+// etapa, que solo existe en la carga inicial.
+function fraseProgreso(det) {
+  if (!det) return 'Preguntando a las fuentes…';
+  const etapa = det.etapas ? `Etapa ${det.etapa} de ${det.etapas}. ` : '';
+  return etapa + (det.frase || det.resumen || 'Preparando la búsqueda…');
+}
+
+// Porcentaje solo cuando la fuente ha dicho cuánto pesa lo que manda. Si no, barra
+// indeterminada: es más honesto que un porcentaje inventado, y al lado está la frase,
+// que sí avanza.
+function barraProgreso(barra, det) {
+  if (det && (det.fase || '').startsWith('descargando') && det.bytes_total > 0) {
+    barra.max = det.bytes_total;
+    barra.value = det.bytes;
+  } else {
+    barra.removeAttribute('value');
+  }
+}
+
 function fmtDuracion(segundos) {
   const s = Math.round(segundos || 0);
   if (s < 60) return `${s}s`;
@@ -644,26 +700,55 @@ function pintarCarga(det) {
   }
 }
 
+// Devuelve true si al salir hay una búsqueda corriendo, que es lo que necesita saber
+// la pantalla de arranque para decidir si espera o entra directamente.
 async function lanzarBusqueda(opciones = {}) {
   const btn = $('buscar-ahora');
-  const r = await fetch('/api/buscar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opciones),
-  });
-  const d = await r.json();
+  let r, d;
+  try {
+    r = await fetch('/api/buscar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opciones),
+    });
+    d = await r.json();
+  } catch {
+    $('ultima-busqueda').textContent = 'no se ha podido hablar con el radar';
+    return false;
+  }
   if (!r.ok) {
     // 409 = ya hay una en marcha; no es un error, solo hay que esperarla. Pasa a
     // diario durante la carga inicial, que dura horas y tiene el cerrojo tomado.
     $('ultima-busqueda').textContent = r.status === 409
       ? 'ya se está descargando; espera a que termine'
       : (d.error || 'No se pudo lanzar la búsqueda.');
-    if (r.status === 409) vigilarBusqueda();
-    return;
+    if (r.status === 409) {
+      vigilarBusqueda();
+      return true;
+    }
+    return false;
   }
   btn.disabled = true;
-  btn.textContent = 'Buscando…';
+  etiquetaBoton('Buscando…');
+  // Antes de que el vigilante dé su primera vuelta pasa segundo y medio, y un botón
+  // que se apaga sin decir nada durante segundo y medio parece un botón roto.
+  pintarProgresoBusqueda(null);
   vigilarBusqueda();
+  return true;
+}
+
+// El detalle debajo del botón de «Términos de búsqueda». Se pinta siempre que hay algo
+// en marcha, la haya lanzado el botón o no: si entras ahí mientras corre la carga
+// inicial, tiene que decirte por qué el botón está desactivado.
+function pintarProgresoBusqueda(det) {
+  $('busqueda-progreso').hidden = false;
+  $('busqueda-frase').textContent =
+    fraseProgreso(det) + (det && det.segundos ? ` Lleva ${fmtDuracion(det.segundos)}.` : '');
+  barraProgreso($('busqueda-barra'), det);
+}
+
+function ocultarProgresoBusqueda() {
+  $('busqueda-progreso').hidden = true;
 }
 
 function vigilarBusqueda() {
@@ -683,10 +768,18 @@ function vigilarBusqueda() {
       seVioEnMarcha = true;
       const det = d.detalle;
       btn.disabled = true;
-      btn.textContent = det && det.etapas
+      etiquetaBoton(det && det.etapas
         ? `Carga inicial (${det.etapa}/${det.etapas})`
-        : 'Buscando…';
+        : 'Buscando…');
       pintarCarga(det);
+      pintarProgresoBusqueda(det);
+      // La carga inicial son horas: esa no se espera con la aplicación tapada. Se entra
+      // y la cuenta el aviso de la cabecera, que para eso está y dice «puedes trabajar
+      // mientras».
+      if (enArranque) {
+        if (det && det.etapas) cerrarArranque();
+        else pintarArranque(det);
+      }
       // Durante la carga inicial toda la narración vive en el bloque de abajo. Aquí
       // solo el estado corto: antes se pintaba la última línea del log recortada a 90
       // caracteres, que decía lo mismo en jerga y cortada a mitad de palabra.
@@ -708,13 +801,97 @@ function vigilarBusqueda() {
     clearInterval(vigilando);
     vigilando = null;
     pintarCarga(null);
+    ocultarProgresoBusqueda();
     btn.disabled = false;
-    btn.textContent = 'Buscar ahora';
+    etiquetaBoton('Buscar ahora');
     if (seVioEnMarcha) {
       await cargarResumen();
       await cargarLista();
     }
+    // Lo último, y después de recargar: la bandeja se destapa ya con lo que se acaba
+    // de traer, no con lo de ayer rellenándose a la vista.
+    cerrarArranque();
   }, 1500);
+}
+
+// --- Pantalla de arranque --------------------------------------------------
+//
+// Al abrir la aplicación lo primero es traer lo publicado desde la última vez. Antes
+// esto no lo hacía nadie: el .app solo levantaba el servidor y enseñaba la bandeja con
+// los datos de la sesión anterior, así que había que acordarse de pulsar «Buscar
+// ahora». Ahora se lanza sola y lo que se ve mientras tanto es el progreso de verdad
+// —la misma frase que escribe la terminal—, no un «cargando» fijo.
+//
+// Tres decisiones evitan que esto se convierta en una puerta cerrada:
+//   - la carga inicial (la de horas, con etapas) no se espera aquí: se entra y la
+//     narra el aviso de la cabecera;
+//   - si ya se buscó hace poco no se vuelve a buscar, que abrir y cerrar la ventana
+//     no debería costar un minuto cada vez;
+//   - y hay tope de tiempo y botón para entrar, porque una fuente colgada no puede
+//     dejar sin bandeja a quien solo quería mirar una ficha.
+
+let enArranque = true;
+
+// Cuánto vale una búsqueda antes de repetirla, en minutos. Lo que se publique en diez
+// minutos no justifica esperar otro minuto delante de una pantalla de espera.
+const MINUTOS_FRESCO = 10;
+
+// El tope, por reloj y no por número de tics del vigilante: si lo que falla es el
+// propio servidor, el vigilante se queda reintentando la petición sin contar nada y la
+// pantalla no se iría nunca. Una búsqueda normal tarda alrededor de un minuto; ocho es
+// ya señal de que algo va mal, y eso se mira mejor desde dentro de la aplicación.
+const TOPE_ARRANQUE_MS = 8 * 60 * 1000;
+
+function cerrarArranque() {
+  if (!enArranque) return;
+  enArranque = false;
+  $('arranque').hidden = true;
+}
+
+function pintarArranque(det) {
+  $('arranque-frase').textContent = fraseProgreso(det);
+  barraProgreso($('arranque-barra'), det);
+  $('arranque-tiempo').textContent =
+    det && det.segundos ? `Lleva ${fmtDuracion(det.segundos)}.` : '';
+}
+
+function buscadoHaceMenosDe(iso, minutos) {
+  if (!iso) return false;
+  const cuando = new Date(iso);
+  if (isNaN(cuando)) return false;
+  return (Date.now() - cuando.getTime()) < minutos * 60 * 1000;
+}
+
+async function arrancar() {
+  // Se arma antes de nada y no se desarma: `cerrarArranque()` no hace nada si ya se
+  // entró, y así ningún camino —ni el que falla— puede dejar la pantalla puesta.
+  setTimeout(cerrarArranque, TOPE_ARRANQUE_MS);
+
+  let d;
+  try {
+    d = await (await fetch('/api/busqueda-estado')).json();
+  } catch {
+    // Sin servidor no hay nada que esperar; que lo cuente la bandeja vacía.
+    cerrarArranque();
+    return;
+  }
+
+  // Ya hay una corriendo: la tarea programada de la mañana, un `start.command`, u otra
+  // ventana. Se espera a esa en lugar de pedir otra, que el cerrojo rechazaría.
+  if (d.en_marcha) {
+    $('arranque-titulo').textContent = 'Terminando la búsqueda que ya estaba en marcha';
+    vigilarBusqueda();
+    return;
+  }
+
+  if (buscadoHaceMenosDe(d.ultima_busqueda, MINUTOS_FRESCO)) {
+    cerrarArranque();
+    return;
+  }
+
+  $('arranque-titulo').textContent = 'Buscando licitaciones nuevas';
+  pintarArranque(null);
+  if (!await lanzarBusqueda()) cerrarArranque();
 }
 
 // --- Vencimientos ----------------------------------------------------------
@@ -1029,6 +1206,10 @@ async function guardarAjustes() {
     `Guardado · ${d.coincidencias.toLocaleString('es-ES')} coincidencias`;
   perfilesOriginales = JSON.parse(JSON.stringify(perfiles));
   await cargarResumen();
+  // Y la lista, no solo los contadores: «Guardar y aplicar» acaba de reevaluar todo lo
+  // descargado, así que la bandeja de detrás es la de los términos viejos. Antes había
+  // que cambiar de pestaña y tocar un filtro para verla al día.
+  await cargarLista();
 
   if (hayQueRebuscar) {
     const caja = $('previsualizacion');
@@ -1280,6 +1461,7 @@ $('analitica-perfil').addEventListener('change', () => {
   cargarAnalitica();
 });
 $('buscar-ahora').addEventListener('click', () => lanzarBusqueda());
+$('arranque-entrar').addEventListener('click', cerrarArranque);
 $('previsualizar').addEventListener('click', () => previsualizarAjustes());
 $('guardar-perfiles').addEventListener('click', () => guardarAjustes());
 $('tab-novedades').addEventListener('click', async () => {
@@ -1347,12 +1529,14 @@ try {
   }
 } catch { /* sin almacén se abre con el de fábrica, que es lo correcto */ }
 
+// La bandeja se pinta por detrás de la pantalla de arranque, con lo que ya haya en la
+// base, para que al destaparla no haya que esperar a nada más.
 cargarResumen();
 cargarLista();
-// Al abrir puede haber ya una carga corriendo por detrás: start.command lanza las
-// etapas caras en segundo plano y abre la aplicación acto seguido. Sin esto, el aviso
-// no aparecería hasta que alguien pulsara «Buscar ahora».
-vigilarBusqueda();
+// Y `arrancar()` decide qué pasa delante: buscar lo nuevo y esperarlo, engancharse a
+// la carga que ya venía de antes —start.command lanza las etapas caras en segundo
+// plano y abre la aplicación acto seguido— o entrar directamente.
+arrancar();
 comprobarVersion();
 
 // --- Analítica -------------------------------------------------------------

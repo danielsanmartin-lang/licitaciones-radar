@@ -311,7 +311,8 @@ def bandeja(
     return {"total": total, "total_sin_filtros": total_sin_filtros, "items": items}
 
 
-def resumen(con: sqlite3.Connection, *, en_marcha: bool = False) -> dict:
+def resumen(con: sqlite3.Connection, *, en_marcha: bool = False,
+            perfiles_activos: list[str] | None = None) -> dict:
     """Cifras de cabecera y salud de las fuentes.
 
     Cada cifra se calcula con `contar()`, que es la misma función que usa la lista.
@@ -325,6 +326,10 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False) -> dict:
     `en_marcha` dice si hay una ingesta corriendo ahora mismo. Lo sabe quien llama —el
     servidor tiene el cerrojo a mano— y sirve para no confundir una fila de registro
     todavía abierta con una fuente rota.
+
+    `perfiles_activos` son los nombres de los perfiles marcados como activos en
+    `perfiles.json`. También los pasa quien llama, por la misma razón: este módulo lee
+    la base y nada más, y así se puede probar sin fichero de configuración delante.
     """
     # También por expedientes agrupados: si aquí se contaran anuncios, el desglose
     # sumaría 921 mientras el total de arriba dice 640, que es justo la incoherencia
@@ -332,6 +337,14 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False) -> dict:
     nombres = [
         f["perfil"] for f in con.execute("SELECT DISTINCT perfil FROM matches ORDER BY perfil")
     ]
+    # Y los activos que todavía no han casado con nada, con su cero por delante. Salen
+    # porque el desplegable de la bandeja se llena con esta lista, y un perfil que
+    # acabas de activar y no aparece se lee como que la aplicación no te ha hecho caso.
+    # Enseñarlo con «(0)» dice la verdad: el filtro está puesto y de momento no ha
+    # entrado nada por él.
+    for nombre in sorted(perfiles_activos or []):
+        if nombre not in nombres:
+            nombres.append(nombre)
     perfiles = sorted(
         (
             {
@@ -343,7 +356,7 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False) -> dict:
             }
             for nombre in nombres
         ),
-        key=lambda p: -p["total"],
+        key=lambda p: (-p["total"], p["perfil"]),
     )
 
     return {
