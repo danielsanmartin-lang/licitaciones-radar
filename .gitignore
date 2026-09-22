@@ -33,3 +33,8 @@ package-lock.json
 
 # macOS
 .DS_Store
+
+# Claude Code: `settings.local.json` es de esta máquina y `worktrees/` son copias
+# enteras del repositorio. Si algún día hay algo ahí que merezca compartirse —un
+# settings.json de proyecto, por ejemplo—, se saca de la regla con `!`.
+.claude/
