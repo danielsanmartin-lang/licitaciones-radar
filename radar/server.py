@@ -39,6 +39,30 @@ TIPOS = {
 }
 
 
+def _perfiles_activos() -> list[str]:
+    """Los nombres de los perfiles marcados como activos, o [] si no se pueden leer.
+
+    Es para el desplegable de la bandeja: un perfil recién activado que todavía no ha
+    casado con nada no está en `matches`, así que sin esto no aparecería hasta que
+    entrara la primera licitación por él —y quien lo acaba de activar lo lee como que
+    no se ha guardado—.
+
+    Se traga cualquier error a propósito: la cabecera es lo primero que se pinta, y un
+    `perfiles.json` a medio editar no puede dejar la aplicación sin contadores. Quien sí
+    tiene que protestar es `/api/perfiles`, que es donde se edita.
+    """
+    from .matching import leer_fichero_perfiles
+
+    try:
+        datos = leer_fichero_perfiles()
+    except (OSError, ValueError):
+        return []
+    return [
+        p["nombre"] for p in datos.get("perfiles", [])
+        if isinstance(p, dict) and p.get("nombre") and p.get("activo", True)
+    ]
+
+
 class Manejador(BaseHTTPRequestHandler):
     server_version = "licitaciones-radar"
     ruta_bd: Path = db.BD_POR_DEFECTO
@@ -97,7 +121,9 @@ class Manejador(BaseHTTPRequestHandler):
 
         if partes.path == "/api/resumen":
             self._json(consultas.resumen(
-                self.con, en_marcha=busqueda.en_marcha() is not None
+                self.con,
+                en_marcha=busqueda.en_marcha() is not None,
+                perfiles_activos=_perfiles_activos(),
             ))
 
         elif partes.path == "/api/bandeja":

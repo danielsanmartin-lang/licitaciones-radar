@@ -17,9 +17,26 @@ y funciona igual en cualquier Mac.
 Doble clic en **`Radar de Licitaciones.app`**.
 
 Se abre como cualquier programa del Mac: su ventana, su icono en el Dock, su menú. Por
-dentro arranca el servidor de Python, espera a que conteste y enseña la bandeja; tarda
-dos o tres segundos. No hay que dejar ninguna terminal abierta, y al salir con ⌘Q el
-servidor se para con ella.
+dentro arranca el servidor de Python, espera a que conteste y **se pone a traer lo
+publicado desde la última vez antes de enseñar la bandeja**: mientras tanto se ve el
+progreso de verdad —qué fuente, cuántos megas, cuánto lleva—, y la lista aparece ya
+puesta al día. Suele ser cuestión de un minuto. No hay que dejar ninguna terminal
+abierta, y al salir con ⌘Q el servidor se para con ella.
+
+Tres cosas de esa espera, porque una pantalla que no deja pasar es una pantalla que
+tiene que tener salidas:
+
+- **Si ya se buscó hace menos de diez minutos, no se repite.** Cerrar la ventana y
+  volver a abrirla no cuesta otro minuto.
+- **La carga inicial no se espera ahí.** Esa dura horas, así que se entra directamente
+  y la cuenta la barra de la cabecera, que es la que dice «puedes trabajar mientras».
+- **Y siempre hay un «Ver la bandeja sin esperar»**, además de un tope de ocho minutos
+  por si una fuente se queda colgada.
+
+El botón **«Buscar ahora»** ya no está en la cabecera: con esto no hay que pulsarlo
+nunca. Sigue estando, al final de **Términos de búsqueda**, que es donde apetece —
+después de tocar las palabras, para ver qué entra con ellas—, y **debajo va contando lo
+mismo** que la pantalla de arranque: qué fuente, cuántos megas y cuánto lleva.
 
 **La app se lleva el programa dentro** —`radar/`, `web/` y los certificados van en
 `Contents/Resources`— así que es **un solo fichero de 1,7 MB** que se puede arrastrar a
@@ -178,9 +195,10 @@ Las etapas 2 y 3 son las que llenan **Vencimientos** y **Adjudicatarios**, que
 necesitan histórico de adjudicaciones. Y la 3 es la que trae las diez comunidades que
 no tienen plataforma propia (Valencia, Castilla y León, Aragón, Murcia…).
 
-Mientras la carga inicial esté en marcha, «Buscar ahora» y la tarea de cada mañana se
-esperan: dos ingestas a la vez se pelean por el bloqueo de escritura de SQLite. Es
-normal y la aplicación lo dice en el botón.
+Mientras la carga inicial esté en marcha, la búsqueda del arranque, «Buscar ahora» y
+la tarea de cada mañana se esperan: dos ingestas a la vez se pelean por el bloqueo de
+escritura de SQLite. Es normal, y en **Términos de búsqueda** el botón lo dice —sale
+desactivado, con la etapa— y debajo va la frase de lo que está haciendo.
 
 Desde la terminal, si quieres controlarlo tú:
 
@@ -222,6 +240,12 @@ qué está en ese sitio de la lista, ahora que la bandeja abre por lo último pu
 De cada licitación se ve el órgano, el importe, el plazo y los enlaces a los pliegos
 oficiales.
 
+En la fila de píldoras van **las dos fechas juntas**: «publicada 17 sept 2026» y
+«cierra 02 oct 2026». La de arriba a la derecha dice la antigüedad («hace 5 días»), que
+es para ordenar de un vistazo; esta dice el día, que es lo que se pregunta al mirar la
+lista y lo que se copia al correo. Es la del **primer** anuncio del expediente, la
+misma con la que se decide la etiqueta «Nueva», así que no pueden contradecirse.
+
 **Lo que marcas como «siguiendo» o «presentada» no se va de la bandeja nunca**, aunque
 dejes de tener un perfil que lo case. Es a propósito: marcar algo es una decisión tuya y
 pesa más que el filtro automático. La ficha aparece sin píldora de perfil y su apartado
@@ -243,6 +267,11 @@ rellena de la fila para que se vea sin leer. La semana se cuenta desde la **prim
 publicación del expediente, no desde el anuncio que se enseña: si una adjudicación de
 ayer marcara como nuevo un pliego de junio, la etiqueta mandaría a alguien a un contrato
 ya cerrado. Medido sobre la base real, ese criterio ingenuo marcaba 16 y cinco eran falsas.
+
+**El desplegable de perfiles lista los que están activos**, aunque alguno no haya
+casado todavía con nada: sale con su «(0)» al lado. Es la única manera de que activar un
+perfil se note; si solo aparecieran los que tienen fichas, el que acabas de encender
+seguiría sin estar y parecería que no se ha guardado.
 
 El desplegable de orden ofrece **cierran antes**, **mejor encaje**, **publicación más
 reciente**, **publicación más antigua** y **mayor importe**. Los dos de fecha usan también
@@ -634,8 +663,10 @@ El cuarto está **desactivado a propósito**, y merece la pena saber por qué: a
 3.123 de las 3.780 coincidencias que había antes, cuatro de cada cinco fichas de la
 bandeja, y ninguna era presentable. Si algún día el catálogo se amplía a servicios de
 ciberseguridad más generales, se reactiva marcando **«activo»** en la pestaña «Términos
-de búsqueda»: sus 41 términos siguen escritos en el fichero. A mano es lo mismo,
-`"activo": true` en `config/perfiles.json` y relanzar `match`.
+de búsqueda» y pulsando **«Guardar y aplicar»**: sus 41 términos siguen escritos en el
+fichero. Al guardar se reevalúa todo lo descargado y el perfil aparece en el acto en el
+desplegable de la bandeja, con sus coincidencias. A mano es lo mismo, `"activo": true`
+en `config/perfiles.json` y relanzar `match`.
 
 El de **consultas previas** está en cero y también es a propósito. Son las consultas
 preliminares al mercado, el único momento en que todavía se puede influir en un pliego
@@ -679,7 +710,7 @@ anuncio original.
 que hay debajo de casi todos los problemas: la versión de Python, que el almacén de
 certificados siga vigente, el espacio libre, que la base se abra y esté al día, que los
 términos de búsqueda sean válidos, que ninguna fuente haya fallado, que no haya un
-cerrojo de una descarga muerta bloqueando el botón «Buscar ahora», que la caché no tenga
+cerrojo de una descarga muerta bloqueando las búsquedas, que la caché no tenga
 ZIP ilegibles y que la tarea de cada mañana esté cargada de verdad. Cada cosa que no
 esté bien viene con el comando que la arregla.
 
