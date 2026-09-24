@@ -305,8 +305,8 @@ def cmd_programar(args) -> int:
 def cmd_actualizar(args) -> int:
     """Comprueba si hay versión nueva y, si se pide, la instala.
 
-    `--json` existe para que la aplicación pueda leer el resultado: el botón de la
-    interfaz lanza este mismo comando en un proceso aparte, igual que hace con la
+    `--json` existe para que la aplicación pueda leer el resultado: la pantalla de
+    arranque lanza este mismo comando en un proceso aparte, igual que hace con la
     descarga, en lugar de tener su propio camino de ejecución.
     """
     from radar import actualizacion
@@ -327,7 +327,15 @@ def cmd_actualizar(args) -> int:
             print(f"Estás en la última versión ({info['version_actual']}).")
         return 0
 
-    resultado = actualizacion.aplicar()
+    # El indicador publica en su propio fichero, no en el de la ingesta: es lo que lee la
+    # pantalla de arranque mientras instala, y una búsqueda podría estar escribiendo el
+    # suyo a la vez.
+    progreso.iniciar(estado=actualizacion.PROGRESO)
+    try:
+        resultado = actualizacion.aplicar()
+    finally:
+        progreso.parar()
+        actualizacion.soltar_cerrojo()
     if args.json:
         print(json.dumps(resultado, ensure_ascii=False))
     else:

@@ -299,6 +299,15 @@ final class Servidor {
         }
     }
 
+    /// El PID del servidor si es nuestro, o 0. Lo necesita el script que vuelve a abrir
+    /// la app: tiene que esperar a que este servidor suelte el puerto, o la app nueva lo
+    /// encontraría todavía contestando, lo daría por «ajeno» y se quedaría sin servidor
+    /// en cuanto terminara de morirse.
+    var pidPropio: Int32 {
+        guard !ajeno, let p = proceso, p.isRunning else { return 0 }
+        return p.processIdentifier
+    }
+
     /// Para el servidor. NO toca la ingesta.
     ///
     /// `radar/busqueda.py` lanza la descarga como un proceso aparte y desligado, a
@@ -318,7 +327,7 @@ final class Servidor {
 // MARK: - La aplicación
 
 final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
-                      WKUIDelegate, WKDownloadDelegate {
+                      WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
     private let servidor = Servidor()
     private var ventana: NSWindow!
     private var web: WKWebView!
@@ -330,6 +339,14 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         construirMenu()
         construirVentana()
 
+        // Primero lo propio: si el código ya es de una versión más nueva que esta
+        // ventana, se rehace y se vuelve a abrir antes de arrancar nada. Lo de preguntar
+        // a GitHub por versiones nuevas lo hace después la pantalla de arranque de la web.
+        if ponerAlDiaLaVentana() { return }
+        arrancarServidor()
+    }
+
+    private func arrancarServidor() {
         do {
             try servidor.arrancar()
         } catch {
@@ -337,6 +354,7 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             return
         }
 
+        aviso.isHidden = false
         aviso.stringValue = servidor.ajeno
             ? "Conectando con el radar que ya estaba en marcha…"
             : "Arrancando el radar…"
@@ -348,12 +366,6 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 self.aviso.isHidden = true
                 self.web.isHidden = false
                 self.web.load(URLRequest(url: Ajustes.base))
-                // Primero lo propio: si el actualizador ya trajo código nuevo, esta
-                // ventana es la vieja y hay que rehacerla antes de ir a preguntar a
-                // GitHub si hay otra versión más.
-                if !self.avisarSiElBundleSeQuedoAtras() {
-                    self.comprobarVersion()
-                }
             case .failure(let error):
                 self.mostrarFalloYSalir(error)
             }
@@ -389,6 +401,10 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         // igualmente guardaría el localStorage de la bandeja —el orden elegido, los
         // avisos descartados— que es justo lo que se quiere conservar entre arranques.
         configuracion.websiteDataStore = .default()
+        // El puente con la pantalla de arranque: cuando instala una versión nueva, es la
+        // web la que sabe que ha terminado y la ventana la única que puede cerrarse y
+        // volver a abrirse. `window.webkit.messageHandlers.radar.postMessage(…)`.
+        configuracion.userContentController.add(self, name: "radar")
 
         web = WKWebView(frame: ventana.contentView!.bounds, configuration: configuracion)
         web.autoresizingMask = [.width, .height]
@@ -458,8 +474,6 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         app.addItem(withTitle: "Buscar novedades ahora",
                     action: #selector(buscarAhora), keyEquivalent: "r")
             .keyEquivalentModifierMask = [.command, .shift]
-        app.addItem(withTitle: "Comprobar si hay versión nueva…",
-                    action: #selector(comprobarVersionManual), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Ocultar \(nombre)",
                     action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -566,64 +580,77 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: raiz.path)
     }
 
-    // MARK: El bundle se queda atrás
+    // MARK: Versiones
+    //
+    // La instalación en sí la hacen Python y la pantalla de arranque de la web, sin
+    // preguntar: al abrir, si hay versión nueva, se instala. Aquí solo queda lo que no
+    // puede hacer nadie más que la ventana, que es cerrarse y volver a abrirse —ya con
+    // el .app rehecho o cambiado por el nuevo—. No hay menú ni diálogo de «Actualizar»:
+    // una actualización que se puede dejar para luego se deja para siempre.
 
-    /// ¿El código Python es más nuevo que esta ventana?
+    /// Marca con la que se vuelve a abrir la app tras rehacerse o cambiarse. Evita un
+    /// bucle si, por lo que sea, el .app rehecho sigue sin cuadrar con el código.
+    static let marcaRelanzada = "--relanzada"
+
+    /// ¿Esta ventana se puede rehacer desde el código que está usando?
     ///
-    /// Es el último eslabón del mecanismo de actualización. El actualizador sustituye
-    /// `radar/`, `web/` y `macos/` —incluido el binario prefabricado— pero NO el
-    /// «.app», porque un bundle no puede reemplazarse a sí mismo mientras corre. Así
-    /// que la app lo nota al abrirse y se ofrece a rehacerse.
+    /// Solo en una copia de trabajo, y solo si el .app que corre es el que monta
+    /// `construir_app.py` —el de la raíz del proyecto—: rehacer otro no cambiaría este.
+    /// En la app empaquetada no hace falta nunca: su versión y la de su código son la
+    /// misma por construcción, y la que se actualiza es la app entera.
+    private func sePuedeRehacer() -> Bool {
+        guard let raiz = Ajustes.raizProyecto(),
+              raiz.standardizedFileURL != Bundle.main.resourceURL?.standardizedFileURL,
+              FileManager.default.fileExists(
+                atPath: raiz.appendingPathComponent("herramientas/construir_app.py").path)
+        else { return false }
+        let esperado = raiz.appendingPathComponent("Radar de Licitaciones.app")
+        return esperado.standardizedFileURL.path == Bundle.main.bundleURL.standardizedFileURL.path
+    }
+
+    /// Si el código es más nuevo que esta ventana, se rehace y se vuelve a abrir sola.
     ///
-    /// Sin esto, tras actualizar quedaría una ventana que dice 1.3.0 en «Acerca de»
-    /// sobre un código 1.4.0. Funcionaría —el shell no depende de la versión de Python—
-    /// pero la versión que enseña sería mentira, y el día que haya que diagnosticar algo
-    /// es exactamente el dato del que se tira.
+    /// Pasa cuando la versión nueva se instaló con la ventana vieja —por la terminal,
+    /// con `radar.py actualizar`, o con una ventana de antes de que esto existiera—.
+    /// Antes se ofrecía con un «Rehacer ahora / Más tarde»; ahora no se pregunta. Si
+    /// rehacerla falla, se sigue con la vieja, que funciona igual: el shell no depende
+    /// de la versión de Python, solo la dice mal en «Acerca de».
     ///
-    /// Devuelve `true` si ha puesto un diálogo, para no apilarle encima el de GitHub.
-    private func avisarSiElBundleSeQuedoAtras() -> Bool {
+    /// Devuelve `true` si se está rehaciendo; entonces no hay que arrancar nada más.
+    private func ponerAlDiaLaVentana() -> Bool {
         let delBundle = versionDelBundle()
         guard let delProyecto = versionDelProyecto() else {
             traza("no he podido leer la versión de radar/__init__.py")
             return false
         }
         traza("versión: bundle \(delBundle) · proyecto \(delProyecto)")
-        guard delProyecto != delBundle else { return false }
-        traza("el bundle se ha quedado atrás; ofrezco rehacerlo")
+        guard delProyecto != delBundle,
+              !CommandLine.arguments.contains(Delegado.marcaRelanzada),
+              sePuedeRehacer()
+        else { return false }
 
-        let alerta = NSAlert()
-        alerta.messageText = "El programa se ha actualizado a la \(delProyecto)"
-        alerta.informativeText = """
-        Esta ventana es la de la versión \(delBundle). Todo funciona, pero \
-        conviene rehacerla para que coincida.
-
-        Tarda unos segundos y no toca ni la base de datos ni tus términos de búsqueda.
-        """
-        alerta.addButton(withTitle: "Rehacer ahora")
-        alerta.addButton(withTitle: "Más tarde")
-        alerta.beginSheetModal(for: ventana) { [weak self] respuesta in
-            guard respuesta == .alertFirstButtonReturn else { return }
-            self?.reconstruirApp()
+        traza("el bundle se ha quedado atrás; lo rehago")
+        aviso.isHidden = false
+        aviso.stringValue = "Poniendo al día la ventana para la versión \(delProyecto)…"
+        rehacerApp { [weak self] ok, texto in
+            guard let self else { return }
+            if ok {
+                self.relanzar()
+            } else {
+                traza("no se pudo rehacer: \(texto.suffix(400))")
+                self.arrancarServidor()
+            }
         }
         return true
     }
 
-    private func reconstruirApp() {
-        guard let raiz = Ajustes.raizProyecto(), let python = Python.localizar() else { return }
-        // `herramientas/` no va dentro del bundle —no hace falta ahí— así que esto solo
-        // tiene sentido en una copia de trabajo. En la empaquetada no se llega nunca,
-        // porque la versión del bundle y la del código son la misma por construcción.
-        guard FileManager.default.fileExists(
-                atPath: raiz.appendingPathComponent("herramientas/construir_app.py").path) else {
-            simpleAlerta("Esta copia no se puede rehacer sola",
-                         "Descarga la versión nueva de la aplicación y arrástrala encima "
-                         + "de la vieja.")
+    /// `construir_app.py --forzar` en segundo plano. Vuelve en el hilo principal.
+    private func rehacerApp(listo: @escaping (Bool, String) -> Void) {
+        guard let raiz = Ajustes.raizProyecto(), let python = Python.localizar() else {
+            listo(false, "no encuentro el proyecto o Python")
             return
         }
-        aviso.isHidden = false
-        aviso.stringValue = "Rehaciendo la ventana…"
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: python)
             p.arguments = ["herramientas/construir_app.py", "--forzar"]
@@ -643,153 +670,149 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             } catch {
                 texto = error.localizedDescription
             }
-
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.aviso.isHidden = true
-                let alerta = NSAlert()
-                if ok {
-                    alerta.messageText = "Ventana rehecha"
-                    alerta.informativeText = "Cierra la aplicación y vuelve a abrirla "
-                        + "para empezar a usar la nueva."
-                    alerta.addButton(withTitle: "Salir ahora")
-                    alerta.addButton(withTitle: "Salir luego")
-                    alerta.beginSheetModal(for: self.ventana) { r in
-                        if r == .alertFirstButtonReturn { NSApp.terminate(nil) }
-                    }
-                } else {
-                    alerta.messageText = "No se ha podido rehacer la ventana"
-                    alerta.informativeText = texto.isEmpty
-                        ? "Prueba a mano: python3 herramientas/construir_app.py --forzar"
-                        : String(texto.suffix(1200))
-                    alerta.addButton(withTitle: "Cerrar")
-                    alerta.beginSheetModal(for: self.ventana, completionHandler: nil)
-                }
-            }
+            DispatchQueue.main.async { listo(ok, texto) }
         }
     }
 
-    // MARK: Versión nueva
-
-    @objc private func comprobarVersionManual() { comprobarVersion(silencioso: false) }
-
-    /// Pregunta a `/api/actualizacion`, que es el mismo sitio al que pregunta la web.
+    /// Cierra la app y la vuelve a abrir, cambiándola antes por `nueva` si se da.
     ///
-    /// El texto lo redacta Python y aquí no se reinterpreta: es quien sabe qué ha
-    /// pasado de verdad y qué se ha tocado. La misma regla que ya sigue el aviso de la
-    /// interfaz.
-    private func comprobarVersion(silencioso: Bool = true) {
-        var peticion = URLRequest(url: Ajustes.base.appendingPathComponent("api/actualizacion"))
-        peticion.timeoutInterval = 20
-        URLSession.shared.dataTask(with: peticion) { [weak self] datos, _, _ in
-            guard let datos,
-                  let json = try? JSONSerialization.jsonObject(with: datos) as? [String: Any]
-            else {
-                if !silencioso {
-                    DispatchQueue.main.async {
-                        self?.simpleAlerta("No se ha podido preguntar",
-                                           "No ha habido respuesta al comprobar si hay versión nueva.")
-                    }
-                }
-                return
-            }
-            let hayNueva = json["hay_nueva"] as? Bool ?? false
-            let nueva = json["version_nueva"] as? String ?? "?"
-            let actual = json["version_actual"] as? String ?? "?"
-            let fallo = json["error"] as? String
-
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if hayNueva {
-                    self.ofrecerActualizar(nueva: nueva, actual: actual)
-                } else if !silencioso {
-                    self.simpleAlerta("No hay nada más nuevo",
-                                      fallo ?? "Ya tienes la última versión (\(actual)).")
-                }
-            }
-        }.resume()
+    /// Lo hace un script aparte porque un programa no puede sustituirse ni abrirse a sí
+    /// mismo mientras corre: espera a que esta app y su servidor hayan terminado, mueve
+    /// el bundle viejo a un lado, pone el nuevo en su sitio y lo abre. Si el cambio
+    /// falla —una app en /Applications sin ser administrador—, devuelve la vieja a su
+    /// sitio, deja escrito el motivo en `fallo` para que Python no lo reintente en
+    /// bucle, y abre la vieja.
+    private func relanzar(sustituyendoPor nueva: URL? = nil, version: String = "",
+                          fallo: URL? = nil) {
+        let script = """
+        APP_PID="$1"; SERVIDOR_PID="$2"; DESTINO="$3"; NUEVA="$4"; FALLO="$5"; VERSION="$6"
+        while kill -0 "$APP_PID" 2>/dev/null; do sleep 0.2; done
+        n=0
+        while [ "$SERVIDOR_PID" != 0 ] && kill -0 "$SERVIDOR_PID" 2>/dev/null && [ $n -lt 50 ]; do
+          sleep 0.2; n=$((n+1))
+        done
+        if [ -n "$NUEVA" ]; then
+          APARTE="$(dirname "$NUEVA")/anterior-$$.app"
+          if ERR=$(mv "$DESTINO" "$APARTE" 2>&1); then
+            if ERR=$(mv "$NUEVA" "$DESTINO" 2>&1); then
+              rm -rf "$APARTE"
+              rm -f "$FALLO"
+              xattr -dr com.apple.quarantine "$DESTINO" 2>/dev/null
+            else
+              mv "$APARTE" "$DESTINO"
+              printf '%s\\n%s\\n' "$VERSION" "$ERR" > "$FALLO"
+            fi
+          else
+            printf '%s\\n%s\\n' "$VERSION" "$ERR" > "$FALLO"
+          fi
+        fi
+        exec /usr/bin/open "$DESTINO" --args \(Delegado.marcaRelanzada)
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", script, "radar-relanzar",
+                       String(ProcessInfo.processInfo.processIdentifier),
+                       String(servidor.pidPropio),
+                       Bundle.main.bundleURL.path,
+                       nueva?.path ?? "",
+                       fallo?.path ?? "/dev/null",
+                       version]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do {
+            try p.run()
+        } catch {
+            simpleAlerta("No se ha podido volver a abrir la aplicación",
+                         "Ciérrala y ábrela a mano. \(error.localizedDescription)")
+            return
+        }
+        traza("relanzando (script pid \(p.processIdentifier))")
+        NSApp.terminate(nil)
     }
 
-    private func ofrecerActualizar(nueva: String, actual: String) {
-        let alerta = NSAlert()
-        alerta.messageText = "Hay una versión nueva (\(nueva))"
-        alerta.informativeText = """
-        Tienes la \(actual). Se sustituye el programa y se deja lo anterior al lado \
-        para poder volver atrás.
+    // MARK: Mensajes de la web
 
-        Tu base de datos, tu triaje y tus términos de búsqueda no se tocan.
-        """
-        alerta.addButton(withTitle: "Actualizar ahora")
-        alerta.addButton(withTitle: "Más tarde")
-        alerta.beginSheetModal(for: ventana) { [weak self] respuesta in
-            guard respuesta == .alertFirstButtonReturn else { return }
-            self?.aplicarActualizacion()
+    func userContentController(_ controlador: WKUserContentController,
+                               didReceive mensaje: WKScriptMessage) {
+        // Solo la bandeja propia puede pedir esto. Cualquier otra página ya se abre en
+        // el navegador (ver la navegación), pero el puente no se fía de eso.
+        guard mensaje.frameInfo.request.url?.host == Ajustes.host,
+              let datos = mensaje.body as? [String: Any],
+              let accion = datos["accion"] as? String
+        else { return }
+        let version = datos["version"] as? String ?? ""
+        traza("la web pide «\(accion)» (\(version))")
+
+        switch accion {
+        case "reiniciar":
+            reiniciarTrasActualizar(version: version)
+        case "instalar-app":
+            instalarAppNueva(ruta: datos["ruta"] as? String ?? "", version: version)
+        default:
+            break
         }
     }
 
-    private func aplicarActualizacion() {
-        aviso.isHidden = false
-        aviso.stringValue = "Descargando y sustituyendo…"
+    /// Copia de trabajo recién actualizada: rehacer la ventana y volver a abrirla.
+    ///
+    /// Si el servidor no es nuestro —un `start.command` que ya estaba corriendo— se le
+    /// pide antes que se reinicie él, porque al cerrarse esta ventana no se para y
+    /// seguiría con el código viejo en memoria. Y si la ventana no se puede rehacer, el
+    /// camino de reserva es el del navegador: reiniciar el servidor y recargar la página.
+    private func reiniciarTrasActualizar(version: String) {
+        let deReserva = { [weak self] in
+            _ = self?.web.evaluateJavaScript("window.reiniciarServidorYRecargar()")
+        }
+        guard sePuedeRehacer() else { deReserva(); return }
 
-        var peticion = URLRequest(url: Ajustes.base.appendingPathComponent("api/actualizacion"))
-        peticion.httpMethod = "POST"
-        peticion.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        peticion.httpBody = Data("{}".utf8)
-        // Descargar el zip y sustituir puede tardar minutos con una línea lenta.
-        peticion.timeoutInterval = 900
-
-        URLSession.shared.dataTask(with: peticion) { [weak self] datos, _, _ in
-            let json = datos.flatMap {
-                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-            } ?? nil
-            let mensaje = (json?["mensaje"] as? String)
-                ?? "No se ha podido completar; el programa sigue como estaba."
-            let ok = (json?["ok"] as? Bool ?? false) && !(json?["sin_cambios"] as? Bool ?? false)
-            // La copia empaquetada no se sustituye a sí misma: lleva el programa dentro.
-            // Python lo dice y da la URL; aquí solo se abre.
-            let hayQueDescargar = json?["hay_que_descargar"] as? Bool ?? false
-            let urlDescarga = (json?["url"] as? String).flatMap(URL.init(string:))
-
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.aviso.isHidden = true
-
-                if hayQueDescargar {
-                    let a = NSAlert()
-                    a.messageText = "Hay una versión nueva"
-                    a.informativeText = mensaje
-                    if urlDescarga != nil {
-                        a.addButton(withTitle: "Descargar")
-                        a.addButton(withTitle: "Más tarde")
-                    } else {
-                        a.addButton(withTitle: "Cerrar")
-                    }
-                    a.beginSheetModal(for: self.ventana) { r in
-                        if r == .alertFirstButtonReturn, let u = urlDescarga {
-                            NSWorkspace.shared.open(u)
-                        }
-                    }
-                    return
-                }
-
-                let alerta = NSAlert()
-                alerta.messageText = ok ? "Actualizado" : "No se ha actualizado"
-                alerta.informativeText = mensaje
-                if ok {
-                    // Hay que reabrir: el proceso que está corriendo tiene en memoria
-                    // la versión vieja. El .app se reconstruye solo en el arranque
-                    // siguiente si su versión ya no cuadra con radar/__init__.py.
-                    alerta.addButton(withTitle: "Salir ahora")
-                    alerta.addButton(withTitle: "Salir luego")
-                    alerta.beginSheetModal(for: self.ventana) { r in
-                        if r == .alertFirstButtonReturn { NSApp.terminate(nil) }
-                    }
-                } else {
-                    alerta.addButton(withTitle: "Cerrar")
-                    alerta.beginSheetModal(for: self.ventana, completionHandler: nil)
-                }
+        if servidor.ajeno {
+            var peticion = URLRequest(url: Ajustes.base.appendingPathComponent("api/reiniciar"))
+            peticion.httpMethod = "POST"
+            peticion.timeoutInterval = 5
+            URLSession.shared.dataTask(with: peticion).resume()
+        }
+        rehacerApp { [weak self] ok, texto in
+            if ok {
+                self?.relanzar()
+            } else {
+                traza("no se pudo rehacer: \(texto.suffix(400))")
+                deReserva()
             }
-        }.resume()
+        }
+    }
+
+    /// App empaquetada: cambiarla por la que ha dejado preparada Python.
+    ///
+    /// La ruta viene de la web, así que se comprueba antes de mover nada: que sea un
+    /// .app, que sea ESTA aplicación —mismo identificador— y que esté en la carpeta de
+    /// datos, que es donde la deja `actualizacion._preparar_app()`.
+    private func instalarAppNueva(ruta: String, version: String) {
+        // Con los enlaces resueltos en los dos lados: macOS quita o pone «/private»
+        // delante de /tmp y /var según a quién se le pregunte, y comparar una ruta
+        // resuelta con otra sin resolver rechaza la buena.
+        let resuelta = { (ruta: String) in
+            URL(fileURLWithPath: ruta).resolvingSymlinksInPath().path
+        }
+        let nueva = URL(fileURLWithPath: resuelta(ruta))
+        // Donde deja los datos `radar/rutas.py`: Application Support, o RADAR_DATOS.
+        let soporte = FileManager.default.urls(for: .applicationSupportDirectory,
+                                               in: .userDomainMask).first?
+            .appendingPathComponent("Radar de Licitaciones").path
+        let permitidas = [soporte, ProcessInfo.processInfo.environment["RADAR_DATOS"]]
+            .compactMap { $0 }.filter { !$0.isEmpty }.map { resuelta($0) + "/" }
+        let nuestra = Bundle(url: nueva)?.bundleIdentifier == Bundle.main.bundleIdentifier
+        guard nueva.pathExtension == "app", nuestra,
+              permitidas.contains(where: { nueva.path.hasPrefix($0) })
+        else {
+            traza("rechazo instalar \(ruta)")
+            simpleAlerta("No se ha instalado la versión nueva",
+                         "La aplicación preparada no está donde se esperaba (\(ruta)).")
+            return
+        }
+        // …/data/actualizacion/nueva/Radar de Licitaciones.app → …/data/actualizacion/fallo.txt
+        let fallo = nueva.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("fallo.txt")
+        relanzar(sustituyendoPor: nueva, version: version, fallo: fallo)
     }
 
     private func simpleAlerta(_ titulo: String, _ texto: String) {

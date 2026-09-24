@@ -146,41 +146,17 @@ class TestElBundleNoSeLlevaDatosDeNadie(unittest.TestCase):
 
 
 class TestActualizarLaAppEmpaquetada(unittest.TestCase):
-    """Una app que lleva el código dentro no puede sustituirse a sí misma."""
-
-    def test_empaquetada_no_reescribe_nada(self):
-        """Escribir dentro del bundle invalida la firma —medido: 17 ficheros añadidos y
-        `codesign --verify` en rojo— y es imposible si la app está en /Applications."""
-        with mock.patch.object(rutas, "empaquetada", return_value=True), \
-             mock.patch.object(actualizacion, "comprobar", return_value={
-                 "version_actual": "1.0.0", "version_nueva": "v2.0.0", "hay_nueva": True,
-                 "url_app": "https://github.com/x/y/releases/download/v2/Radar.zip",
-                 "url_release": "https://github.com/x/y/releases/tag/v2", "error": None,
-             }):
-            r = actualizacion.aplicar()
-        self.assertFalse(r["ok"])
-        self.assertTrue(r["hay_que_descargar"])
-        self.assertIn("Radar.zip", r["url"])
-        self.assertIn("arrastrándola encima", r["mensaje"])
+    """Una app que lleva el código dentro no puede sustituirse a sí misma: se cambia
+    entera. Cómo se prepara esa app nueva se prueba en `test_actualizacion`."""
 
     def test_empaquetada_y_al_dia_no_molesta(self):
         with mock.patch.object(rutas, "empaquetada", return_value=True), \
+             mock.patch("radar.busqueda.en_marcha", return_value=None), \
              mock.patch.object(actualizacion, "comprobar", return_value={
                  "version_actual": "9.9.9", "hay_nueva": False, "error": None}):
             r = actualizacion.aplicar()
         self.assertTrue(r["ok"])
         self.assertTrue(r["sin_cambios"])
-
-    def test_sin_adjunto_se_ofrece_la_pagina_de_la_release(self):
-        """Si alguien publica una versión y se olvida de subir el .app, al menos se
-        lleva al usuario a la página en lugar de dejarlo sin salida."""
-        with mock.patch.object(rutas, "empaquetada", return_value=True), \
-             mock.patch.object(actualizacion, "comprobar", return_value={
-                 "version_actual": "1.0.0", "version_nueva": "v2.0.0", "hay_nueva": True,
-                 "url_app": None,
-                 "url_release": "https://github.com/x/y/releases/tag/v2", "error": None}):
-            r = actualizacion.aplicar()
-        self.assertEqual(r["url"], "https://github.com/x/y/releases/tag/v2")
 
     def test_el_adjunto_se_busca_por_nombre(self):
         """Una release puede llevar varios ficheros adjuntos."""
@@ -194,7 +170,8 @@ class TestActualizarLaAppEmpaquetada(unittest.TestCase):
         self.assertIsNone(actualizacion._app_publicada({}))
 
     def test_una_copia_de_trabajo_sigue_actualizandose_en_su_sitio(self):
-        """La otra mitad: quien trabaja con el repositorio no pierde el botón."""
+        """La otra mitad: quien trabaja con el repositorio sigue actualizándose
+        sustituyendo ficheros, sin necesitar el .app adjunto."""
         self.assertFalse(rutas.empaquetada())
         self.assertEqual(actualizacion.RAIZ, rutas.CODIGO)
 

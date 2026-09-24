@@ -751,8 +751,16 @@ function ocultarProgresoBusqueda() {
   $('busqueda-progreso').hidden = true;
 }
 
+// Devuelve una promesa que se cumple cuando la búsqueda termina, con la bandeja ya
+// recargada. La pantalla de arranque la espera; el botón no, que para eso tiene su
+// propio detalle debajo. Si ya había un vigilante, se devuelve su misma promesa: dos
+// intervalos sobre el mismo estado se pisarían el botón.
+let vigilancia = null;
+
 function vigilarBusqueda() {
-  if (vigilando) return;
+  if (vigilancia) return vigilancia;
+  let cumplir;
+  vigilancia = new Promise((r) => { cumplir = r; });
   const btn = $('buscar-ahora');
   seVioEnMarcha = false;
   ticsVigilando = 0;
@@ -767,6 +775,9 @@ function vigilarBusqueda() {
     if (d.en_marcha) {
       seVioEnMarcha = true;
       const det = d.detalle;
+      // La última línea del registro cuenta como señal de vida: al principio de una
+      // búsqueda la instantánea todavía no existe, pero el registro ya escribe.
+      senalDeVida('busqueda', huellaDetalle(det) + (d.progreso || []).slice(-1));
       btn.disabled = true;
       etiquetaBoton(det && det.etapas
         ? `Carga inicial (${det.etapa}/${det.etapas})`
@@ -808,27 +819,35 @@ function vigilarBusqueda() {
       await cargarResumen();
       await cargarLista();
     }
-    // Lo último, y después de recargar: la bandeja se destapa ya con lo que se acaba
-    // de traer, no con lo de ayer rellenándose a la vista.
-    cerrarArranque();
+    // Lo último, y después de recargar: quien espera la promesa destapa la bandeja ya
+    // con lo que se acaba de traer, no con lo de ayer rellenándose a la vista.
+    vigilancia = null;
+    cumplir();
   }, 1500);
+  return vigilancia;
 }
 
 // --- Pantalla de arranque --------------------------------------------------
 //
-// Al abrir la aplicación lo primero es traer lo publicado desde la última vez. Antes
-// esto no lo hacía nadie: el .app solo levantaba el servidor y enseñaba la bandeja con
-// los datos de la sesión anterior, así que había que acordarse de pulsar «Buscar
-// ahora». Ahora se lanza sola y lo que se ve mientras tanto es el progreso de verdad
-// —la misma frase que escribe la terminal—, no un «cargando» fijo.
+// Al abrir la aplicación se hacen dos cosas, en este orden, y ninguna se puede saltar:
 //
-// Tres decisiones evitan que esto se convierta en una puerta cerrada:
+//   1. Instalar la versión nueva del programa, si la hay. Primero, porque la búsqueda
+//      tiene que correr ya con el código nuevo, y porque instalar reinicia la
+//      aplicación: buscar antes sería buscar para nada.
+//   2. Traer lo publicado desde la última vez. Antes esto no lo hacía nadie y había que
+//      acordarse de pulsar «Buscar ahora».
+//
+// Lo que se ve mientras tanto es el progreso de verdad —la misma frase que escribe la
+// terminal—, no un «cargando» fijo.
+//
+// La única salida manual es para cuando algo se ha colgado, y solo aparece entonces:
+// ver `vigilarCuelgue()`. Hay además dos casos en los que no se espera, porque no son
+// saltarse nada:
 //   - la carga inicial (la de horas, con etapas) no se espera aquí: se entra y la
-//     narra el aviso de la cabecera;
-//   - si ya se buscó hace poco no se vuelve a buscar, que abrir y cerrar la ventana
-//     no debería costar un minuto cada vez;
-//   - y hay tope de tiempo y botón para entrar, porque una fuente colgada no puede
-//     dejar sin bandeja a quien solo quería mirar una ficha.
+//     narra el aviso de la cabecera, que dice «puedes trabajar mientras»;
+//   - si ya se buscó hace menos de diez minutos no se vuelve a buscar: la búsqueda ya
+//     está hecha, y abrir y cerrar la ventana no debería costar un minuto cada vez.
+//     La versión, en cambio, se comprueba siempre: es una sola pregunta a GitHub.
 
 let enArranque = true;
 
@@ -836,16 +855,60 @@ let enArranque = true;
 // minutos no justifica esperar otro minuto delante de una pantalla de espera.
 const MINUTOS_FRESCO = 10;
 
-// El tope, por reloj y no por número de tics del vigilante: si lo que falla es el
-// propio servidor, el vigilante se queda reintentando la petición sin contar nada y la
-// pantalla no se iría nunca. Una búsqueda normal tarda alrededor de un minuto; ocho es
-// ya señal de que algo va mal, y eso se mira mejor desde dentro de la aplicación.
-const TOPE_ARRANQUE_MS = 8 * 60 * 1000;
+// Cuánto sin ninguna señal de vida antes de ofrecer la salida. Tres minutos y no
+// menos: PLACSP se queda hasta dos minutos callado en cada intento de conexión antes
+// de reintentar, y eso es lentitud, no un cuelgue. Por encima de eso, lo que no
+// contesta no va a contestar.
+const SIN_SENALES_MS = 3 * 60 * 1000;
+
+let ultimaSenal = Date.now();
+let ultimaHuella = '';
 
 function cerrarArranque() {
   if (!enArranque) return;
   enArranque = false;
   $('arranque').hidden = true;
+}
+
+// Algo ha cambiado en lo que se está esperando: bytes, fase, fichas, versión. Se
+// compara la huella y no el hecho de haber contestado, porque un proceso atascado sigue
+// dejando su última instantánea en disco y el servidor la sirve igual de bien.
+function senalDeVida(quien, huella) {
+  const nueva = `${quien}|${huella}`;
+  if (nueva === ultimaHuella) return;
+  ultimaHuella = nueva;
+  ultimaSenal = Date.now();
+  $('arranque-colgado').hidden = true;
+}
+
+// Sin `segundos`, que cambia en cada instantánea aunque no se mueva nada más: con él,
+// una descarga clavada parecería viva para siempre.
+function huellaDetalle(det) {
+  if (!det) return '';
+  return [det.etapa, det.fuente, det.tarea, det.fase, det.bytes, det.paginas,
+          det.fichas, det.subtarea].join('·');
+}
+
+// Por reloj y no por los tics de ningún vigilante: si lo que falla es el propio
+// servidor, las peticiones fallan sin contar nada y esto tiene que seguir mirando.
+function vigilarCuelgue() {
+  const reloj = setInterval(() => {
+    if (!enArranque) {
+      clearInterval(reloj);
+      return;
+    }
+    const callado = Date.now() - ultimaSenal;
+    if (callado < SIN_SENALES_MS) return;
+    $('arranque-colgado-txt').textContent =
+      `Lleva ${fmtDuracion(callado / 1000)} sin dar señales de vida: parece que se ha ` +
+      'quedado colgado. Puedes entrar con lo que ya hay; se volverá a intentar la ' +
+      'próxima vez que abras la aplicación.';
+    $('arranque-colgado').hidden = false;
+  }, 5000);
+}
+
+function pasoArranque(texto) {
+  $('arranque-paso').textContent = texto;
 }
 
 function pintarArranque(det) {
@@ -862,36 +925,244 @@ function buscadoHaceMenosDe(iso, minutos) {
   return (Date.now() - cuando.getTime()) < minutos * 60 * 1000;
 }
 
-async function arrancar() {
-  // Se arma antes de nada y no se desarma: `cerrarArranque()` no hace nada si ya se
-  // entró, y así ningún camino —ni el que falla— puede dejar la pantalla puesta.
-  setTimeout(cerrarArranque, TOPE_ARRANQUE_MS);
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  let d;
+async function pedirJSON(url, opciones) {
+  return (await fetch(url, opciones)).json();
+}
+
+async function estadoBusqueda() {
   try {
-    d = await (await fetch('/api/busqueda-estado')).json();
+    return await pedirJSON('/api/busqueda-estado');
   } catch {
-    // Sin servidor no hay nada que esperar; que lo cuente la bandeja vacía.
-    cerrarArranque();
-    return;
+    return null;
   }
+}
+
+// --- Paso 1: la versión ------------------------------------------------------
+
+// Las fases que no son descarga no tienen frase propia en `progreso._frase()`, que
+// está pensado para las fuentes de datos. Para estas cuatro se dice aquí.
+const FRASES_ACTUALIZACION = {
+  comprobando: 'Preguntando a GitHub cuál es la última versión publicada.',
+  verificando: 'Comprobando que lo descargado es lo que se ha publicado.',
+  descomprimiendo: 'Descomprimiendo la aplicación nueva.',
+  sustituyendo: 'Poniendo el programa nuevo en su sitio. Lo anterior se guarda al lado.',
+};
+
+function pintarInstalacion(det) {
+  const propia = det && FRASES_ACTUALIZACION[det.fase];
+  if (propia) {
+    $('arranque-frase').textContent = propia;
+    barraProgreso($('arranque-barra'), null);
+  } else {
+    pintarArranque(det);
+    if (!det) $('arranque-frase').textContent = 'Preparando la instalación…';
+  }
+}
+
+// El motivo va en la cabecera y no en un diálogo: no hay nada que decidir, solo que
+// saber por qué se sigue en la versión de antes.
+function avisarVersionNoInstalada(version, mensaje) {
+  const caja = $('aviso-version');
+  caja.hidden = false;
+  caja.innerHTML = '<p><strong></strong> <span class="pista"></span></p>';
+  caja.querySelector('strong').textContent =
+    `No se ha podido instalar la versión ${version}.`;
+  caja.querySelector('.pista').textContent =
+    (mensaje || 'No ha dicho por qué.') +
+    ' Se volverá a intentar la próxima vez que abras la aplicación.';
+}
+
+// Devuelve true si la aplicación se está reiniciando con la versión nueva: entonces no
+// hay que seguir con nada más, esta página está a punto de desaparecer.
+async function instalarVersionNueva() {
+  pasoArranque('Paso 1 de 2 · versión del programa');
+  $('arranque-titulo').textContent = 'Comprobando si hay una versión nueva';
+  pintarInstalacion({ fase: 'comprobando' });
+
+  let info;
+  try {
+    info = await pedirJSON('/api/actualizacion');
+  } catch {
+    return false;  // sin servidor no hay nada que instalar; lo dirá la bandeja
+  }
+  // Sin red o sin releases no se puede instalar nada. No es saltarse el paso: es que
+  // no ha habido respuesta, y quedarse aquí esperándola no la va a traer.
+  if (!info.hay_nueva) return false;
+
+  const version = info.version_nueva;
+  versionAnterior = info.version_actual;
+  const tienes = `Tienes la ${info.version_actual}.`;
+  $('arranque-titulo').textContent = `Instalando la versión ${version}`;
+  $('arranque-tiempo').textContent = tienes;
+  let lanzada;
+  try {
+    lanzada = await pedirJSON('/api/actualizacion', { method: 'POST' });
+  } catch {
+    lanzada = { ok: false, mensaje: 'No se ha podido hablar con el radar.' };
+  }
+  if (!lanzada.ok) {
+    avisarVersionNoInstalada(version, lanzada.mensaje);
+    return false;
+  }
+
+  let resultado = null;
+  while (enArranque) {
+    await dormir(1000);
+    let e;
+    try {
+      e = await pedirJSON('/api/actualizacion/estado');
+    } catch {
+      continue;  // un tic sin contestar no es un cuelgue; muchos seguidos, sí
+    }
+    senalDeVida('version', `${e.en_marcha}|${huellaDetalle(e.detalle)}`);
+    if (e.en_marcha) {
+      pintarInstalacion(e.detalle);
+      if (!$('arranque-tiempo').textContent) $('arranque-tiempo').textContent = tienes;
+      continue;
+    }
+    resultado = e.resultado;
+    break;
+  }
+  if (!enArranque) return false;
+
+  // `sin_cambios` es que otra ventana la instaló mientras tanto: no hay nada que
+  // avisar, y el reinicio ya lo hará quien la instaló.
+  if (!resultado || !resultado.ok || resultado.sin_cambios) {
+    if (!resultado || !resultado.sin_cambios) {
+      avisarVersionNoInstalada(version, resultado && resultado.mensaje);
+    }
+    return false;
+  }
+
+  $('arranque-titulo').textContent = `Reiniciando con la versión ${version}`;
+  $('arranque-frase').textContent =
+    'Instalada. La aplicación se vuelve a abrir sola; tu base de datos, tu triaje y ' +
+    'tus términos de búsqueda no se han tocado.';
+  barraProgreso($('arranque-barra'), null);
+  $('arranque-tiempo').textContent = '';
+  return reiniciarConVersion(version, resultado.app_nueva);
+}
+
+// El puente con la ventana de macOS, si la hay. En el navegador no existe.
+function ventanaNativa() {
+  return window.webkit && window.webkit.messageHandlers &&
+    window.webkit.messageHandlers.radar;
+}
+
+async function reiniciarConVersion(version, appNueva) {
+  const nativa = ventanaNativa();
+  if (appNueva) {
+    // La app empaquetada: el cambio de un bundle por otro solo lo puede hacer la
+    // ventana, cerrándose. Si no hay ventana —no debería pasar: esa copia no tiene
+    // start.command— se dice y se sigue.
+    if (nativa) {
+      nativa.postMessage({ accion: 'instalar-app', ruta: appNueva, version });
+      return true;
+    }
+    avisarVersionNoInstalada(version,
+      `Está descargada en ${appNueva}, pero solo la aplicación de macOS puede ponerla ` +
+      'en su sitio.');
+    return false;
+  }
+  if (nativa) {
+    // Copia de trabajo dentro de la ventana: ella rehace el .app con el código nuevo y
+    // se vuelve a abrir. Si no puede rehacerse, llama a `reiniciarServidorYRecargar()`.
+    nativa.postMessage({ accion: 'reiniciar', version });
+    return true;
+  }
+  await reiniciarServidorYRecargar();
+  return true;
+}
+
+// La versión que ejecutaba el servidor antes de instalar. Es con lo que se sabe que el
+// reinicio ha terminado: cuando el servidor deja de decir esta.
+let versionAnterior = null;
+
+// Reinicia el proceso de Python (mismo PID, código nuevo) y recarga esta página cuando
+// el servidor ya es otro. Es el camino del navegador, y el de reserva de la ventana de
+// macOS cuando no consigue rehacerse.
+//
+// Se espera a que deje de ser la versión vieja, no a que sea la nueva: la etiqueta
+// puede llevar «v» delante o no, y una versión futura podría no tener siquiera este
+// endpoint —un 404 también dice que ya no es el servidor de antes—.
+async function reiniciarServidorYRecargar() {
+  try {
+    await fetch('/api/reiniciar', { method: 'POST' });
+  } catch { /* si ya se está reiniciando, no contesta: es lo esperado */ }
+  for (;;) {
+    await dormir(1000);
+    let r;
+    try {
+      r = await fetch('/api/actualizacion/estado');
+    } catch {
+      continue;  // todavía arrancando
+    }
+    if (r.status === 404) break;
+    let e;
+    try {
+      e = await r.json();
+    } catch {
+      continue;
+    }
+    if (e.version !== versionAnterior) break;
+  }
+  location.reload();
+}
+window.reiniciarServidorYRecargar = reiniciarServidorYRecargar;
+
+// --- Paso 2: las licitaciones ------------------------------------------------
+
+async function buscarLoNuevo() {
+  pasoArranque('Paso 2 de 2 · licitaciones nuevas');
+  $('arranque-tiempo').textContent = '';
+  let d = await estadoBusqueda();
+  if (!d) return;  // sin servidor no hay nada que esperar; que lo cuente la bandeja
+
+  if (d.en_marcha && d.detalle && d.detalle.etapas) return;  // la carga inicial
 
   // Ya hay una corriendo: la tarea programada de la mañana, un `start.command`, u otra
   // ventana. Se espera a esa en lugar de pedir otra, que el cerrojo rechazaría.
   if (d.en_marcha) {
     $('arranque-titulo').textContent = 'Terminando la búsqueda que ya estaba en marcha';
-    vigilarBusqueda();
+    await vigilarBusqueda();
     return;
   }
-
-  if (buscadoHaceMenosDe(d.ultima_busqueda, MINUTOS_FRESCO)) {
-    cerrarArranque();
-    return;
-  }
+  if (buscadoHaceMenosDe(d.ultima_busqueda, MINUTOS_FRESCO)) return;
 
   $('arranque-titulo').textContent = 'Buscando licitaciones nuevas';
   pintarArranque(null);
-  if (!await lanzarBusqueda()) cerrarArranque();
+  if (await lanzarBusqueda()) await vigilarBusqueda();
+}
+
+async function arrancar() {
+  vigilarCuelgue();
+
+  // Una búsqueda que ya venía corriendo se deja terminar antes de instalar: el
+  // actualizador se niega a cambiar el código por debajo de una ingesta, y con razón.
+  // La carga inicial no, que son horas: esa se engancha directamente y la versión
+  // nueva se instalará la próxima vez.
+  const d = await estadoBusqueda();
+  if (!d) {
+    cerrarArranque();
+    return;
+  }
+  const cargaInicial = d.en_marcha && d.detalle && d.detalle.etapas;
+  if (cargaInicial) {
+    vigilarBusqueda();
+    cerrarArranque();
+    return;
+  }
+  if (d.en_marcha) {
+    pasoArranque('Antes de nada');
+    $('arranque-titulo').textContent = 'Terminando la búsqueda que ya estaba en marcha';
+    await vigilarBusqueda();
+  }
+
+  if (enArranque && await instalarVersionNueva()) return;
+  if (enArranque) await buscarLoNuevo();
+  cerrarArranque();
 }
 
 // --- Vencimientos ----------------------------------------------------------
@@ -1479,49 +1750,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') cerrarCajon();
 });
 
-// --- Versión nueva ---------------------------------------------------------
-
-// Solo se abre la boca si hay algo que hacer. Si no hay red, o el repositorio no tiene
-// releases, se calla: un cartel de error permanente sobre algo que al usuario no le toca
-// arreglar es peor que no decir nada.
-async function comprobarVersion() {
-  let d;
-  try {
-    d = await (await fetch('/api/actualizacion')).json();
-  } catch {
-    return;
-  }
-  if (!d.hay_nueva) return;
-
-  const caja = $('aviso-version');
-  caja.hidden = false;
-  caja.innerHTML =
-    `<p><strong>Hay una versión nueva (${d.version_nueva}).</strong> ` +
-    `Tienes la ${d.version_actual}. ` +
-    `<button id="actualizar-ya" class="boton-pri">Actualizar ahora</button> ` +
-    `<span id="actualizar-estado" class="pista"></span></p>`;
-
-  $('actualizar-ya').addEventListener('click', async () => {
-    const btn = $('actualizar-ya');
-    const estado = $('actualizar-estado');
-    btn.disabled = true;
-    estado.textContent = 'descargando y sustituyendo…';
-    let r;
-    try {
-      r = await (await fetch('/api/actualizacion', { method: 'POST' })).json();
-    } catch (e) {
-      estado.textContent = 'no se ha podido completar; el programa sigue como estaba';
-      btn.disabled = false;
-      return;
-    }
-    // El mensaje lo redacta Python, que es quien sabe qué ha pasado de verdad y qué se
-    // ha tocado. Aquí no se reinterpreta.
-    estado.textContent = r.mensaje || '';
-    if (r.ok && !r.sin_cambios) btn.remove();
-    else btn.disabled = false;
-  });
-}
-
 try {
   const guardado = localStorage.getItem(ORDEN_BANDEJA);
   if (guardado && [...$('orden').options].some((o) => o.value === guardado)) {
@@ -1533,11 +1761,11 @@ try {
 // base, para que al destaparla no haya que esperar a nada más.
 cargarResumen();
 cargarLista();
-// Y `arrancar()` decide qué pasa delante: buscar lo nuevo y esperarlo, engancharse a
-// la carga que ya venía de antes —start.command lanza las etapas caras en segundo
-// plano y abre la aplicación acto seguido— o entrar directamente.
+// Y `arrancar()` decide qué pasa delante: instalar la versión nueva si la hay, y
+// después buscar lo nuevo y esperarlo, engancharse a la carga que ya venía de antes
+// —start.command lanza las etapas caras en segundo plano y abre la aplicación acto
+// seguido— o entrar directamente.
 arrancar();
-comprobarVersion();
 
 // --- Analítica -------------------------------------------------------------
 //

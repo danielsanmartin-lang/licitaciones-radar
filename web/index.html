@@ -65,25 +65,31 @@
       <symbol id="ico-punto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></symbol>
     </defs>
   </svg>
-  <!-- Pantalla de arranque. Tapa la aplicación entera mientras se traen las
-       licitaciones publicadas desde la última vez, que es lo primero que se hace al
-       abrir. Antes salía la bandeja con los datos de ayer y había que acordarse de
-       pulsar «Buscar ahora» para ponerla al día.
+  <!-- Pantalla de arranque. Tapa la aplicación entera mientras se hacen las dos cosas
+       que tocan al abrir, en este orden: instalar la versión nueva del programa si la
+       hay, y traer las licitaciones publicadas desde la última vez.
 
        Va SIN `hidden` a propósito: si se pintara la bandeja y el JavaScript la tapara
-       después, se vería el parpadeo. La quita `cerrarArranque()`, que es también la
-       única salida si algo va mal, así que se llama desde todos los finales posibles
-       —búsqueda terminada, fallo, carga inicial en marcha y tope de tiempo—.
+       después, se vería el parpadeo. La quita `cerrarArranque()`, que se llama desde
+       todos los finales posibles —búsqueda terminada, fallo, carga inicial en marcha—.
+
+       No se puede saltar. `#arranque-colgado` es la única salida manual y nace oculto:
+       solo aparece cuando lo que se está esperando deja de dar señales de vida (ver
+       `vigilarCuelgue()` en app.js). Mientras avance, se espera.
 
        No hay barra de etapas como en `#carga`: una búsqueda normal no las tiene, y la
        carga inicial (la de horas) ni siquiera espera aquí. -->
   <div id="arranque" class="arranque" role="status" aria-live="polite">
     <div class="arranque-caja">
+      <p id="arranque-paso" class="arranque-paso"></p>
       <h2 id="arranque-titulo">Abriendo el radar…</h2>
       <p id="arranque-frase" class="arranque-frase"></p>
       <progress id="arranque-barra" max="100"></progress>
       <p id="arranque-tiempo" class="pista"></p>
-      <button id="arranque-entrar" class="boton-sec">Ver la bandeja sin esperar</button>
+      <div id="arranque-colgado" class="arranque-colgado" hidden>
+        <p id="arranque-colgado-txt" class="pista"></p>
+        <button id="arranque-entrar" class="boton-sec">Entrar sin esperar</button>
+      </div>
     </div>
   </div>
 
@@ -126,8 +132,10 @@
 
   <div id="avisos" class="avisos" hidden></div>
 
-  <!-- Aviso de versión nueva. Va en su propio hueco y no en #avisos porque ese lo
-       reescribe entero cada refresco de los contadores, y se lo llevaría por delante. -->
+  <!-- Aviso de que la versión nueva NO se ha podido instalar al abrir. Ya no lleva
+       botón: la instalación la hace sola la pantalla de arranque, y si falla se vuelve
+       a intentar la próxima vez que se abra. Va en su propio hueco y no en #avisos
+       porque ese lo reescribe entero cada refresco de los contadores. -->
   <div id="aviso-version" class="avisos" hidden></div>
 
   <!-- Qué cubre y qué no. Plegado de fábrica: es contexto permanente, no una alarma, y

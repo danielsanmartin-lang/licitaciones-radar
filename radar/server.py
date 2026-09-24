@@ -223,6 +223,14 @@ class Manejador(BaseHTTPRequestHandler):
 
             self._json(actualizacion.comprobar())
 
+        elif partes.path == "/api/actualizacion/estado":
+            # No sale a internet: lee el progreso que va dejando en disco la instalación
+            # y dice qué versión ejecuta este servidor. Lo pregunta la pantalla de
+            # arranque cada segundo, así que tiene que ser barato.
+            from . import actualizacion
+
+            self._json(actualizacion.estado())
+
         elif partes.path.startswith("/api/licitacion/"):
             try:
                 lic_id = int(partes.path.rsplit("/", 1)[-1])
@@ -291,10 +299,22 @@ class Manejador(BaseHTTPRequestHandler):
         if partes.path == "/api/actualizacion":
             # Se ejecuta la CLI en un proceso aparte, no `aplicar()` aquí dentro: quien
             # sustituye el código no puede ser el proceso que está ejecutando ese código.
-            # Es el mismo razonamiento que hace que la búsqueda se lance por CLI.
+            # Es el mismo razonamiento que hace que la búsqueda se lance por CLI. Y no se
+            # espera a que termine: la pantalla de arranque va preguntando por
+            # /api/actualizacion/estado para poder contar cómo va.
             from . import actualizacion
 
-            self._json(actualizacion.aplicar_en_subproceso())
+            self._json(actualizacion.lanzar())
+            return
+
+        if partes.path == "/api/reiniciar":
+            # Tras instalar una versión nueva en la copia de trabajo, este proceso sigue
+            # teniendo la vieja en memoria. Se contesta primero y se reinicia después,
+            # desde otro hilo, para que la respuesta llegue a salir.
+            from . import actualizacion
+
+            self._json({"ok": True})
+            threading.Thread(target=actualizacion.reiniciar_servidor, daemon=True).start()
             return
 
         if partes.path == "/api/revision":

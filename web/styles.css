@@ -471,9 +471,24 @@ button.kpi.activo .t { color: var(--acento); }
   accent-color: var(--acento);
 }
 .arranque progress:not([value]) { opacity: .7; }
-/* Discreto a propósito: es la puerta de atrás para quien no quiera esperar, no la
-   acción principal. La principal es esperar, que dura un minuto. */
-.arranque-caja .boton-sec { margin-top: var(--e-2); }
+/* «Paso 1 de 2»: instalar la versión y buscar son dos esperas seguidas, y sin esto la
+   segunda parece que la primera ha vuelto a empezar. */
+.arranque-paso {
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+  letter-spacing: 0.02em;
+  min-height: 1.2em;
+}
+/* La salida para cuando algo se ha colgado. Solo existe entonces, así que no hace falta
+   esconderla con un estilo discreto: si se ve, es porque hace falta. */
+.arranque-colgado {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-2);
+  margin-top: var(--e-2);
+}
+.arranque-colgado[hidden] { display: none; }
 
 /* --- Pestañas -------------------------------------------------------------- */
 
