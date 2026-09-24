@@ -1,8 +1,20 @@
 """Traer una versión nueva del código sin salir de la aplicación.
 
 Hoy una versión nueva se distribuye mandando un zip por correo, y no hay manera de
-saber qué versión tiene cada compañero ni de pedirle que actualice. Esto lo convierte
-en un botón.
+saber qué versión tiene cada compañero ni de pedirle que actualice. Esto hace que no haga
+falta pedírselo: la pantalla de arranque pregunta a GitHub cada vez que se abre la
+aplicación y, si hay algo más nuevo, lo instala y se vuelve a abrir sola, antes de
+buscar licitaciones. No hay botón de «más tarde» —una versión que nadie instala es una
+versión que no existe—; lo único que deja pasar sin ella es que no haya respuesta.
+
+Hay dos maneras de instalar, según dónde esté el código:
+
+- **Copia de trabajo** (la carpeta del repositorio): se sustituyen los ficheros de
+  `REEMPLAZABLES` y se reinicia el servidor.
+- **App empaquetada** (el `.app` que lleva el programa dentro): no hay ficheros que
+  sustituir, así que se baja el `.app` adjunto a la release, se comprueba y se deja
+  preparado en `data/actualizacion/`. El cambio de un bundle por otro lo hace la ventana
+  de macOS después de cerrarse, porque un programa no puede reemplazarse mientras corre.
 
 Es más sencillo aquí que en un proyecto normal por dos razones. Una: el proyecto no
 tiene ni una dependencia externa —todo es biblioteca estándar—, así que actualizar es
@@ -31,14 +43,18 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import plistlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
-from . import net, rutas
+from . import net, progreso, rutas
 from . import __version__
 
 RAIZ = rutas.CODIGO
@@ -77,6 +93,27 @@ REEMPLAZABLES = (
 # mundo, incluido quien nunca ha usado la app.
 IMPRESCINDIBLES = ("radar", "web", "radar.py")
 
+# La instalación corre en un proceso aparte (ver `lanzar()`), así que lo que cuenta la
+# pantalla de arranque tiene que pasar por disco, igual que el progreso de la ingesta.
+# Ficheros propios y no los de la búsqueda: las dos cosas pueden coincidir en el tiempo
+# y no deben pisarse la barra.
+CERROJO = rutas.DIR_DATOS / "actualizacion.lock"
+REGISTRO = rutas.DIR_DATOS / "actualizacion.log"
+PROGRESO = rutas.DIR_DATOS / "actualizacion-progreso.json"
+
+# Donde se deja preparada la app nueva de la copia empaquetada. Fuera del bundle, por
+# supuesto: es la carpeta de datos, en `~/Library/Application Support`.
+DIR_APP = rutas.DIR_DATOS / "actualizacion"
+# Lo escribe el script que cambia un bundle por otro si no lo consigue (típicamente, la
+# app está en /Applications y el usuario no es administrador). Sin él, la app vieja se
+# reabriría, volvería a ver la versión nueva, volvería a intentarlo y así en bucle.
+FALLO_APP = DIR_APP / "fallo.txt"
+HORAS_TRAS_UN_FALLO = 24
+
+# El de `herramientas/construir_app.py`. Un `.app` con otro identificador no es nuestro,
+# venga de donde venga.
+IDENTIFICADOR_APP = "app.zepo.licitaciones-radar"
+
 log = logging.getLogger(__name__)
 
 
@@ -104,9 +141,12 @@ def _sha256(ruta: Path) -> str:
 def _sha_publicado(notas: str) -> str | None:
     """Busca un SHA-256 en las notas de la release.
 
-    Es opcional a propósito: una release sin él se instala igual, porque HTTPS contra el
-    repositorio correcto ya es la defensa principal. Cuando está, se comprueba, y así
-    una descarga corrompida a medio camino no llega a sustituir nada.
+    Solo se aplica al `.app` adjunto, y solo si GitHub no da su `digest`: es la suma que
+    imprime `construir_app.py --zip` y que se pega en las notas. Al zipball de la copia de
+    trabajo no, aunque al principio se hacía: ese zip lo genera GitHub al vuelo desde el
+    tag y su suma puede cambiar sin que cambie el código, y además el único SHA que llevan
+    las notas es el del `.app`. Comparar uno con otro bloqueaba la instalación de la
+    v1.5.0 en toda copia de trabajo. Ahí la defensa es HTTPS contra este repositorio.
     """
     for palabra in (notas or "").replace("`", " ").split():
         limpia = palabra.strip().lower()
@@ -130,6 +170,9 @@ def comprobar(timeout: int = 15) -> dict:
         # Para la app empaquetada: de dónde se baja el .app nuevo, y la página de la
         # release como recurso si la release no trae el adjunto.
         "url_app": None,
+        # El SHA-256 que calcula GitHub del adjunto al subirlo (`digest`). Es el que se
+        # exige a la app descargada.
+        "sha_app": None,
         "url_release": None,
         "empaquetada": rutas.empaquetada(),
         "error": None,
@@ -157,6 +200,7 @@ def comprobar(timeout: int = 15) -> dict:
     respuesta["notas"] = datos.get("body") or ""
     respuesta["url_zip"] = datos.get("zipball_url")
     respuesta["url_app"] = _app_publicada(datos)
+    respuesta["sha_app"] = _sha_del_adjunto(datos)
     respuesta["url_release"] = datos.get("html_url")
     respuesta["hay_nueva"] = _tupla(datos["tag_name"]) > _tupla(__version__)
     return respuesta
@@ -173,6 +217,17 @@ def _app_publicada(datos: dict) -> str | None:
         nombre = (adjunto.get("name") or "").lower()
         if nombre.endswith(".zip") and "radar" in nombre:
             return adjunto.get("browser_download_url")
+    return None
+
+
+def _sha_del_adjunto(datos: dict) -> str | None:
+    """El `digest` que publica GitHub del adjunto de la app: «sha256:…»."""
+    for adjunto in datos.get("assets") or []:
+        if adjunto.get("browser_download_url") != _app_publicada(datos):
+            continue
+        digest = (adjunto.get("digest") or "").lower()
+        if digest.startswith("sha256:"):
+            return digest.split(":", 1)[1] or None
     return None
 
 
@@ -204,43 +259,157 @@ def _borrar(ruta: Path) -> None:
         ruta.unlink(missing_ok=True)
 
 
+def _fallo_reciente(version: str) -> str | None:
+    """El motivo por el que no se pudo cambiar la app por la `version`, si fue hace poco.
+
+    Lo deja escrito el script de la ventana de macOS: primera línea, la versión; el resto,
+    lo que dijo `mv`. Pasado un día se vuelve a intentar, por si alguien ha arreglado los
+    permisos o ha movido la app.
+    """
+    try:
+        texto = FALLO_APP.read_text(encoding="utf-8")
+        edad = time.time() - FALLO_APP.stat().st_mtime
+    except OSError:
+        return None
+    primera, _, resto = texto.partition("\n")
+    if _tupla(primera) != _tupla(version) or edad > HORAS_TRAS_UN_FALLO * 3600:
+        return None
+    return (
+        f"La última vez no se pudo cambiar la aplicación por la {version}: "
+        f"{resto.strip() or 'sin detalle'}.\n\nSuele ser porque la app está en una "
+        "carpeta en la que tu usuario no puede escribir, como Aplicaciones sin ser "
+        "administrador. Se volverá a intentar mañana; mientras tanto puedes bajarla de "
+        "la página de la release y arrastrarla encima de la vieja."
+    )
+
+
+def _descomprimir_app(zip_app: Path, destino: Path) -> None:
+    """Con `ditto`, que es con lo que se comprimió.
+
+    `zipfile` no sirve aquí: pierde el bit de ejecución del binario y los enlaces
+    simbólicos, y lo que saldría sería un `.app` que no abre.
+    """
+    subprocess.run(["ditto", "-x", "-k", str(zip_app), str(destino)],
+                   check=True, capture_output=True, timeout=300)
+
+
+def _app_del_arbol(destino: Path) -> Path | None:
+    apps = [h for h in destino.iterdir() if h.suffix == ".app" and h.is_dir()]
+    return apps[0] if len(apps) == 1 else None
+
+
+def _problema_de_la_app(app: Path | None, version: str) -> str | None:
+    """Por qué NO hay que instalar esta app, o None si es la que se esperaba."""
+    if app is None:
+        return "El zip adjunto no trae una aplicación dentro. No se toca nada."
+    try:
+        plist = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return "La aplicación descargada no trae un Info.plist legible. No se toca nada."
+    if plist.get("CFBundleIdentifier") != IDENTIFICADOR_APP:
+        return ("La aplicación descargada no es el Radar de Licitaciones "
+                f"({plist.get('CFBundleIdentifier')}). No se toca nada.")
+    dice = str(plist.get("CFBundleShortVersionString") or "")
+    if _tupla(dice) != _tupla(version):
+        return (f"La release dice {version} pero la aplicación que trae dice {dice}. "
+                "No se toca nada.")
+    for rel in ("Contents/MacOS/radar", "Contents/Resources/radar.py",
+                "Contents/Resources/radar", "Contents/Resources/web"):
+        if not (app / rel).exists():
+            return f"A la aplicación descargada le falta {rel}. No se toca nada."
+    return None
+
+
+def _preparar_app(info: dict, timeout: int) -> dict:
+    """Baja el `.app` de la release, lo comprueba y lo deja listo para el cambio.
+
+    No lo pone en su sitio: eso lo hace la ventana de macOS cuando se cierra (ver
+    `instalarAppNueva()` en `macos/Radar.swift`). Devuelve en `app_nueva` dónde está.
+    """
+    version = info["version_nueva"]
+    fallo = _fallo_reciente(version)
+    if fallo:
+        return {"ok": False, "mensaje": fallo, "url": info.get("url_release")}
+    if not info.get("url_app"):
+        return {"ok": False, "url": info.get("url_release"), "mensaje": (
+            f"La release {version} no trae adjunta la aplicación de macOS, así que esta "
+            "copia no se puede actualizar sola. Descárgala de la página de la release y "
+            "arrástrala encima de la vieja."
+        )}
+
+    preparada = DIR_APP / "nueva"
+    _borrar(preparada)
+    DIR_APP.mkdir(parents=True, exist_ok=True)
+    zip_app = DIR_APP / "nueva.zip"
+    try:
+        log.info("Descargando la aplicación %s...", version)
+        net.descargar_a_fichero(info["url_app"], zip_app, timeout=timeout, intentos=2)
+
+        progreso.fase("verificando")
+        esperado = info.get("sha_app") or _sha_publicado(info.get("notas") or "")
+        if esperado:
+            real = _sha256(zip_app)
+            if real != esperado:
+                return {"ok": False, "mensaje": (
+                    "La aplicación descargada no coincide con el SHA-256 publicado. No "
+                    f"se ha tocado nada.\n  esperado: {esperado}\n  descargado: {real}"
+                )}
+        if not zipfile.is_zipfile(zip_app):
+            return {"ok": False, "mensaje": "Lo descargado no es un ZIP. No se toca nada."}
+
+        progreso.fase("descomprimiendo")
+        preparada.mkdir(parents=True)
+        _descomprimir_app(zip_app, preparada)
+        app = _app_del_arbol(preparada)
+        problema = _problema_de_la_app(app, version)
+        if problema:
+            _borrar(preparada)
+            return {"ok": False, "mensaje": problema}
+
+        log.info("Aplicación %s preparada en %s", version, app)
+        return {
+            "ok": True,
+            "version_nueva": version,
+            "app_nueva": str(app),
+            "mensaje": (
+                f"La versión {version} está descargada y comprobada. La aplicación se "
+                "cierra, se cambia por la nueva y se vuelve a abrir sola. Tu base de "
+                "datos, tu triaje y tus términos de búsqueda no se tocan."
+            ),
+        }
+    except net.ErrorRed as exc:
+        return {"ok": False, "mensaje": f"No se ha podido descargar: {exc}"}
+    except subprocess.CalledProcessError as exc:
+        _borrar(preparada)
+        detalle = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        return {"ok": False, "mensaje": f"No se ha podido descomprimir la app: {detalle}"}
+    except (OSError, subprocess.SubprocessError, zipfile.BadZipFile) as exc:
+        _borrar(preparada)
+        return {"ok": False, "mensaje": f"Falló la actualización: {exc}. No se toca nada."}
+    finally:
+        zip_app.unlink(missing_ok=True)
+
+
 def aplicar(timeout: int = 600) -> dict:
-    """Descarga la última release y sustituye el código. Devuelve qué ha pasado.
+    """Descarga la última release y la instala. Devuelve qué ha pasado.
 
     El orden importa: se descarga y se verifica TODO en un temporal, y solo cuando está
     comprobado se mueve a su sitio. Descomprimir encima de la carpeta viva dejaría, si
     algo falla a mitad, una instalación mezclada, que es bastante peor que una versión
     vieja. Y lo que se sustituye se guarda como «.anterior» para poder volver atrás.
+
+    Va contando por dónde va con `progreso`, que es lo que pinta la pantalla de arranque
+    mientras tanto: la descarga la narra `net` sola, y aquí se marcan las fases que no
+    son descarga.
     """
     from . import busqueda
 
-    if rutas.empaquetada():
-        # Sustituir ficheros aquí sería escribir DENTRO del .app, y eso invalida la
-        # firma y no se puede hacer si la app está en /Applications, que no es del
-        # usuario. Un programa tampoco puede reemplazarse a sí mismo mientras corre.
-        # En Mac esto se resuelve como siempre: se baja la versión nueva y se arrastra
-        # encima. Aquí solo se dice, con la URL a mano.
-        info = comprobar()
-        if info.get("error"):
-            return {"ok": False, "mensaje": info["error"]}
-        if not info["hay_nueva"]:
-            return {"ok": True, "sin_cambios": True, "mensaje":
-                    f"Ya tienes la última versión ({info['version_actual']})."}
-        destino = info.get("url_app") or info.get("url_release")
-        return {
-            "ok": False,
-            "hay_que_descargar": True,
-            "url": destino,
-            "version_nueva": info["version_nueva"],
-            "mensaje": (
-                f"Hay publicada la versión {info['version_nueva']}. Esta copia lleva el "
-                "programa dentro de la aplicación, así que se actualiza descargando la "
-                "nueva y arrastrándola encima de la vieja, como cualquier programa de "
-                "Mac.\n\nTu base de datos, tu triaje y tus términos de búsqueda están "
-                "fuera de la aplicación y no se tocan."
-            ),
-        }
+    progreso.fuente("actualizacion", "la versión nueva")
+    progreso.fase("comprobando")
 
+    # Antes de nada y en las dos maneras de instalar: cambiar el código —o el bundle
+    # entero— por debajo de una carga que dura horas es pedir que la mitad de la ingesta
+    # corra con una versión y la otra mitad con otra.
     activa = busqueda.en_marcha()
     if activa:
         return {"ok": False, "mensaje": (
@@ -255,6 +424,14 @@ def aplicar(timeout: int = 600) -> dict:
     if not info["hay_nueva"]:
         return {"ok": True, "sin_cambios": True, "mensaje":
                 f"Ya tienes la última versión ({info['version_actual']})."}
+    progreso.fuente("actualizacion", f"la versión {info['version_nueva']}")
+
+    if rutas.empaquetada():
+        # Sustituir ficheros aquí sería escribir DENTRO del .app, y eso invalida la
+        # firma y no se puede hacer si la app está en /Applications, que no es del
+        # usuario. Así que se prepara la app entera y la cambia la ventana al cerrarse.
+        return _preparar_app(info, timeout)
+
     if not info["url_zip"]:
         return {"ok": False, "mensaje": "La release no trae fichero que descargar."}
 
@@ -262,21 +439,12 @@ def aplicar(timeout: int = 600) -> dict:
     try:
         zip_nuevo = temporal / "nueva.zip"
         log.info("Descargando la versión %s...", info["version_nueva"])
-        # Dos intentos y no los cuatro por defecto: `aplicar_en_subproceso` mata este
-        # proceso a los 900 s, y con cuatro pasadas de 600 s de timeout el peor caso se
-        # come el plazo y muere a mitad. Un zipball de unos pocos MB no necesita más.
+        # Dos intentos y no los cuatro por defecto: con cuatro pasadas de 600 s de
+        # timeout, el peor caso tiene la pantalla de arranque parada cuarenta minutos
+        # por un zipball de unos pocos MB.
         net.descargar_a_fichero(info["url_zip"], zip_nuevo, timeout=timeout, intentos=2)
 
-        esperado = _sha_publicado(info["notas"])
-        if esperado:
-            real = _sha256(zip_nuevo)
-            if real != esperado:
-                return {"ok": False, "mensaje": (
-                    "El fichero descargado no coincide con el SHA-256 publicado en la "
-                    f"release. No se ha tocado nada.\n  esperado: {esperado}\n  "
-                    f"descargado: {real}"
-                )}
-
+        progreso.fase("verificando")
         if not zipfile.is_zipfile(zip_nuevo):
             return {"ok": False, "mensaje": "Lo descargado no es un ZIP. No se toca nada."}
         destino = temporal / "nuevo"
@@ -296,6 +464,7 @@ def aplicar(timeout: int = 600) -> dict:
                 f"que trae dice {version_real}. No se toca nada."
             )}
 
+        progreso.fase("sustituyendo")
         cambiados, hechos = [], []
         try:
             for rel in REEMPLAZABLES:
@@ -333,9 +502,9 @@ def aplicar(timeout: int = 600) -> dict:
             "version_nueva": info["version_nueva"],
             "cambiados": cambiados,
             "mensaje": (
-                f"Actualizado a la versión {info['version_nueva']}. Cierra la aplicación "
-                "y vuelve a abrirla con start.command para que empiece a usarla. Tu base "
-                "de datos, tu triaje y tus términos de búsqueda no se han tocado."
+                f"Actualizado a la versión {info['version_nueva']}. La aplicación se "
+                "reinicia sola para empezar a usarla. Tu base de datos, tu triaje y tus "
+                "términos de búsqueda no se han tocado."
             ),
         }
     except net.ErrorRed as exc:
@@ -346,26 +515,178 @@ def aplicar(timeout: int = 600) -> dict:
         shutil.rmtree(temporal, ignore_errors=True)
 
 
-def aplicar_en_subproceso(timeout: int = 900) -> dict:
-    """Lanza `radar.py actualizar` y espera a que termine.
+# --- En segundo plano -------------------------------------------------------
+#
+# La pantalla de arranque no puede quedarse colgada de una petición HTTP de minutos sin
+# saber nada: tiene que poder contar cuántos megas lleva y, sobre todo, notar si se ha
+# atascado, que es lo único que le da derecho a quien espera a entrar sin la versión
+# nueva. Así que la instalación se lanza como la búsqueda: un proceso aparte que escribe
+# su progreso a disco, y la interfaz pregunta.
+
+
+def _proceso_vivo(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+# El proceso lanzado por ESTE servidor. Hace falta para recogerlo al terminar: un hijo
+# que acaba y nadie recoge se queda de zombi, y a un zombi `kill(pid, 0)` le sigue
+# contestando que está vivo. Sin esto, la pantalla de arranque se quedaba para siempre
+# en «Instalando» con la instalación ya terminada.
+_HIJO: subprocess.Popen | None = None
+
+
+def en_marcha() -> dict | None:
+    """Los datos de la instalación en curso, o None. Limpia un cerrojo huérfano."""
+    try:
+        datos = json.loads(CERROJO.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (ValueError, OSError):
+        CERROJO.unlink(missing_ok=True)
+        return None
+    pid = datos.get("pid")
+    if _HIJO is not None and _HIJO.pid == pid:
+        vivo = _HIJO.poll() is None
+    else:
+        vivo = isinstance(pid, int) and _proceso_vivo(pid)
+    if not vivo:
+        CERROJO.unlink(missing_ok=True)
+        return None
+    return datos
+
+
+def soltar_cerrojo() -> None:
+    """Lo llama la propia instalación al acabar, sea como sea.
+
+    Es la otra mitad de `_HIJO`: si el servidor se ha reiniciado mientras tanto, ya no
+    tiene el objeto con el que recoger al hijo, y ese hijo —que sigue siendo suyo, porque
+    `execv` conserva el proceso— se quedaría de zombi con el cerrojo puesto.
+    """
+    try:
+        datos = json.loads(CERROJO.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if datos.get("pid") == os.getpid():
+        CERROJO.unlink(missing_ok=True)
+
+
+def lanzar() -> dict:
+    """Arranca `radar.py actualizar --json` en segundo plano. No espera.
 
     Va en un proceso aparte a propósito, por el mismo motivo que la ingesta: quien
     sustituye el código no debería ser el proceso que está ejecutando ese código. Y
-    reutilizar la CLI deja un único camino de ejecución, en vez de una versión para el
-    botón y otra para la terminal.
-    """
-    try:
-        r = subprocess.run(
-            [sys.executable, "-u", str(RAIZ / "radar.py"), "actualizar", "--json"],
-            cwd=str(RAIZ), capture_output=True, text=True, timeout=timeout,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "mensaje": f"No se ha podido lanzar la actualización: {exc}"}
+    reutilizar la CLI deja un único camino de ejecución para la pantalla y la terminal.
 
-    for linea in reversed((r.stdout or "").splitlines()):
+    Si ya hay una en marcha —dos ventanas abiertas a la vez— se engancha a esa.
+    """
+    global _HIJO
+
+    activa = en_marcha()
+    if activa:
+        return {"ok": True, "ya_en_marcha": True, **activa}
+
+    REGISTRO.parent.mkdir(parents=True, exist_ok=True)
+    PROGRESO.unlink(missing_ok=True)
+    orden = [sys.executable, "-u", str(rutas.ENTRADA_CLI), "actualizar", "--json"]
+    try:
+        with REGISTRO.open("w", encoding="utf-8") as registro:
+            proceso = subprocess.Popen(
+                orden, cwd=str(RAIZ), stdout=registro, stderr=subprocess.STDOUT,
+                # Que sobreviva al reinicio del servidor, que llega justo después.
+                start_new_session=True,
+            )
+    except OSError as exc:
+        return {"ok": False, "mensaje": f"No se ha podido lanzar la actualización: {exc}"}
+    _HIJO = proceso
+    # Lo escribe el padre y no el hijo para que no haya un instante en que la instalación
+    # ya está lanzada y el cerrojo todavía no dice nada: la pantalla lo leería como
+    # «terminada sin resultado».
+    datos = {"pid": proceso.pid,
+             "iniciada": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    CERROJO.write_text(json.dumps(datos), encoding="utf-8")
+    return {"ok": True, **datos}
+
+
+def _resultado() -> dict | None:
+    """La última línea JSON del registro: lo que imprime `radar.py actualizar --json`."""
+    try:
+        lineas = REGISTRO.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for linea in reversed(lineas):
         try:
-            return json.loads(linea)
+            datos = json.loads(linea)
         except ValueError:
             continue
-    return {"ok": False, "mensaje":
-            (r.stderr or r.stdout or "La actualización no ha dicho nada.").strip()[-2000:]}
+        if isinstance(datos, dict) and "ok" in datos:
+            return datos
+    if lineas:
+        # Terminó sin decir nada en JSON: una excepción, casi seguro. Lo que haya
+        # escrito es lo único que explica qué ha pasado.
+        return {"ok": False, "mensaje": "\n".join(lineas)[-2000:]}
+    return None
+
+
+def estado() -> dict:
+    """Cómo va la instalación lanzada con `lanzar()`. Lo pregunta la pantalla cada segundo.
+
+    `version` es la del código que está ejecutando ESTE servidor, y es con lo que la
+    pantalla sabe que el reinicio ha terminado: cuando deja de ser la vieja.
+    """
+    activa = en_marcha()
+    detalle = None
+    if activa:
+        try:
+            detalle = json.loads(PROGRESO.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            detalle = None
+    return {
+        "version": __version__,
+        "en_marcha": activa is not None,
+        "detalle": detalle,
+        "resultado": None if activa else _resultado(),
+    }
+
+
+def orden_de_reinicio(argv: list[str] | None = None) -> list[str]:
+    """Con qué volver a ejecutar el servidor para que cargue el código nuevo.
+
+    Lo mismo que se lanzó, con dos cuidados: `-B` si se arrancó sin bytecode (la app lo
+    exige, ver `Radar.swift`), y `--sin-navegador`, porque `start.command` lo arranca sin
+    él y cada reinicio abriría otra pestaña.
+    """
+    argv = list(sys.argv if argv is None else argv)
+    orden = [sys.executable]
+    if sys.flags.dont_write_bytecode:
+        orden.append("-B")
+    orden.append("-u")
+    orden.append(str(Path(argv[0]).resolve()))
+    resto = argv[1:]
+    if "serve" in resto and "--sin-navegador" not in resto:
+        resto.append("--sin-navegador")
+    return orden + resto
+
+
+def reiniciar_servidor(espera: float = 0.5) -> None:
+    """Sustituye este proceso por uno nuevo con el mismo PID. No vuelve.
+
+    `execv` y no «salir y que alguien lo relance»: no hay nadie que lo relance cuando se
+    arrancó desde `start.command`, y la ventana de macOS sigue viendo el mismo proceso
+    —mismo PID— y lo para al cerrarse como siempre. El socket se suelta solo: Python lo
+    crea no heredable, y el servidor nuevo lo vuelve a abrir con `SO_REUSEADDR`.
+
+    Se espera un momento antes para que la respuesta HTTP que lo ha pedido llegue a
+    salir.
+    """
+    time.sleep(espera)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    orden = orden_de_reinicio()
+    log.info("Reiniciando el servidor: %s", " ".join(orden))
+    os.execv(orden[0], orden)

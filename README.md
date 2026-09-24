@@ -17,21 +17,36 @@ y funciona igual en cualquier Mac.
 Doble clic en **`Radar de Licitaciones.app`**.
 
 Se abre como cualquier programa del Mac: su ventana, su icono en el Dock, su menú. Por
-dentro arranca el servidor de Python, espera a que conteste y **se pone a traer lo
-publicado desde la última vez antes de enseñar la bandeja**: mientras tanto se ve el
-progreso de verdad —qué fuente, cuántos megas, cuánto lleva—, y la lista aparece ya
-puesta al día. Suele ser cuestión de un minuto. No hay que dejar ninguna terminal
-abierta, y al salir con ⌘Q el servidor se para con ella.
+dentro arranca el servidor de Python, espera a que conteste y, antes de enseñar la
+bandeja, hace dos cosas seguidas:
 
-Tres cosas de esa espera, porque una pantalla que no deja pasar es una pantalla que
-tiene que tener salidas:
+1. **Instala la versión nueva del programa, si la hay.** Pregunta a GitHub por la
+   última release y, si es más nueva que la tuya, la descarga, la instala y la
+   aplicación se vuelve a abrir sola. Son unos segundos. Ver
+   [Actualizar el programa](#actualizar-el-programa).
+2. **Trae lo publicado desde la última vez.** Mientras tanto se ve el progreso de
+   verdad —qué fuente, cuántos megas, cuánto lleva—, y la lista aparece ya puesta al
+   día. Suele ser cuestión de un minuto.
 
-- **Si ya se buscó hace menos de diez minutos, no se repite.** Cerrar la ventana y
-  volver a abrirla no cuesta otro minuto.
+No hay que dejar ninguna terminal abierta, y al salir con ⌘Q el servidor se para con
+ella.
+
+**Ninguna de las dos se puede saltar.** No hay botón de «ver la bandeja sin esperar» ni
+tope de tiempo: mientras lo que se espera dé señales de vida —bytes que llegan, una fase
+que cambia, un reintento—, se espera. La única salida es para cuando algo se ha colgado:
+si pasan **tres minutos sin ninguna señal**, aparece «Entrar sin esperar», y la próxima
+vez que abras la aplicación se vuelve a intentar. Tres minutos y no menos porque PLACSP
+se queda hasta dos callado en cada intento de conexión, y eso es lentitud, no un cuelgue.
+
+Hay dos casos en los que no se espera, y no son saltarse nada:
+
+- **Si ya se buscó hace menos de diez minutos, no se repite la búsqueda.** Ya está hecha;
+  cerrar la ventana y volver a abrirla no cuesta otro minuto. La versión, en cambio, se
+  comprueba siempre: es una sola pregunta a GitHub.
 - **La carga inicial no se espera ahí.** Esa dura horas, así que se entra directamente
   y la cuenta la barra de la cabecera, que es la que dice «puedes trabajar mientras».
-- **Y siempre hay un «Ver la bandeja sin esperar»**, además de un tope de ocho minutos
-  por si una fuente se queda colgada.
+  Tampoco se instala una versión nueva mientras corre —cambiar el código por debajo de
+  una carga de horas es pedir problemas—: se instalará al abrir la próxima vez.
 
 El botón **«Buscar ahora»** ya no está en la cabecera: con esto no hay que pulsarlo
 nunca. Sigue estando, al final de **Términos de búsqueda**, que es donde apetece —
@@ -425,30 +440,44 @@ la base. Si cambias los términos de búsqueda, lo detecta y repasa todo igualme
 
 ### Actualizar el programa
 
-La aplicación mira al abrirse si hay una versión publicada más nueva que la instalada y,
-si la hay, ofrece un botón para traerla. Se puede hacer también desde la terminal con los
+Lo hace sola la aplicación, cada vez que se abre, y no hay botón para hacerlo ni para
+dejarlo para luego: una actualización que se puede aplazar se aplaza para siempre. La
+pantalla de arranque pregunta a GitHub por la **última release publicada**; si es más
+nueva que la tuya, la descarga, la instala y la aplicación se reinicia sola con ella,
+antes de ponerse a buscar licitaciones. Desde la terminal se puede hacer igual con los
 dos comandos de arriba.
 
-Sustituye el código —`radar/`, `web/`, `radar.py`, `start.command`, `macos/` y los
-certificados— y guarda lo anterior al lado como `.anterior` para poder volver atrás. **No
-toca `data/`**, donde están tu base, tu triaje y tus notas, **ni `config/perfiles.json`**,
-que son tus términos de búsqueda. Si hay una descarga en marcha, se niega: cambiar el
-código por debajo de una carga que dura horas es pedir problemas.
+**No toca `data/`**, donde están tu base, tu triaje y tus notas, **ni
+`config/perfiles.json`**, que son tus términos de búsqueda. Si hay una descarga en
+marcha, espera a que termine —o, si es la carga inicial, lo deja para la próxima vez—.
+Los cambios en la base de datos que traiga la versión nueva se aplican solos al
+arrancar.
 
-Después hay que cerrar la aplicación y volver a abrirla, porque el proceso que está
-corriendo ya tiene en memoria la versión vieja. Los cambios en la base de datos que traiga
-la versión nueva se aplican solos en ese siguiente arranque.
+Si no hay internet, o GitHub no contesta, se sigue con la versión que hay: no es
+saltarse la actualización, es que no ha habido respuesta. Y si la instalación falla, se
+queda como estaba, lo dice en un aviso en la cabecera y lo vuelve a intentar la
+siguiente vez.
 
-Todo eso vale para una **copia de trabajo**, donde el código está en la carpeta y se
-puede sustituir. `Radar de Licitaciones.app` no se toca: un programa no puede cambiarse a
-sí mismo mientras corre. No hace falta, porque lo que sí se sustituye es de lo que está
-hecha; al volver a abrirla se da cuenta de que su versión ya no coincide con la del código
-y se ofrece a rehacerse. A mano es `python3 herramientas/construir_app.py --forzar`.
+Cómo se instala depende de qué copia sea:
 
-En una **app recibida de alguien**, que lleva el programa dentro, no hay ficheros que
-sustituir y el botón hace otra cosa: dice que hay versión nueva y ofrece **descargarla**.
-Se arrastra encima de la vieja, como cualquier programa de Mac. Los datos están fuera de
-la app, así que no se pierde nada al reemplazarla.
+- **Copia de trabajo** (esta carpeta, clonada del repositorio): se descarga el zip que
+  GitHub genera del tag y se sustituye el código —`radar/`, `web/`, `radar.py`,
+  `start.command`, `macos/` y los certificados—, guardando lo anterior al lado como
+  `.anterior` para poder volver atrás. Después se reinicia el servidor y, si estás en
+  `Radar de Licitaciones.app`, la ventana se rehace con
+  `herramientas/construir_app.py --forzar` y se vuelve a abrir. En el navegador
+  (`start.command`) se recarga la página.
+- **App recibida de alguien**, que lleva el programa dentro: no hay ficheros que
+  sustituir, así que se descarga el **`.app` adjunto a la release**, se comprueba —el
+  SHA-256 que publica GitHub, que es la aplicación de verdad, con la versión que dice—
+  y se deja preparado en `~/Library/Application Support/Radar de Licitaciones`. Al
+  cerrarse, la ventana se cambia por la nueva en el mismo sitio y la abre. Los datos
+  están fuera de la app, así que no se pierde nada.
+
+  Si la app está en una carpeta donde tu usuario no puede escribir —Aplicaciones sin ser
+  administrador—, el cambio falla, se reabre la vieja y no se reintenta hasta el día
+  siguiente, para no entrar en bucle. Entonces toca bajarla de la release y arrastrarla
+  encima, como cualquier programa de Mac.
 
 ### Publicar una versión
 
@@ -466,10 +495,10 @@ código al repositorio no actualiza a nadie. Para publicar una:
    `--prefabricar` actualiza `macos/prefabricado/radar`, de donde saca la ventana nativa
    quien no tenga las herramientas de Apple. `--zip` deja un
    «Radar de Licitaciones X.Y.Z.zip» y te dice su SHA-256.
-3. **Adjunta ese zip a la release.** Es lo que busca la app empaquetada cuando ofrece
-   actualizarse; lo localiza por el nombre, así que basta con que lleve «Radar» y acabe
-   en `.zip`. Si te lo olvidas, la app lleva al usuario a la página de la release en
-   lugar de dejarlo sin salida, pero le toca buscar el fichero a mano.
+3. **Adjunta ese zip a la release.** Es lo que descarga la app empaquetada para
+   actualizarse sola; lo localiza por el nombre, así que basta con que lleve «Radar» y
+   acabe en `.zip`. Si te lo olvidas, esas copias no pueden actualizarse: lo dicen en un
+   aviso con la página de la release, y le toca a cada uno buscar el fichero a mano.
 4. Etiqueta la release con ese mismo número. Si no coinciden, el actualizador se niega a
    instalarla —que es lo que se quiere cuando el paquete no es lo que dice ser—.
 
@@ -477,21 +506,25 @@ código al repositorio no actualiza a nadie. Para publicar una:
 gh release create v1.1.0 --title "v1.1.0 — …" --notes "…"
 ```
 
-Lo que se descarga es el zip que GitHub genera del propio tag, no un fichero que haya que
-subir. Y **el repositorio tiene que ser público**: si no, la comprobación de versión
-recibe un 404 y el botón no aparece —eso ya lo explica el mensaje de error—.
+Para la copia de trabajo lo que se descarga es el zip que GitHub genera del propio tag,
+no un fichero que haya que subir. Y **el repositorio tiene que ser público**: si no, la
+comprobación de versión recibe un 404 y nadie se actualiza.
+
+**Publicar una release es publicarla para todos a la vez**: la próxima vez que cada
+compañero abra la aplicación, se la instalará sin preguntar.
 
 Sobre el SHA-256, que tiene dos mitades y conviene no confundirlas.
 
-Para la **copia de trabajo**, el actualizador busca un SHA en las notas y, si lo
-encuentra, exige que cuadre. Suena bien y es una trampa, porque ese zip lo genera GitHub
-al vuelo desde el tag y su suma puede cambiar sin que cambie el código; el día que pase,
-nadie podría actualizar y el mensaje hablaría de un SHA que no le dice nada a quien lo
-lee. La defensa real es HTTPS contra este repositorio, así que las notas van sin SHA.
+Para la **copia de trabajo** no se comprueba ningún SHA. Se hacía —buscaba uno en las
+notas y exigía que cuadrara— y era una trampa por partida doble: ese zip lo genera GitHub
+al vuelo desde el tag y su suma puede cambiar sin que cambie el código, y el SHA que sí
+llevan las notas es el del `.app`. Con la v1.5.0 eso bloqueaba la instalación en toda
+copia de trabajo. La defensa real es HTTPS contra este repositorio.
 
-Para el **zip del `.app`** es distinto: ese fichero lo subes tú y su hash es estable, así
-que el que imprime `--zip` sí es una comprobación de verdad. Ponerlo en las notas de la
-release es útil, y quien reciba la app por otro camino puede contrastarlo.
+Para el **zip del `.app`** es distinto: ese fichero lo subes tú y su hash es estable.
+GitHub calcula el suyo al subirlo (el `digest` del adjunto) y es el que se exige; si no
+lo diera, vale el que imprime `--zip` pegado en las notas, que además sirve para que
+quien reciba la app por otro camino pueda contrastarlo.
 
 ### Que se actualice solo
 
