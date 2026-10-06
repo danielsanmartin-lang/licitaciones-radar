@@ -1249,6 +1249,134 @@ async function reiniciarServidorYRecargar() {
 }
 window.reiniciarServidorYRecargar = reiniciarServidorYRecargar;
 
+// --- Novedades tras actualizar ---------------------------------------------
+//
+// Cuando la aplicación se reabre con una versión nueva, la pantalla de arranque lo dice
+// y enseña qué ha cambiado desde la que se tenía, mientras el paso 2 sigue buscando
+// debajo. Al terminar no se cierra sola: espera a «Continuar», porque hay algo que leer
+// y quitarlo de delante en mitad de una frase es peor que no haberlo puesto.
+
+// Texto con `**negrita**` y `` `código` `` —lo que conservan las notas de la release—
+// pintado con `textContent`, trozo a trozo. Las notas vienen de GitHub y no se
+// interpretan como HTML.
+function textoConFormato(el, texto) {
+  for (const trozo of String(texto).split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+    if (!trozo) continue;
+    let nodo;
+    if (trozo.startsWith('**') && trozo.endsWith('**') && trozo.length > 4) {
+      nodo = document.createElement('strong');
+      nodo.textContent = trozo.slice(2, -2);
+    } else if (trozo.startsWith('`') && trozo.endsWith('`') && trozo.length > 2) {
+      nodo = document.createElement('code');
+      nodo.textContent = trozo.slice(1, -1);
+    } else {
+      nodo = document.createTextNode(trozo);
+    }
+    el.appendChild(nodo);
+  }
+  return el;
+}
+
+function enlaceExterno(url, texto) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = texto;
+  return a;
+}
+
+function subtituloNovedades(n, buscando) {
+  return (n.desde ? `Tenías la ${n.desde}. Esto es lo nuevo desde entonces` :
+                    'Esto es lo nuevo de esta versión') +
+    (buscando ? '; mientras lo lees, el radar sigue buscando licitaciones debajo.' : '.');
+}
+
+function pintarNovedades(n) {
+  $('arranque-caja').classList.add('con-novedades');
+  $('arranque-novedades').hidden = false;
+  $('novedades-titulo').textContent = `Actualizado a la versión ${n.hasta}`;
+  $('novedades-sub').textContent = subtituloNovedades(n, true);
+
+  const lista = $('novedades-lista');
+  lista.textContent = '';
+  for (const v of n.versiones || []) {
+    const sec = document.createElement('section');
+    sec.className = 'novedades-version';
+    const h = document.createElement('h3');
+    const num = document.createElement('span');
+    num.className = 'novedades-num';
+    num.textContent = `v${v.version}`;
+    h.appendChild(num);
+    if (v.titulo) h.appendChild(document.createTextNode(' ' + v.titulo));
+    sec.appendChild(h);
+    if (v.fecha) {
+      const f = document.createElement('p');
+      f.className = 'novedades-fecha';
+      f.textContent = 'publicada el ' + fmtFecha(v.fecha);
+      sec.appendChild(f);
+    }
+    let ul = null;
+    for (const b of v.bloques || []) {
+      if (b.tipo === 'punto') {
+        if (!ul) {
+          ul = document.createElement('ul');
+          sec.appendChild(ul);
+        }
+        ul.appendChild(textoConFormato(document.createElement('li'), b.texto));
+        continue;
+      }
+      ul = null;
+      const el = document.createElement(b.tipo === 'titulo' ? 'h4' : 'p');
+      sec.appendChild(textoConFormato(el, b.texto));
+    }
+    lista.appendChild(sec);
+  }
+
+  // Sin red no hay notas, pero la actualización sí ha ocurrido: se dice y se enlaza.
+  const pie = document.createElement('p');
+  pie.className = 'pista novedades-pie';
+  if (!(n.versiones || []).length) {
+    pie.textContent = (n.error ? 'No se han podido traer las novedades ahora mismo. ' : '') +
+      'Puedes leerlas en ';
+    pie.appendChild(enlaceExterno(n.url, 'la página de versiones'));
+    pie.appendChild(document.createTextNode('.'));
+  } else if (n.mas_antiguas) {
+    pie.textContent = `Y ${n.mas_antiguas} ${n.mas_antiguas === 1 ? 'versión' : 'versiones'} ` +
+      'más antiguas, en ';
+    pie.appendChild(enlaceExterno(n.url, 'la página de versiones'));
+    pie.appendChild(document.createTextNode('.'));
+  }
+  if (pie.textContent) lista.appendChild(pie);
+}
+
+// Las dos cosas han terminado: se dice y se espera a «Continuar». Solo es la
+// versión la que se marca como vista al pulsarlo; quien cierra la aplicación antes
+// vuelve a ver las novedades la próxima vez.
+function mostrarListo(n) {
+  pasoArranque('Paso 1 y paso 2 terminados');
+  $('novedades-sub').textContent = subtituloNovedades(n, false);
+  $('arranque-titulo').textContent = 'Todo listo';
+  // Fuera lo que era del progreso: dejarlo vacío seguiría ocupando su hueco.
+  for (const id of ['arranque-frase', 'arranque-barra', 'arranque-tiempo']) {
+    $(id).hidden = true;
+  }
+  $('arranque-colgado').hidden = true;
+  $('arranque-listo-txt').textContent =
+    `Ya tienes la versión ${n.hasta} y las licitaciones al día.`;
+  $('arranque-listo').hidden = false;
+  $('arranque-continuar').focus();
+}
+
+async function continuarTrasNovedades() {
+  $('arranque-continuar').disabled = true;
+  try {
+    await fetch('/api/novedades/vistas', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  } catch { /* si no se apunta, se vuelven a enseñar la próxima vez: no pasa nada */ }
+  cerrarArranque();
+}
+
 // --- Paso 2: las licitaciones ------------------------------------------------
 
 async function buscarLoNuevo() {
@@ -1276,6 +1404,13 @@ async function buscarLoNuevo() {
 async function arrancar() {
   vigilarCuelgue();
 
+  // En paralelo y sin esperarla: si la versión es nueva, sus novedades se pintan en
+  // cuanto llegan, mientras los dos pasos siguen su curso.
+  const novedades = pedirJSON('/api/novedades').catch(() => null);
+  novedades.then((n) => {
+    if (n && n.actualizada && enArranque) pintarNovedades(n);
+  });
+
   // Una búsqueda que ya venía corriendo se deja terminar antes de instalar: el
   // actualizador se niega a cambiar el código por debajo de una ingesta, y con razón.
   // La carga inicial no, que son horas: esa se engancha directamente y la versión
@@ -1299,6 +1434,13 @@ async function arrancar() {
 
   if (enArranque && await instalarVersionNueva()) return;
   if (enArranque) await buscarLoNuevo();
+  // Tras una actualización no se cierra sola: hay novedades que leer, y se espera a
+  // «Continuar». Si no, como siempre.
+  const n = await novedades;
+  if (n && n.actualizada && enArranque) {
+    mostrarListo(n);
+    return;
+  }
   cerrarArranque();
 }
 
@@ -1977,6 +2119,7 @@ for (const id of ['otras-ccaa', 'otras-tipo', 'otras-importe', 'otras-orden', 'o
 $('otras-mas').addEventListener('click', () => cargarOtras(false));
 $('buscar-ahora').addEventListener('click', () => lanzarBusqueda());
 $('arranque-entrar').addEventListener('click', cerrarArranque);
+$('arranque-continuar').addEventListener('click', continuarTrasNovedades);
 $('previsualizar').addEventListener('click', () => previsualizarAjustes());
 $('guardar-perfiles').addEventListener('click', () => guardarAjustes());
 $('tab-novedades').addEventListener('click', async () => {

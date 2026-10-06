@@ -272,6 +272,20 @@ class Manejador(BaseHTTPRequestHandler):
 
             self._json(actualizacion.comprobar())
 
+        elif partes.path == "/api/novedades":
+            # Lo pregunta la pantalla de arranque nada más abrirse. Si esta versión ya
+            # se había estrenado —lo normal—, se apunta y no hay nada que contar. Si es
+            # nueva, se apunta cuando se pulse «Continuar» (POST de abajo): quien cierra
+            # la aplicación antes de leerlo vuelve a verlo la próxima vez.
+            from . import __version__, novedades
+
+            info = novedades.recien_actualizada(self.con)
+            if not info:
+                novedades.marcar_vista(self.con)
+                return self._json({"actualizada": False, "version": __version__})
+            self._json({"actualizada": True, **info,
+                        **novedades.notas(info["desde"], info["hasta"])})
+
         elif partes.path == "/api/actualizacion/estado":
             # No sale a internet: lee el progreso que va dejando en disco la instalación
             # y dice qué versión ejecuta este servidor. Lo pregunta la pantalla de
@@ -356,6 +370,12 @@ class Manejador(BaseHTTPRequestHandler):
 
             self._json(actualizacion.lanzar())
             return
+
+        if partes.path == "/api/novedades/vistas":
+            from . import novedades
+
+            novedades.marcar_vista(self.con)
+            return self._json({"ok": True})
 
         if partes.path == "/api/reiniciar":
             # Tras instalar una versión nueva en la copia de trabajo, este proceso sigue

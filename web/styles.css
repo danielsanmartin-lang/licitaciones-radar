@@ -481,12 +481,18 @@ button.kpi.activo .t { color: var(--acento); }
   align-items: center;
   justify-content: center;
   padding: var(--e-5);
+  /* Con las novedades de una actualización la caja puede ser más alta que la ventana.
+     El scroll va aquí, y la caja se centra con `margin: auto` y no solo con
+     `align-items`: centrado así, lo que sobresale por arriba quedaría cortado y fuera
+     del alcance del scroll. */
+  overflow-y: auto;
 }
 /* `display: flex` le gana al `hidden` del navegador, así que hay que decirlo a mano o
    la pantalla no se va nunca. */
 .arranque[hidden] { display: none; }
 
 .arranque-caja {
+  margin: auto;
   width: min(520px, 100%);
   text-align: center;
   display: flex;
@@ -532,6 +538,79 @@ button.kpi.activo .t { color: var(--acento); }
   margin-top: var(--e-2);
 }
 .arranque-colgado[hidden] { display: none; }
+
+/* Tras una actualización la caja se ensancha para las novedades, que se leen alineadas
+   a la izquierda como cualquier texto largo; el progreso del paso 2 sigue debajo,
+   centrado como siempre. */
+.arranque-caja.con-novedades { width: min(680px, 100%); }
+.arranque-novedades {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--e-2);
+  padding-bottom: var(--e-4);
+  margin-bottom: var(--e-2);
+  border-bottom: 1px solid var(--borde);
+}
+.arranque-novedades[hidden] { display: none; }
+.arranque-ok {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--e-2);
+  font-size: var(--txt-lg);
+  font-weight: 650;
+  color: var(--verde);
+}
+.arranque-ok .ico { width: 1.2em; height: 1.2em; stroke-width: 2.4; }
+/* La lista hace scroll por su cuenta: con varias versiones encadenadas es larga, y si
+   empujara la caja, el progreso de la búsqueda y el botón se saldrían de la pantalla. */
+.novedades-lista {
+  text-align: left;
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: var(--e-3) var(--e-4);
+  font-size: var(--txt-md);
+  line-height: 1.55;
+}
+.novedades-version + .novedades-version {
+  margin-top: var(--e-4);
+  padding-top: var(--e-4);
+  border-top: 1px solid var(--borde);
+}
+.novedades-version h3 { font-size: var(--txt-base); font-weight: 650; }
+.novedades-num { color: var(--acento); margin-right: var(--e-1); }
+.novedades-version h4 {
+  font-size: var(--txt-md);
+  font-weight: 650;
+  margin: var(--e-3) 0 var(--e-1);
+}
+.novedades-fecha { font-size: var(--txt-xs); color: var(--texto-ter); margin-bottom: var(--e-1); }
+.novedades-version p { margin: var(--e-1) 0; color: var(--texto-sec); }
+.novedades-version ul { margin: var(--e-1) 0; padding-left: 1.2em; color: var(--texto-sec); }
+.novedades-version li { margin: 2px 0; }
+.novedades-version strong { color: var(--texto); font-weight: 600; }
+.novedades-version code {
+  font-size: .92em;
+  background: var(--panel-2);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.novedades-pie { margin-top: var(--e-3); }
+.novedades-pie a { color: var(--acento); }
+
+.arranque-listo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-3);
+}
+.arranque-listo[hidden] { display: none; }
+.arranque-listo p { color: var(--texto-sec); font-size: var(--txt-md); }
+.arranque-listo .boton-pri { justify-content: center; min-width: 160px; padding: var(--e-2) var(--e-5); font-size: var(--txt-base); }
 
 /* --- Pestañas -------------------------------------------------------------- */
 
