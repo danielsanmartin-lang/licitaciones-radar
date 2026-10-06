@@ -17,8 +17,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import busqueda, consultas, db, pipeline, rutas
+from . import busqueda, categorias, consultas, db, pipeline, rutas
 from .db import ESTADOS_REVISION
+from .sources.base import NUTS2_CCAA
 
 log = logging.getLogger(__name__)
 
@@ -151,6 +152,41 @@ class Manejador(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._error(str(exc))
 
+        elif partes.path == "/api/otras":
+            elegidas = [c for c in (params.get("categorias") or "").split(",") if c]
+            try:
+                self._json(consultas.otras(
+                    self.con,
+                    categorias_elegidas=elegidas,
+                    busqueda=params.get("q") or None,
+                    solo_vivas=params.get("vivas", "1") == "1",
+                    ccaa=params.get("ccaa") or None,
+                    tipo=params.get("tipo") or None,
+                    importe_min=float(params["importe_min"]) if params.get("importe_min") else None,
+                    estado_revision=params.get("estado") or None,
+                    orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
+                    limite=min(int(params.get("limite", 100)), 1000),
+                    offset=int(params.get("offset", 0)),
+                ))
+            except sqlite3.OperationalError as exc:
+                self._error(f"Búsqueda no válida: {exc}")
+            except ValueError as exc:
+                self._error(str(exc))
+
+        elif partes.path == "/api/categorias":
+            # Lo que necesita la pestaña para pintar sus chips y sus desplegables sin
+            # tener que saberse de memoria las temáticas ni las comunidades.
+            self._json({
+                "categorias": [{"clave": c.clave, "nombre": c.nombre}
+                               for c in categorias.CATEGORIAS],
+                "resto": {"clave": categorias.RESTO,
+                          "nombre": categorias.NOMBRES[categorias.RESTO]},
+                "toda_la_it": {"clave": categorias.TODA_LA_IT,
+                               "nombre": categorias.NOMBRES[categorias.TODA_LA_IT]},
+                "ccaa": sorted(NUTS2_CCAA.values()),
+                "tipos": list(consultas.TIPOS_CONTRATO) + ["otros"],
+            })
+
         elif partes.path == "/api/vencimientos":
             try:
                 meses = max(1, min(int(params.get("meses", 6)), 60))
@@ -163,13 +199,22 @@ class Manejador(BaseHTTPRequestHandler):
                 limite = max(1, min(int(params.get("limite", 25)), 200))
             except ValueError:
                 return self._error("limite no válido")
-            self._json({"items": consultas.competencia(self.con, limite=limite)})
+            try:
+                ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
+            except ValueError as exc:
+                return self._error(str(exc))
+            self._json({"items": consultas.competencia(self.con, ambito=ambito,
+                                                       limite=limite)})
 
         elif partes.path == "/api/contratos-empresa":
             empresa = params.get("empresa")
             if not empresa:
                 return self._error("falta empresa")
-            self._json({"items": consultas.contratos_de(self.con, empresa)})
+            try:
+                ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
+            except ValueError as exc:
+                return self._error(str(exc))
+            self._json({"items": consultas.contratos_de(self.con, empresa, ambito=ambito)})
 
         elif partes.path == "/api/motivos-descarte":
             self._json({"items": consultas.motivos_descarte(self.con)})
@@ -182,12 +227,16 @@ class Manejador(BaseHTTPRequestHandler):
                 valor = params.get(clave)
                 if valor and not _ES_MES.match(valor):
                     return self._error(f"{clave} tiene que ser 'AAAA-MM'")
-            self._json(consultas.analitica(
-                self.con,
-                perfil=params.get("perfil") or None,
-                desde=params.get("desde") or None,
-                hasta=params.get("hasta") or None,
-            ))
+            try:
+                self._json(consultas.analitica(
+                    self.con,
+                    perfil=params.get("perfil") or None,
+                    categoria=params.get("categoria") or None,
+                    desde=params.get("desde") or None,
+                    hasta=params.get("hasta") or None,
+                ))
+            except ValueError as exc:
+                self._error(str(exc))
 
         elif partes.path == "/api/perfiles":
             from .matching import leer_fichero_perfiles
@@ -260,6 +309,7 @@ class Manejador(BaseHTTPRequestHandler):
             d["urls_pliegos"] = json.loads(d.get("urls_pliegos") or "[]")
             d.pop("raw", None)
             d["historial"] = consultas.historial(self.con, lic_id)
+            d["categorias"] = consultas.categorias_de(self.con, lic_id)
             self._json(d)
 
         elif partes.path == "/api/export.csv":

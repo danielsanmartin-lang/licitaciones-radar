@@ -227,8 +227,8 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 ## Cómo se usa
 
-Hay cinco pestañas arriba: Bandeja, Vencimientos, Adjudicatarios, Analítica y
-Términos de búsqueda.
+Hay seis pestañas arriba: Bandeja, Otras licitaciones, Vencimientos, Adjudicatarios,
+Analítica y Términos de búsqueda.
 
 ### Los números de la cabecera
 
@@ -324,6 +324,48 @@ dos expedientes.
 Cuando entran licitaciones nuevas desde tu última visita aparece una pestaña verde
 **«N nuevas»** para ver solo esas.
 
+### Otras licitaciones
+
+Todo lo que el radar descarga y **no** casa con tus perfiles. El radar trae PLACSP entero
+—unas 700.000 fichas con el histórico— y los perfiles se quedan con unos cientos; el resto
+del mercado IT estaba en la base sin que hubiera por dónde verlo. Aquí se ve, ordenado por
+**temáticas**, que se eligen con chips de selección múltiple (ninguno marcado es «todas»):
+
+| Temática | Cómo se reconoce |
+|---|---|
+| Ciberseguridad | software de seguridad y antivirus (CPV 4873, 4876) o «ciberseguridad», «seguridad de la información», ENS, SOC, SIEM, pentest… |
+| Cloud y hosting | alojamiento web y SaaS (72415, 72416, 72317) o «en la nube», «cloud», «SaaS», «hosting», Azure, M365… |
+| IA y datos | solo por texto —no hay CPV de IA—: «inteligencia artificial», «big data», «business intelligence», «chatbot», «RPA»… |
+| Desarrollo y software | programación y desarrollo (7221, 7223, 7224, 7226, 72413) o «software», «aplicación web», «mantenimiento evolutivo»… |
+| Licencias de software | toda la división 48 o «licencias de software», «licencias Microsoft/Oracle/VMware»… |
+| Infraestructura y hardware | equipos informáticos (302), servidores (4882), su mantenimiento (5031, 5032) o «servidores», «CPD», «virtualización»… |
+| Redes y telecomunicaciones | 322, 324, 3252, 3255, 642, 727, 5033, 45314 o «telefonía móvil», «fibra óptica», «wifi», «cableado estructurado»… |
+| Consultoría y soporte IT | 721, 7222, 7225, 723, 725, 726, 728, 729 y el 72000000 a secas, o «soporte informático», «CAU», «service desk»… |
+| Resto de licitaciones | todo lo que no cae en ninguna de las anteriores: obras, limpieza, suministros… |
+
+Una licitación puede estar en varias a la vez. Los términos se buscan como en los perfiles
+—raíces, con catalán, gallego y euskera— y **sin el nombre del órgano**, para que todo lo
+que contrata el Instituto Nacional de Ciberseguridad no sea ciberseguridad por el nombre.
+Varios términos se descartaron al medirlos contra la base real: «cortafuegos» a secas son
+sobre todo las franjas de los montes, «portátiles» los extintores y «cuadro de mando» el
+armario del alumbrado público.
+
+Tiene su propio buscador y sus filtros —comunidad, tipo de contrato, importe, orden—, y
+abre con **solo lo abierto**: con las cerradas son cientos de miles. Cada chip lleva la
+cifra con los demás filtros puestos; con las cerradas incluidas y sin búsqueda la cifra
+no se calcula, porque costaría ocho segundos.
+
+**Lo que ya está en la Bandeja no sale aquí**, ni siquiera por otro anuncio del mismo
+expediente. Y el triaje funciona igual que en la Bandeja: **«Seguir» la pasa a la
+Bandeja** —es lo que hace con cualquier ficha que sigues, case o no— y «Descartar» la
+quita de la lista (con «Ver descartadas» se recuperan).
+
+Las temáticas se calculan en la misma pasada que los perfiles, así que lo nuevo se
+clasifica solo. La primera vez tras actualizar a esta versión, la búsqueda del arranque
+tarda alrededor de un minuto más: clasifica la base entera. Las reglas viven en
+`radar/categorias.py` y son del programa, no de cada uno: si cambian en una versión
+nueva, la base se reclasifica sola.
+
 ### Vencimientos
 
 Contratos **ya adjudicados** cuyo plazo termina pronto, con el incumbente y el
@@ -338,9 +380,13 @@ Quién se está llevando estos contratos, agrupando las variantes de razón soci
 («S2 GRUPO …, S.L.U.» y «S2 Grupo … S.L.» son la misma empresa). Al pulsar una
 empresa se despliegan sus contratos.
 
+Por defecto mira lo que casa con tus perfiles. El desplegable de arriba cambia el
+**ámbito**: un perfil concreto, o una temática entera del mercado —ciberseguridad, cloud,
+toda la IT…—, case o no con tus perfiles. Es el mismo selector que el de la Analítica.
+
 ### Analítica
 
-Las preguntas que no son «qué hay hoy». Catorce bloques, cada uno con una pregunta de
+Las preguntas que no son «qué hay hoy». Quince bloques, cada uno con una pregunta de
 venta delante, en el orden en que se leen:
 
 | Bloque | Contesta a |
@@ -354,15 +400,27 @@ venta delante, en el orden en que se leen:
 | Top comunidades por licitaciones activas | dónde queda dinero en juego, con el plazo todavía abierto |
 | Top comunidades por número de licitaciones activas | dónde hay más pliegos abiertos ahora mismo |
 | Quién compra | qué órganos de contratación repiten, y a quién merece la pena ir a ver |
+| Quién gana | qué empresas se llevan más expedientes, contra quién vas a competir |
 | Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
 | Cómo se compra | por qué puerta se entra: abierto, simplificado, restringido o por invitación |
 | Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
 | A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido |
 | Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico |
 
-Se filtra por perfil y por uno de tres rangos (este año, últimos 24 meses, todo desde
+Se filtra por **ámbito** y por uno de tres rangos (este año, últimos 24 meses, todo desde
 2024). Los dos bloques que hablan de *ahora* —renovaciones y cartera— ignoran el rango a
 propósito y lo dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+
+El ámbito puede ser tus perfiles —todos o uno— o una **temática del mercado** de las de
+«Otras licitaciones», o toda la IT junta. Con una temática se mira el mercado entero, case
+o no con tus perfiles, y todos los bloques se recalculan sobre él: calendario, importes,
+comunidades, quién compra, quién gana… Dos cosas cambian: no hay **cartera**, porque la
+cartera es tu triaje y tus puntuaciones, y el bloque de CPV no enseña «los códigos de tu
+producto». «Resto de licitaciones» no se ofrece: son 600.000 fichas de obras y limpieza, y
+analizarlas tardaría mucho para no decir nada del mercado IT.
+
+La primera vez que se mira una temática tarda unos segundos —«Toda la IT», la más grande,
+hasta cinco o diez—; después queda guardada hasta que entra algo nuevo en la base.
 
 Los cuatro bloques de comunidades van emparejados, dinero a la izquierda y número a la
 derecha, porque **los dos órdenes casi nunca coinciden y ahí está la información**:
@@ -422,6 +480,7 @@ python3 radar.py ingest                       # descarga las novedades
 python3 radar.py ingest --primera-carga       # instalación nueva: trae el histórico
 python3 radar.py ingest --backfill 2024,2025  # trae el histórico de esos años
 python3 radar.py match                        # reevalúa los perfiles sin descargar
+python3 radar.py clasificar                   # reclasifica todo por temática (un minuto)
 python3 radar.py serve                        # abre la aplicación
 python3 radar.py vencimientos --meses 6       # contratos que vencen pronto
 python3 radar.py adjudicatarios               # quién gana estos contratos

@@ -9,6 +9,7 @@ Todo vive en esta carpeta (base SQLite en data/radar.db).
     python3 radar.py ingest --fuente placsp    # una fuente
     python3 radar.py ingest --backfill 2025    # histórico de un año
     python3 radar.py match                     # reevalúa perfiles sin descargar
+    python3 radar.py clasificar                # reclasifica todo por temática
     python3 radar.py serve                     # bandeja en http://127.0.0.1:8811
     python3 radar.py export licitaciones.csv
     python3 radar.py vencimientos              # contratos que vencen pronto
@@ -29,7 +30,7 @@ import webbrowser
 from datetime import date
 from pathlib import Path
 
-from radar import consultas, db, pipeline, progreso, rutas
+from radar import categorias, consultas, db, pipeline, progreso, rutas
 from radar.matching import cargar_perfiles, reevaluar
 
 RAIZ = Path(__file__).resolve().parent
@@ -89,6 +90,22 @@ def _evaluar_perfiles(con, perfiles, *, incremental: bool = False) -> None:
         progreso.imprimir(f"  (pasada completa: {stats['motivo']})")
     for perfil, n in sorted(stats["por_perfil"].items(), key=lambda x: -x[1]):
         progreso.imprimir(f"    {perfil}: {n}")
+
+    # Lo nuevo ya se ha clasificado por temática dentro de la pasada de arriba. Esto
+    # solo trabaja cuando han cambiado las reglas de las temáticas —una versión nueva
+    # del programa—, y entonces tarda alrededor de un minuto.
+    if not categorias.al_dia(con):
+        progreso.imprimir("\nClasificando por temática (solo esta vez, tras actualizar)...")
+        clas = categorias.asegurar_al_dia(con)
+        if clas:
+            _imprimir_temas(clas, progreso.imprimir)
+
+
+def _imprimir_temas(clas: dict, imprimir) -> None:
+    imprimir(f"  {clas['clasificadas']} licitaciones clasificadas")
+    por = clas["por_categoria"]
+    for clave in (*categorias.POR_CLAVE, categorias.RESTO):
+        imprimir(f"    {categorias.NOMBRES[clave]}: {por.get(clave, 0)}")
 
 
 def _aviso_fallidas(fallidas) -> int:
@@ -194,6 +211,17 @@ def cmd_match(args) -> int:
         print(f"  {perfil}: {n}")
     if stats["evaluadas"] == 0:
         print("\nLa base está vacía. Lanza primero: python3 radar.py ingest")
+    return 0
+
+
+def cmd_clasificar(args) -> int:
+    con = db.conectar(args.bd)
+    progreso.iniciar()
+    try:
+        clas = categorias.clasificar_todo(con)
+    finally:
+        progreso.parar()
+    _imprimir_temas(clas, print)
     return 0
 
 
@@ -484,6 +512,10 @@ def main(argv=None) -> int:
 
     s = sub.add_parser("match", help="reevalúa los perfiles sobre lo ya descargado")
     s.set_defaults(func=cmd_match)
+
+    s = sub.add_parser("clasificar",
+                       help="reclasifica por temática todo lo ya descargado (un minuto)")
+    s.set_defaults(func=cmd_clasificar)
 
     s = sub.add_parser("serve", help="abre la bandeja en el navegador")
     s.add_argument("--puerto", type=int, default=8811)

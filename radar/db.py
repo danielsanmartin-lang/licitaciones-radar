@@ -136,6 +136,20 @@ CREATE TABLE IF NOT EXISTS matches (
 
 CREATE INDEX IF NOT EXISTS idx_match_perfil ON matches (perfil, puntuacion DESC);
 
+-- Temática de cada ficha, case o no con los perfiles (ver `radar/categorias.py`).
+-- Multietiqueta, y lo que no es IT va a 'resto' en lugar de quedarse sin fila: así
+-- filtrar por cualquiera de ellas es la misma búsqueda por índice. Es una tabla aparte
+-- y no una columna por la misma razón que `matches`: la Analítica tiene que poder
+-- ENTRAR por aquí —unos miles de filas por temática— en lugar de recorrer las 700.000
+-- de `licitaciones` para quedarse con unas pocas.
+CREATE TABLE IF NOT EXISTS categorias (
+    licitacion_id INTEGER NOT NULL REFERENCES licitaciones(id) ON DELETE CASCADE,
+    categoria     TEXT NOT NULL,
+    PRIMARY KEY (licitacion_id, categoria)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_cat_categoria ON categorias (categoria, licitacion_id);
+
 -- Triaje humano. Se conserva aunque el matching se reevalúe.
 CREATE TABLE IF NOT EXISTS revisiones (
     licitacion_id INTEGER PRIMARY KEY REFERENCES licitaciones(id) ON DELETE CASCADE,
