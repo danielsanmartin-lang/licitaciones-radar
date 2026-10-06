@@ -28,6 +28,12 @@ bandeja, hace dos cosas seguidas:
    verdad —qué fuente, cuántos megas, cuánto lleva—, y la lista aparece ya puesta al
    día. Suele ser cuestión de un minuto.
 
+**Si acaba de actualizarse, lo dice.** Al reabrirse con la versión nueva, la pantalla de
+arranque enseña «Actualizado a la versión X» y **qué ha cambiado desde la que tenías**
+—las notas de cada versión que te has saltado—, mientras la búsqueda sigue debajo. Al
+terminar las dos cosas no se cierra sola: dice «Todo listo» y espera a que pulses
+**Continuar**. Ver [Actualizar el programa](#actualizar-el-programa).
+
 No hay que dejar ninguna terminal abierta, y al salir con ⌘Q el servidor se para con
 ella.
 
@@ -512,6 +518,19 @@ marcha, espera a que termine —o, si es la carga inicial, lo deja para la próx
 Los cambios en la base de datos que traiga la versión nueva se aplican solos al
 arrancar.
 
+Al reabrirse con la versión nueva, la pantalla de arranque lo confirma y enseña las
+**novedades desde la versión que tenías**, que son las notas de las releases de GitHub
+de cada versión intermedia (hasta seis; el resto, enlazadas). Se leen mientras sigue la
+búsqueda de licitaciones, y al acabar las dos cosas la pantalla espera a **Continuar**.
+Si la cierras antes de pulsarlo, las vuelves a ver la próxima vez. Sin actualización de
+por medio, el arranque es como siempre y se quita solo.
+
+Para saber desde qué versión vienes se apunta en la base la versión con la que se abrió
+la aplicación la última vez (`version_vista` en `preferencias`). La primera vez que se
+actualiza desde una versión anterior a la 1.8.0 todavía no estaba apuntada: entonces se
+sabe que hubo actualización por el registro del actualizador, pero no siempre desde
+cuál, y se enseñan solo las novedades de la versión a la que se ha llegado.
+
 Si no hay internet, o GitHub no contesta, se sigue con la versión que hay: no es
 saltarse la actualización, es que no ha habido respuesta. Y si la instalación falla, se
 queda como estaba, lo dice en un aviso en la cabecera y lo vuelve a intentar la
@@ -564,6 +583,11 @@ código al repositorio no actualiza a nadie. Para publicar una:
 ```bash
 gh release create v1.1.0 --title "v1.1.0 — …" --notes "…"
 ```
+
+**Las notas se leen dentro de la aplicación**: son lo que enseña la pantalla de arranque
+como novedades al actualizarse. Escríbelas para quien la usa —qué hay nuevo y para qué
+sirve—, con `##` para los apartados y `-` para las listas. La línea del SHA-256 no se
+enseña.
 
 Para la copia de trabajo lo que se descarga es el zip que GitHub genera del propio tag,
 no un fichero que haya que subir. Y **el repositorio tiene que ser público**: si no, la
