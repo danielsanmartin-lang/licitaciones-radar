@@ -702,12 +702,32 @@ def reevaluar(con: sqlite3.Connection, perfiles: list[Perfil], *,
     altas: list[tuple] = []
     bajas: list[tuple] = []
 
+    # Las temáticas viajan en la misma pasada: es la que sabe qué fichas son nuevas o
+    # han cambiado de verdad, y leer la tabla dos veces costaría el doble para lo mismo.
+    # Una pasada completa reescribe todas, así que de paso las deja con las reglas de
+    # esta versión (ver `categorias.VERSION_CATEGORIAS`).
+    from . import categorias
+    temas: list[tuple[int, str]] = []
+    reclasificar: list[int] = []
+    if stats["completa"]:
+        con.execute("DELETE FROM categorias")
+    # Si TODO está pendiente —una base recién creada—, la pasada incremental también lo
+    # clasifica todo, y hay que apuntarlo: si no, la primera carga acabaría con otra
+    # pasada completa de temáticas que no cambiaría nada. En una base con historia la
+    # consulta encuentra una fila evaluada a la primera.
+    todo_pendiente = stats["completa"] or con.execute(
+        "SELECT 1 FROM licitaciones WHERE huella_evaluada IS huella LIMIT 1"
+    ).fetchone() is None
+
     progreso.fuente("evaluando perfiles")
     progreso.fase("aplicando reglas")
     for fila in con.execute(_SELECT_EVAL + ("" if stats["completa"] else _PENDIENTES)):
         stats["evaluadas"] += 1
         progreso.fichas(stats["evaluadas"])
         cpvs = (fila["cpv"] or "").split()
+        if not stats["completa"]:
+            reclasificar.append(fila["id"])
+        temas.extend((fila["id"], c) for c in categorias.clasificar_ficha(fila["texto"], cpvs))
         for perfil in perfiles:
             res = evaluar(
                 perfil, fila["texto"], cpvs,
@@ -726,7 +746,16 @@ def reevaluar(con: sqlite3.Connection, perfiles: list[Perfil], *,
                 stats["retirados"] += 1
         if len(altas) >= LOTE or len(bajas) >= LOTE:
             _volcar(con, altas, bajas)
+        if len(temas) >= LOTE:
+            categorias.borrar(con, reclasificar)
+            categorias.escribir(con, temas)
+            reclasificar.clear()
+            temas.clear()
     _volcar(con, altas, bajas)
+    categorias.borrar(con, reclasificar)
+    categorias.escribir(con, temas)
+    if todo_pendiente:
+        escribir_preferencia(con, categorias.CLAVE_VERSION, categorias.VERSION_CATEGORIAS)
 
     stats["huerfanos"] = _limpiar_huerfanos(con, nombres)
     con.commit()

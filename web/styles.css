@@ -142,7 +142,8 @@ body {
 .boton-pri,
 .boton-sec,
 .kpi,
-.ventana {
+.ventana,
+.chip-tema {
   -webkit-user-select: none;
   user-select: none;
 }
@@ -331,6 +332,48 @@ button.kpi.activo .t { color: var(--acento); }
   background: none; border: 0; color: var(--acento); cursor: pointer;
   font: inherit; font-size: var(--txt-sm); padding: 0 0 0 var(--e-2); text-decoration: underline;
 }
+
+/* --- Temáticas de «Otras licitaciones» ------------------------------------- */
+
+/* Chips de selección múltiple. Son botones con `aria-pressed`, que es lo que dice a un
+   lector de pantalla que se encienden y se apagan, y el estilo cuelga de ahí y no de
+   una clase: así el aspecto y lo que se anuncia no pueden contradecirse. */
+.chips-tema { display: flex; gap: var(--e-2); flex-wrap: wrap; margin: var(--e-1) 0 0; }
+.chip-tema {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e-2);
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-pill);
+  padding: 5px var(--e-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--txt-md);
+  color: var(--texto-sec);
+  box-shadow: var(--sombra-1);
+  transition: border-color var(--transicion), background var(--transicion),
+              color var(--transicion);
+}
+.chip-tema:hover { border-color: var(--borde-fuerte); color: var(--texto); }
+.chip-tema[aria-pressed="true"] {
+  border-color: var(--acento);
+  background: var(--acento-tenue);
+  color: var(--acento);
+  font-weight: 600;
+}
+/* «Resto» se aparta un poco de las temáticas IT: es el cajón de todo lo demás. */
+.chip-tema.resto { border-style: dashed; }
+.chip-tema .n {
+  font-size: var(--txt-xs);
+  color: var(--texto-ter);
+  font-variant-numeric: tabular-nums;
+}
+.chip-tema .n:empty { display: none; }
+.chip-tema[aria-pressed="true"] .n { color: var(--acento); }
+
+.filtros-otras { padding-top: var(--e-3); }
+.selector-ambito optgroup { font-weight: 650; }
 
 /* --- Avisos ---------------------------------------------------------------- */
 
@@ -695,6 +738,9 @@ input[type=search] { flex: 1 1 260px; min-width: 0; }
   border-color: var(--borde);
 }
 .pill.perfil { color: var(--acento); background: var(--acento-tenue); border-color: var(--acento-borde); }
+/* La temática de las fichas de «Otras licitaciones». Contorno y no relleno: describe en
+   qué estante está, no pide atención como el perfil. */
+.pill.tema { color: var(--verde); border-color: var(--verde); background: transparent; }
 .pill.plazo-ok { color: var(--verde); background: var(--verde-tenue); border-color: transparent; }
 .pill.plazo-pronto { color: var(--ambar); background: var(--ambar-tenue); border-color: var(--ambar); }
 .pill.plazo-vencido { color: var(--rojo); background: var(--rojo-tenue); border-color: transparent; }

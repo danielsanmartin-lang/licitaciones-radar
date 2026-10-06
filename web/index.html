@@ -63,6 +63,10 @@
       <symbol id="ico-visto" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></symbol>
       <symbol id="ico-cruz" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
       <symbol id="ico-punto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></symbol>
+      <symbol id="ico-capas" viewBox="0 0 24 24">
+        <path d="M12 4 3.5 8.5 12 13l8.5-4.5z"/>
+        <path d="M3.5 12.5 12 17l8.5-4.5M3.5 16.5 12 21l8.5-4.5"/>
+      </symbol>
     </defs>
   </svg>
   <!-- Pantalla de arranque. Tapa la aplicación entera mientras se hacen las dos cosas
@@ -150,6 +154,8 @@
   <nav class="vistas" role="tablist" aria-label="Vistas del radar">
     <button class="tab activo" role="tab" aria-selected="true" aria-controls="vista-bandeja"
             data-vista="bandeja"><svg class="ico" aria-hidden="true"><use href="#ico-bandeja"/></svg>Bandeja</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-otras"
+            data-vista="otras"><svg class="ico" aria-hidden="true"><use href="#ico-capas"/></svg>Otras licitaciones</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="vista-vencimientos"
             data-vista="vencimientos"><svg class="ico" aria-hidden="true"><use href="#ico-calendario"/></svg>Vencimientos</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="vista-adjudicatarios"
@@ -199,6 +205,50 @@
       <button id="mas" class="boton-sec mas" hidden>Cargar más</button>
     </section>
 
+    <!-- Lo que el radar descarga y no casa con ningún perfil, por temáticas. Lleva su
+         propia barra de filtros y no la de arriba: aquí no hay perfiles ni contadores de
+         cabecera, y sí temáticas y tipo de contrato. Lo que ya está en la Bandeja no
+         sale aquí, y marcar «Seguir» lo pasa a ella. -->
+    <section id="vista-otras" role="tabpanel" hidden>
+      <p class="contador">
+        Todo lo que el radar descarga y <strong>no</strong> casa con tus perfiles, ordenado
+        por temática. Lo que ya está en la Bandeja no sale aquí; si marcas
+        «Seguir», pasa a ella.
+      </p>
+      <div class="chips-tema" id="otras-temas" role="group" aria-label="Temáticas"></div>
+      <div class="filtros filtros-otras">
+        <input type="search" id="otras-q" placeholder="Buscar en objeto, órgano, expediente…" autocomplete="off">
+        <select id="otras-ccaa"><option value="">Toda España</option></select>
+        <select id="otras-tipo">
+          <option value="">Cualquier tipo</option>
+          <option value="servicios">Servicios</option>
+          <option value="suministros">Suministros</option>
+          <option value="obras">Obras</option>
+          <option value="otros">Otros tipos</option>
+        </select>
+        <select id="otras-importe">
+          <option value="">Cualquier importe</option>
+          <option value="25000">Desde 25.000 €</option>
+          <option value="50000">Desde 50.000 €</option>
+          <option value="100000">Desde 100.000 €</option>
+          <option value="300000">Desde 300.000 €</option>
+        </select>
+        <select id="otras-orden">
+          <option value="reciente">Ordenar: publicación más reciente</option>
+          <option value="urgencia">Ordenar: cierran antes</option>
+          <option value="antigua">Ordenar: publicación más antigua</option>
+          <option value="importe">Ordenar: mayor importe</option>
+        </select>
+        <label class="check"><input type="checkbox" id="otras-vivas" checked> Solo abiertas</label>
+        <label class="check"><input type="checkbox" id="otras-descartadas"> Ver descartadas</label>
+      </div>
+      <p id="otras-aviso" class="filtros-activos" hidden></p>
+      <p id="otras-contador" class="contador"></p>
+      <div id="otras-lista" class="lista"></div>
+      <p id="otras-vacio" class="vacio" hidden></p>
+      <button id="otras-mas" class="boton-sec mas" hidden>Cargar más</button>
+    </section>
+
     <section id="vista-vencimientos" role="tabpanel" hidden>
       <p class="contador">
         Contratos ya adjudicados que vencen pronto. Es la lista para llamar
@@ -213,6 +263,9 @@
       <p class="contador">
         Quién se lleva estos contratos. Agrupa las variantes de razón social.
       </p>
+      <p class="filtros-activos">
+        <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+      </p>
       <div id="lista-adjudicatarios" class="lista"></div>
     </section>
 
@@ -223,7 +276,7 @@
       </p>
       <div class="ventanas" id="analitica-rango"></div>
       <p class="filtros-activos" id="analitica-filtro">
-        <select id="analitica-perfil"><option value="">Todos los perfiles</option></select>
+        <select id="analitica-perfil" class="selector-ambito" aria-label="Ámbito"></select>
       </p>
       <p class="total-ventana" id="analitica-resumen"></p>
       <div id="analitica" class="analitica"></div>

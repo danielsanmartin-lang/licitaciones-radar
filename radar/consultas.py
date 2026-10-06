@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime
 
+from . import categorias
 from .model import ESTADOS_VIVOS
 
 ORDENES = {
@@ -311,6 +313,224 @@ def bandeja(
     return {"total": total, "total_sin_filtros": total_sin_filtros, "items": items}
 
 
+# --- Otras licitaciones -------------------------------------------------------
+
+# Lo que la pestaña «Otras licitaciones» deja fuera: todo lo que ya está en la Bandeja.
+#
+# Por EXPEDIENTE y no por ficha. Un expediente puede tener un anuncio que casa con un
+# perfil y otro que no —la corrección, un lote—: medido, 65 fichas sin coincidencia
+# viven dentro de 421 expedientes que sí la tienen. Excluyendo por ficha, el mismo
+# contrato saldría en las dos pestañas.
+#
+# Y lo que sigues o has presentado tampoco, aunque no case: también está en la Bandeja
+# (ver `ESTADOS_PROTEGIDOS`). Es lo que convierte «Siguiendo» en esta pestaña en «pásalo
+# a mi Bandeja», sin un botón aparte.
+_FUERA_DE_LA_BANDEJA = (
+    f"{_GRUPO} NOT IN (SELECT COALESCE(l2.clave_grupo, CAST(l2.id AS TEXT))"
+    "                  FROM matches m2 JOIN licitaciones l2 ON l2.id = m2.licitacion_id)"
+    f" AND COALESCE(r.estado, 'nuevo') NOT IN ({_marcas_protegidos})"
+)
+
+_DESDE_OTRAS = """FROM licitaciones l
+              LEFT JOIN revisiones r ON r.licitacion_id = l.id"""
+
+# El tipo de contrato llega en castellano, en catalán y mezclado («Suministros ·
+# Servicios»), así que se filtra por raíces. Un contrato mixto sale en los dos tipos,
+# que es justo lo que hay que ver de él.
+TIPOS_CONTRATO = {
+    "servicios": ("%ervici%", "%ervei%"),
+    "suministros": ("%uministr%", "%ubministr%"),
+    "obras": ("%obra%", "%obres%"),
+}
+
+# La urgencia de `ORDENES` desempata por puntuación, que aquí no existe: queda a NULL
+# para todas y el desempate pasa al `l.id` final. «Mejor puntuación» no se ofrece.
+ORDENES_OTRAS = {k: v for k, v in ORDENES.items() if k != "puntuacion"}
+
+
+def _condiciones_otras(con, *, categorias_elegidas, tipo, **filtros) -> tuple[list, list]:
+    """El WHERE de la pestaña: el de la Bandeja más las temáticas y el tipo."""
+    where, params = _condiciones(con, **filtros)
+    if categorias_elegidas:
+        trozos = []
+        it = [c for c in categorias_elegidas if c != categorias.RESTO]
+        if it:
+            trozos.append("l.id IN (SELECT licitacion_id FROM categorias"
+                          f" WHERE categoria IN ({', '.join('?' * len(it))}))")
+            params.extend(it)
+        if categorias.RESTO in categorias_elegidas:
+            # «Lo que no es IT» y no «lo que lleva la etiqueta resto»: son lo mismo, pero
+            # la lista de lo IT tiene 84.000 fichas y la del resto 620.000, y SQLite
+            # materializa la lista entera antes de mirar la primera fila.
+            todas = list(categorias.POR_CLAVE)
+            trozos.append("l.id NOT IN (SELECT licitacion_id FROM categorias"
+                          f" WHERE categoria IN ({', '.join('?' * len(todas))}))")
+            params.extend(todas)
+        where.append("(" + " OR ".join(trozos) + ")")
+    if tipo in TIPOS_CONTRATO:
+        patrones = TIPOS_CONTRATO[tipo]
+        where.append("(" + " OR ".join("l.tipo_contrato LIKE ?" for _ in patrones) + ")")
+        params.extend(patrones)
+    elif tipo == "otros":
+        todos = [p for ps in TIPOS_CONTRATO.values() for p in ps]
+        where.append("NOT (" + " OR ".join("COALESCE(l.tipo_contrato, '') LIKE ?"
+                                           for _ in todos) + ")")
+        params.extend(todos)
+    return [_FUERA_DE_LA_BANDEJA, *where], [*ESTADOS_PROTEGIDOS, *params]
+
+
+def otras(
+    con: sqlite3.Connection,
+    *,
+    categorias_elegidas: list[str] | None = None,
+    busqueda: str | None = None,
+    solo_vivas: bool = True,
+    ccaa: str | None = None,
+    tipo: str | None = None,
+    importe_min: float | None = None,
+    estado_revision: str | None = None,
+    orden: str = ORDEN_POR_DEFECTO,
+    limite: int = 100,
+    offset: int = 0,
+) -> dict:
+    """Lo que el radar descarga y no casa con ningún perfil, ordenado por temáticas.
+
+    Es casi toda la base —695.000 expedientes—, así que la consulta no puede tener la
+    forma de `bandeja()`, que arrastra `l.*` por las funciones de ventana: con el
+    histórico entero eso ordenaría gigas de `raw` para enseñar cien tarjetas. Aquí se
+    hace en dos pasos. El primero decide qué expedientes y en qué orden con las cuatro
+    columnas que hacen falta; el segundo trae la ficha completa solo de los cien de la
+    página.
+
+    Devuelve además `por_categoria`: cuántos expedientes de cada temática cumplen el
+    resto de filtros, para poner la cifra en cada chip.
+    """
+    categorias_elegidas = [c for c in (categorias_elegidas or [])
+                           if c in categorias.POR_CLAVE or c == categorias.RESTO]
+    filtros = dict(estado_revision=estado_revision, solo_vivas=solo_vivas, ccaa=ccaa,
+                   importe_min=importe_min, busqueda=busqueda)
+    where, params = _condiciones_otras(
+        con, categorias_elegidas=categorias_elegidas, tipo=tipo, **filtros)
+    orden_sql = ORDENES_OTRAS.get(orden, ORDENES_OTRAS[ORDEN_POR_DEFECTO])
+
+    filas = con.execute(
+        f"""WITH f AS (
+                SELECT l.id, {_GRUPO} AS g, l.fecha_publicacion, l.importe_referencia,
+                       l.fecha_limite_presentacion
+                  {_DESDE_OTRAS}
+                 WHERE {" AND ".join(where)}
+            )
+            SELECT * FROM (
+                SELECT f.id, f.importe_referencia, NULL AS puntuacion,
+                       CASE
+                         WHEN f.fecha_limite_presentacion IS NULL THEN 9999
+                         ELSE CAST(julianday(substr(f.fecha_limite_presentacion, 1, 10))
+                                   - julianday('now') AS INTEGER)
+                       END AS orden_urgencia,
+                       COUNT(*) OVER (PARTITION BY g) AS anuncios,
+                       MIN(f.fecha_publicacion) OVER (PARTITION BY g) AS primera_publicacion,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY g ORDER BY f.fecha_publicacion DESC, f.id DESC
+                       ) AS _rn
+                  FROM f
+            ) l
+            WHERE _rn = 1
+            ORDER BY {orden_sql}
+            LIMIT ? OFFSET ?""",
+        [*params, limite, offset],
+    ).fetchall()
+
+    total = con.execute(
+        f"SELECT COUNT(DISTINCT {_GRUPO}) {_DESDE_OTRAS} WHERE {' AND '.join(where)}",
+        params,
+    ).fetchone()[0]
+
+    # Las cifras de los chips: los mismos filtros, menos el de temática. Solo cuando el
+    # conjunto es manejable —lo abierto, o una búsqueda—: con el histórico entero son
+    # 780.000 filas de `categorias` cruzadas una a una con su ficha, ocho segundos para
+    # poner números en unos botones. Entonces los chips salen sin cifra.
+    por_categoria = None
+    if solo_vivas or busqueda:
+        where_sin, params_sin = _condiciones_otras(
+            con, categorias_elegidas=None, tipo=tipo, **filtros)
+        por_categoria = {
+            f["categoria"]: f["total"]
+            for f in con.execute(
+                f"""SELECT c.categoria, COUNT(DISTINCT {_GRUPO}) AS total
+                      {_DESDE_OTRAS}
+                      JOIN categorias c ON c.licitacion_id = l.id
+                     WHERE {" AND ".join(where_sin)}
+                     GROUP BY c.categoria""",
+                params_sin,
+            )
+        }
+
+    ids = [f["id"] for f in filas]
+    completas = _fichas_completas(con, ids)
+    items = []
+    for f in filas:
+        d = completas[f["id"]]
+        d["anuncios"] = f["anuncios"]
+        d["primera_publicacion"] = f["primera_publicacion"]
+        d["dias_restantes"] = _dias_restantes(d.get("fecha_limite_presentacion"))
+        dias = _dias_desde(f["primera_publicacion"])
+        d["dias_desde_publicacion"] = dias
+        d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
+        items.append(d)
+
+    return {
+        "total": total,
+        "items": items,
+        "por_categoria": por_categoria,
+        "clasificacion_pendiente": not categorias.al_dia(con),
+    }
+
+
+def _fichas_completas(con: sqlite3.Connection, ids: list[int]) -> dict[int, dict]:
+    """La ficha de cada id, como la tarjeta de la bandeja la espera, con sus temáticas."""
+    if not ids:
+        return {}
+    marcas = ", ".join("?" * len(ids))
+    salida: dict[int, dict] = {}
+    for f in con.execute(
+        f"""SELECT l.*, COALESCE(r.estado, 'nuevo') AS estado_revision,
+                   r.asignado_a, r.notas, r.motivo_descarte
+              FROM licitaciones l LEFT JOIN revisiones r ON r.licitacion_id = l.id
+             WHERE l.id IN ({marcas})""",
+        ids,
+    ):
+        d = dict(f)
+        d["cpv"] = (d.get("cpv") or "").split()
+        try:
+            d["urls_pliegos"] = json.loads(d.get("urls_pliegos") or "[]")
+        except json.JSONDecodeError:
+            d["urls_pliegos"] = []
+        for columna in ("raw", "texto_busqueda", "texto_norm", "texto_reglas_norm"):
+            d.pop(columna, None)
+        d["perfil"] = None
+        d["categorias"] = []
+        salida[d["id"]] = d
+    for f in con.execute(
+        f"SELECT licitacion_id, categoria FROM categorias WHERE licitacion_id IN ({marcas})",
+        ids,
+    ):
+        salida[f["licitacion_id"]]["categorias"].append(f["categoria"])
+    orden = {c: i for i, c in enumerate([*categorias.POR_CLAVE, categorias.RESTO])}
+    for d in salida.values():
+        d["categorias"].sort(key=lambda c: orden.get(c, 99))
+    return salida
+
+
+def categorias_de(con: sqlite3.Connection, licitacion_id: int) -> list[str]:
+    """Las temáticas de una ficha, en el orden en que se enseñan los chips."""
+    orden = {c: i for i, c in enumerate([*categorias.POR_CLAVE, categorias.RESTO])}
+    return sorted(
+        (f[0] for f in con.execute(
+            "SELECT categoria FROM categorias WHERE licitacion_id = ?", (licitacion_id,))),
+        key=lambda c: orden.get(c, 99),
+    )
+
+
 def resumen(con: sqlite3.Connection, *, en_marcha: bool = False,
             perfiles_activos: list[str] | None = None) -> dict:
     """Cifras de cabecera y salud de las fuentes.
@@ -533,14 +753,82 @@ def normalizar_empresa(nombre: str | None) -> str | None:
     return re.sub(r"\s+", " ", t).strip() or None
 
 
-def competencia(con: sqlite3.Connection, *, limite: int = 20) -> list[dict]:
+def _fichas_del_ambito(ambito: Ambito | None) -> tuple[str, list]:
+    """Las fichas sobre las que se hace el ranking, una vez cada una.
+
+    Sin ámbito son las que casan con algún perfil, como fue siempre la pestaña. Se
+    deduplica aquí y no con un `GROUP BY l.id` sobre el cruce porque, además, es lo que
+    decide por dónde entra la consulta (ver `competencia`).
+    """
+    if ambito is None or not (ambito.perfil or ambito.categoria):
+        return "SELECT DISTINCT licitacion_id AS lid FROM matches", []
+    sub, params = ambito.fichas()
+    return f"SELECT lid FROM ({sub})", params
+
+
+def _ranking_empresas(filas, limite: int) -> tuple[list[dict], int]:
+    """Agrupa por empresa —con sus variantes de razón social— y ordena.
+
+    Lo comparten la pestaña Adjudicatarios y el bloque «Quién gana» de la Analítica: si
+    cada uno agrupara a su manera, la misma empresa saldría con dos cifras distintas.
+    `filas` trae `adjudicatario`, `importe`, `organo` y, opcionalmente, `g` (el
+    expediente): con `g` se cuentan expedientes, sin él, licitaciones. Devuelve las
+    `limite` primeras y cuántas empresas distintas había en total.
+    """
+    claves: dict[str, str | None] = {}
+    agrupado: dict[str, dict] = {}
+    for f in filas:
+        nombre = f["adjudicatario"]
+        if nombre not in claves:
+            # Memorizado: en toda la IT son decenas de miles de filas y unos pocos
+            # miles de nombres, y cada normalización son veinte expresiones regulares.
+            claves[nombre] = normalizar_empresa(nombre)
+        clave = claves[nombre]
+        if not clave:
+            continue
+        entrada = agrupado.setdefault(
+            clave, {"empresa": nombre, "contratos": 0, "importe": 0.0,
+                    "organos": set(), "variantes": set(), "_importes": {}}
+        )
+        g = f["g"] if "g" in f.keys() else None
+        if g is None:
+            entrada["contratos"] += 1
+            entrada["importe"] += f["importe"] or 0
+        else:
+            # Por expediente: un contrato de ocho lotes ganados por la misma empresa es
+            # UN contrato, y su importe es el mayor publicado, no la suma de anuncios.
+            previo = entrada["_importes"].get(g)
+            if previo is None:
+                entrada["contratos"] += 1
+            entrada["_importes"][g] = max(previo or 0, f["importe"] or 0)
+        if f["organo"]:
+            entrada["organos"].add(f["organo"])
+        entrada["variantes"].add(nombre)
+
+    salida = []
+    for datos in agrupado.values():
+        # Se muestra la variante más larga: suele ser la razón social completa.
+        datos["empresa"] = max(datos["variantes"], key=len)
+        datos["organos"] = len(datos["organos"])
+        importes = datos.pop("_importes")
+        if importes:
+            datos["importe"] = sum(importes.values())
+        datos.pop("variantes")
+        salida.append(datos)
+    salida.sort(key=lambda d: (-d["contratos"], -d["importe"]))
+    return salida[:limite], len(salida)
+
+
+def competencia(con: sqlite3.Connection, *, ambito: Ambito | None = None,
+                limite: int = 20) -> list[dict]:
     """Quién se está llevando estos contratos y por cuánto.
 
     Sale gratis del historial y probablemente vale más que las alertas de lo nuevo:
     dice contra quién se compite, a qué precios y en qué organismos.
 
     En la aplicación esto es la pestaña «Adjudicatarios» (`/api/adjudicatarios`); el
-    nombre de aquí se quedó del original y no lo ve nadie desde fuera.
+    nombre de aquí se quedó del original y no lo ve nadie desde fuera. Con `ambito` se
+    mira un perfil concreto o una temática del mercado en lugar de todos los perfiles.
     """
     # Deduplicar por licitación no es opcional: sin ello, una que casa con dos
     # perfiles se contaba dos veces y el ranking no cuadraba con su propio
@@ -550,48 +838,28 @@ def competencia(con: sqlite3.Connection, *, limite: int = 20) -> list[dict]:
     # consulta: partiendo de las ~3.000 filas de `matches` y buscando cada
     # licitación por clave primaria, en vez de recorrer las 450.000 de
     # `licitaciones`. Es la misma lección que `contratos_de`: 4,6 s -> 0,03 s.
+    sub, params = _fichas_del_ambito(ambito)
     filas = con.execute(
-        """SELECT l.adjudicatario,
+        f"""SELECT l.adjudicatario,
                   COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe,
                   l.organo
-             FROM (SELECT DISTINCT licitacion_id FROM matches) m
-             JOIN licitaciones l ON l.id = m.licitacion_id
-            WHERE l.adjudicatario IS NOT NULL"""
+             FROM ({sub}) m
+             JOIN licitaciones l ON l.id = m.lid
+            WHERE l.adjudicatario IS NOT NULL""",
+        params,
     ).fetchall()
-
-    agrupado: dict[str, dict] = {}
-    for f in filas:
-        clave = normalizar_empresa(f["adjudicatario"])
-        if not clave:
-            continue
-        entrada = agrupado.setdefault(
-            clave, {"empresa": f["adjudicatario"], "contratos": 0, "importe": 0.0,
-                    "organos": set(), "variantes": set()}
-        )
-        entrada["contratos"] += 1
-        entrada["importe"] += f["importe"] or 0
-        if f["organo"]:
-            entrada["organos"].add(f["organo"])
-        entrada["variantes"].add(f["adjudicatario"])
-
-    salida = []
-    for datos in agrupado.values():
-        # Se muestra la variante más larga: suele ser la razón social completa.
-        datos["empresa"] = max(datos["variantes"], key=len)
-        datos["organos"] = len(datos["organos"])
-        datos.pop("variantes")
-        salida.append(datos)
-    salida.sort(key=lambda d: (-d["contratos"], -d["importe"]))
-    return salida[:limite]
+    return _ranking_empresas(filas, limite)[0]
 
 
-def contratos_de(con: sqlite3.Connection, empresa: str, *, limite: int = 60) -> list[dict]:
+def contratos_de(con: sqlite3.Connection, empresa: str, *,
+                 ambito: Ambito | None = None, limite: int = 60) -> list[dict]:
     """Contratos de un adjudicatario, agrupando sus variantes de razón social.
 
     El filtro fino tiene que hacerse en Python porque la agrupación de razones
     sociales no se puede expresar en SQL. Traer las 99.000 filas adjudicadas de la
     tabla entera para descartarlas aquí tardaba 2,2 segundos; entrando por
-    `matches` baja a milisegundos, porque son unos cientos de filas.
+    `matches` —o por `categorias`, con una temática— baja a milisegundos, porque son
+    unos cientos de filas.
 
     Se probó además a acotar con un `LIKE` sobre el nombre, y era un error: el LIKE
     va contra la columna sin normalizar, que lleva acentos ("INFORMACIÓN"), mientras
@@ -602,14 +870,16 @@ def contratos_de(con: sqlite3.Connection, empresa: str, *, limite: int = 60) -> 
     if not clave:
         return []
 
+    sub, params = _fichas_del_ambito(ambito)
     filas = con.execute(
-        """SELECT l.id, l.objeto, l.organo, l.adjudicatario, l.fecha_adjudicacion,
+        f"""SELECT l.id, l.objeto, l.organo, l.adjudicatario, l.fecha_adjudicacion,
                   l.fecha_fin_prevista, l.url_detalle,
                   COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe
              FROM licitaciones l
             WHERE l.adjudicatario IS NOT NULL
-              AND l.id IN (SELECT licitacion_id FROM matches)
-            ORDER BY l.fecha_adjudicacion DESC, l.id ASC"""
+              AND l.id IN ({sub})
+            ORDER BY l.fecha_adjudicacion DESC, l.id ASC""",
+        params,
     ).fetchall()
     salida = [dict(f) for f in filas if normalizar_empresa(f["adjudicatario"]) == clave]
     return salida[:limite]
@@ -874,6 +1144,7 @@ PLAZO_MAXIMO_CREIBLE = 400
 # una tarjeta sin que haya que hacer scroll dentro de ella.
 TOP_ORGANOS = 8
 TOP_PROCEDIMIENTOS = 7
+TOP_ADJUDICATARIOS = 10
 
 # La fuente catalana publica el procedimiento en catalán, así que sin esto «Obert» y
 # «Abierto» salen como dos barras distintas de lo que es el mismo procedimiento. La clave
@@ -908,7 +1179,63 @@ def _condicion_viva() -> tuple[str, list]:
     )
 
 
-def _entrada_expedientes(perfil: str | None = None,
+@dataclass(frozen=True)
+class Ambito:
+    """Sobre qué se calcula la Analítica o el ranking: los perfiles, o una temática.
+
+    Sin nada, son todos los perfiles, que es lo que fue siempre. Con `perfil`, uno de
+    ellos. Con `categoria`, una temática del mercado (ver `radar/categorias.py`) —case o
+    no con los perfiles, porque la pregunta ahí es cómo es ese mercado, no qué te ha
+    traído el radar—, o `it` para todas juntas.
+
+    `resto` no se admite a propósito: son unas 625.000 fichas de obras, limpieza y
+    suministros, la primera Analítica tardaría decenas de segundos y no diría nada del
+    mercado que interesa aquí.
+    """
+
+    perfil: str | None = None
+    categoria: str | None = None
+
+    @classmethod
+    def de(cls, perfil: str | None = None, categoria: str | None = None) -> "Ambito":
+        if categoria and categoria not in categorias.AMBITOS_ANALITICA:
+            raise ValueError(f"temática desconocida o no analizable: {categoria}")
+        return cls(perfil=None if categoria else (perfil or None),
+                   categoria=categoria or None)
+
+    @property
+    def mercado(self) -> bool:
+        return self.categoria is not None
+
+    @property
+    def etiqueta(self) -> str:
+        if self.categoria:
+            return categorias.NOMBRES[self.categoria]
+        return self.perfil or "Todos los perfiles"
+
+    def fichas(self) -> tuple[str, list]:
+        """Un SELECT con una fila por ficha del ámbito: `lid` y su puntuación `punt`.
+
+        La puntuación solo existe para los perfiles; en una temática va a NULL, y los
+        bloques que dependen de ella (la cartera) no se calculan.
+        """
+        if self.categoria == categorias.TODA_LA_IT:
+            claves = list(categorias.POR_CLAVE)
+            marcas = ", ".join("?" * len(claves))
+            return (f"SELECT licitacion_id AS lid, NULL AS punt FROM categorias"
+                    f" WHERE categoria IN ({marcas}) GROUP BY licitacion_id", claves)
+        if self.categoria:
+            return ("SELECT licitacion_id AS lid, NULL AS punt FROM categorias"
+                    " WHERE categoria = ?", [self.categoria])
+        sub = "SELECT licitacion_id AS lid, MAX(puntuacion) AS punt FROM matches"
+        params: list = []
+        if self.perfil:
+            sub += " WHERE perfil = ?"
+            params.append(self.perfil)
+        return sub + " GROUP BY licitacion_id", params
+
+
+def _entrada_expedientes(ambito: Ambito | None = None,
                          joins: str = "") -> tuple[str, list]:
     """El FROM/WHERE que comparten todos los bloques de la Analítica.
 
@@ -920,6 +1247,8 @@ def _entrada_expedientes(perfil: str | None = None,
     que escribirlo: confiado al planificador, cualquier filtro de fecha en el WHERE le
     hace preferir `idx_lic_pub` y recorrer las 673.755 licitaciones en vez de las 3.705
     de `matches`. Y el perfil va dentro de ese subquery para que siga entrando por ahí.
+    Con una temática es lo mismo, entrando por `categorias` e `idx_cat_categoria`: son
+    unos miles de fichas por temática y 84.000 en toda la IT.
 
     La puntuación se pre-agrega aquí (`MAX(puntuacion) GROUP BY licitacion_id`) y no con
     un `MAX(m.puntuacion)` sobre el cruce: así un expediente que casa con dos perfiles no
@@ -929,12 +1258,7 @@ def _entrada_expedientes(perfil: str | None = None,
     lee `licitaciones_versiones`—. Se pasa en lugar de duplicar la entrada porque duplicarla
     es exactamente cómo un bloque se deja el `!= 'descartado'` y empieza a contar de más.
     """
-    sub = "SELECT licitacion_id AS lid, MAX(puntuacion) AS punt FROM matches"
-    params: list = []
-    if perfil:
-        sub += " WHERE perfil = ?"
-        params.append(perfil)
-    sub += " GROUP BY licitacion_id"
+    sub, params = (ambito or Ambito()).fichas()
     return (
         f" FROM ({sub}) mm"
         " JOIN licitaciones l ON l.id = mm.lid"
@@ -962,7 +1286,7 @@ def _rango(desde: str | None, hasta: str | None) -> tuple[str, list]:
     return (" HAVING " + " AND ".join(trozos)) if trozos else "", params
 
 
-def _expedientes(perfil: str | None, desde: str | None, hasta: str | None,
+def _expedientes(ambito: "Ambito | None", desde: str | None, hasta: str | None,
                  columnas: str = "") -> tuple[str, list]:
     """Un expediente por fila, con su mes, su importe y su puntuación.
 
@@ -975,7 +1299,7 @@ def _expedientes(perfil: str | None, desde: str | None, hasta: str | None,
     bloque no coincide con el de la tarjeta, y por eso la métrica se etiqueta «el mayor
     importe publicado del expediente» y los tramos no son clicables.
     """
-    entrada, params = _entrada_expedientes(perfil)
+    entrada, params = _entrada_expedientes(ambito)
     having, p_rango = _rango(desde, hasta)
     extra = f", {columnas}" if columnas else ""
     sql = (
@@ -989,7 +1313,7 @@ def _expedientes(perfil: str | None, desde: str | None, hasta: str | None,
     return sql, params + p_rango
 
 
-def _solo_en_rango(perfil: str | None, desde: str | None,
+def _solo_en_rango(ambito: "Ambito | None", desde: str | None,
                    hasta: str | None) -> tuple[str, list]:
     """Acota una consulta por FILAS a los expedientes que están en el rango temporal.
 
@@ -1000,7 +1324,7 @@ def _solo_en_rango(perfil: str | None, desde: str | None,
     """
     if not desde and not hasta:
         return "", []
-    base, params = _expedientes(perfil, desde, hasta)
+    base, params = _expedientes(ambito, desde, hasta)
     return f" AND {_GRUPO} IN (SELECT g FROM ({base}))", params
 
 
@@ -1069,7 +1393,7 @@ DIVISIONES_CPV = {
 }
 
 
-def _bloque_calendario(con, perfil, desde, hasta) -> dict:
+def _bloque_calendario(con, ambito, desde, hasta) -> dict:
     """En qué meses sale el trabajo. El bloque más sólido de la pestaña.
 
     Medido sobre la base real: diciembre publica 2,4 veces más que agosto (97,5 contra 41
@@ -1080,14 +1404,14 @@ def _bloque_calendario(con, perfil, desde, hasta) -> dict:
     usuario no ingesta durante una semana, el número de días con datos baja solo y la
     pestaña lo confiesa sin que nadie tenga que programarlo.
     """
-    base, params = _expedientes(perfil, desde, hasta)
+    base, params = _expedientes(ambito, desde, hasta)
     meses = [
         {"mes": f["mes"], "expedientes": f["expedientes"]}
         for f in con.execute(
             f"SELECT mes, COUNT(*) AS expedientes FROM ({base})"
             " WHERE mes IS NOT NULL GROUP BY mes ORDER BY mes", params)
     ]
-    entrada, p_entrada = _entrada_expedientes(perfil)
+    entrada, p_entrada = _entrada_expedientes(ambito)
     corte = con.execute(
         f"SELECT MAX(l.fecha_publicacion){entrada}", p_entrada).fetchone()[0]
 
@@ -1129,7 +1453,7 @@ def _bloque_calendario(con, perfil, desde, hasta) -> dict:
     }
 
 
-def _bloque_importes(con, perfil, desde, hasta) -> dict:
+def _bloque_importes(con, ambito, desde, hasta) -> dict:
     """De qué tamaño son estas operaciones de verdad.
 
     Mediana y tramos, nunca media ni suma: la media son 4.052.863 € contra una mediana de
@@ -1141,7 +1465,7 @@ def _bloque_importes(con, perfil, desde, hasta) -> dict:
     no sirve de nada; una lista donde se ve que el 3.º, el 4.º y el 5.º son el mismo
     contrato enseña a desconfiar de las sumas para siempre.
     """
-    base, params = _expedientes(perfil, desde, hasta)
+    base, params = _expedientes(ambito, desde, hasta)
     valores = [f[0] for f in con.execute(
         f"SELECT imp FROM ({base}) WHERE imp IS NOT NULL ORDER BY imp", params)]
     total = con.execute(f"SELECT COUNT(*) FROM ({base})", params).fetchone()[0]
@@ -1149,8 +1473,8 @@ def _bloque_importes(con, perfil, desde, hasta) -> dict:
     # Los cinco mayores, a nivel de anuncio y quedándose el primero de cada expediente:
     # así el que se enseña es exactamente el anuncio del que sale el importe del bloque.
     # El LIMIT holgado es el colchón para los expedientes con varios anuncios.
-    entrada, p_entrada = _entrada_expedientes(perfil)
-    filtro, p_rango = _solo_en_rango(perfil, desde, hasta)
+    entrada, p_entrada = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
     vistos, mayores = set(), []
     for f in con.execute(
         f"SELECT {_GRUPO} AS g, l.id, l.organo, l.objeto, l.fuente,"
@@ -1178,7 +1502,7 @@ def _bloque_importes(con, perfil, desde, hasta) -> dict:
     }
 
 
-def _bloque_baja(con, perfil, desde, hasta) -> dict:
+def _bloque_baja(con, ambito, desde, hasta) -> dict:
     """Cuánto por debajo del presupuesto se están cerrando estos contratos.
 
     Se compara contra `importe_sin_iva` —el presupuesto base de licitación— y NO contra
@@ -1195,8 +1519,8 @@ def _bloque_baja(con, perfil, desde, hasta) -> dict:
     presupuesto como precio de adjudicación —la fuente no publicó la cifra— y 262 comparan
     escalas distintas (un lote contra el total, una anualidad contra tres años).
     """
-    entrada, params = _entrada_expedientes(perfil)
-    filtro, p_rango = _solo_en_rango(perfil, desde, hasta)
+    entrada, params = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
     filas = con.execute(
         "SELECT pres, adj FROM ("
         "  SELECT l.importe_sin_iva AS pres, l.importe_adjudicacion AS adj,"
@@ -1245,7 +1569,7 @@ def _bloque_baja(con, perfil, desde, hasta) -> dict:
     }
 
 
-def _bloque_renovaciones(con, perfil) -> dict:
+def _bloque_renovaciones(con, ambito) -> dict:
     """Cuántos contratos se acaban antes de que salga el pliego nuevo.
 
     Es el momento comercial bueno: cuando el contrato del incumbente se está acabando y
@@ -1259,7 +1583,7 @@ def _bloque_renovaciones(con, perfil) -> dict:
     Ignora el rango temporal de la pestaña, porque «vence en seis meses» es de AHORA:
     filtrarlo por «publicados en 2024» daría un número que no significa nada.
     """
-    entrada, params = _entrada_expedientes(perfil)
+    entrada, params = _entrada_expedientes(ambito)
     f = con.execute(
         "SELECT COUNT(*) AS expedientes, COUNT(inc) AS con_incumbente FROM ("
         f"  SELECT {_GRUPO} AS g, MAX(l.adjudicatario) AS inc"
@@ -1270,7 +1594,7 @@ def _bloque_renovaciones(con, perfil) -> dict:
             "meses": MESES_RENOVACION, "siempre_a_fecha_de_hoy": True}
 
 
-def _bloque_ciclo(con, perfil, desde, hasta) -> dict:
+def _bloque_ciclo(con, ambito, desde, hasta) -> dict:
     """Cuánto tarda una licitación en decidirse, para saber cuándo entra en el forecast.
 
     Se mide sobre `licitaciones_versiones.fecha_cambio` y NUNCA sobre `detectado_en`: las
@@ -1290,8 +1614,8 @@ def _bloque_ciclo(con, perfil, desde, hasta) -> dict:
     observado, no la resta de dos fichas que no se hablan.
     """
     entrada, params = _entrada_expedientes(
-        perfil, joins=" JOIN licitaciones_versiones v ON v.licitacion_id = l.id")
-    filtro, p_rango = _solo_en_rango(perfil, desde, hasta)
+        ambito, joins=" JOIN licitaciones_versiones v ON v.licitacion_id = l.id")
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
     filas = con.execute(
         "SELECT CAST(julianday(substr(adj, 1, 10))"
         "          - julianday(substr(pub, 1, 10)) AS INTEGER) AS dias FROM ("
@@ -1319,7 +1643,7 @@ def _bloque_ciclo(con, perfil, desde, hasta) -> dict:
     }
 
 
-def _bloque_cpv(con, perfil, desde, hasta) -> dict:
+def _bloque_cpv(con, ambito, desde, hasta) -> dict:
     """En qué epígrafes cae esto, y cuáles son literalmente el producto.
 
     Es el único bloque que produce una acción sobre la configuración y no sobre un
@@ -1331,7 +1655,7 @@ def _bloque_cpv(con, perfil, desde, hasta) -> dict:
     por expediente es lo que evita contar tres veces el mismo código cuando el expediente
     tiene tres anuncios.
     """
-    base, params = _expedientes(perfil, desde, hasta,
+    base, params = _expedientes(ambito, desde, hasta,
                                columnas="GROUP_CONCAT(l.cpv, ' ') AS cpvs")
     divisiones: dict = {}
     codigos: dict = {}
@@ -1355,14 +1679,16 @@ def _bloque_cpv(con, perfil, desde, hasta) -> dict:
             {"division": d, "nombre": DIVISIONES_CPV.get(d, "otros"), "expedientes": n}
             for d, n in sorted(divisiones.items(), key=lambda x: -x[1])[:6]
         ],
-        "del_producto": [
+        # Los tres códigos del producto solo tienen sentido mirando los perfiles: en
+        # una temática del mercado no son «lo tuyo», y en la de redes saldrían a cero.
+        "del_producto": [] if ambito and ambito.mercado else [
             {"codigo": c, "nombre": nombre, "expedientes": codigos.get(c, 0)}
             for c, nombre in CPV_DEL_PRODUCTO.items()
         ],
     }
 
 
-def _bloque_cartera(con, perfil) -> dict:
+def _bloque_cartera(con, ambito) -> dict:
     """Si esto es un pipeline o un archivo histórico. Va último, y es el que más importa.
 
     Un tablero que enseña 2.716 coincidencias y no dice que solo 45 tienen plazo abierto
@@ -1376,7 +1702,7 @@ def _bloque_cartera(con, perfil) -> dict:
 
     Ignora el rango temporal: «con plazo abierto» es de ahora, no de 2024.
     """
-    entrada, params = _entrada_expedientes(perfil)
+    entrada, params = _entrada_expedientes(ambito)
     viva, p_viva = _condicion_viva()
     f = con.execute(
         "SELECT COUNT(*) AS expedientes,"
@@ -1486,7 +1812,7 @@ def _reparto_por_comunidad(filas: list, campo: str) -> dict:
     }
 
 
-def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
+def _bloque_comunidades(con, ambito, desde, hasta) -> dict:
     """Dónde se adjudica el dinero, y dónde hay dinero vivo ahora mismo.
 
     Es el ÚNICO sitio de la pestaña donde se suman importes, y hace falta explicar por
@@ -1517,7 +1843,7 @@ def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
     de hoy —un pliego abierto publicado en 2024 sigue abierto hoy— y lo ignoran, igual
     que la cartera y las renovaciones.
     """
-    entrada, params = _entrada_expedientes(perfil)
+    entrada, params = _entrada_expedientes(ambito)
     viva, p_viva = _condicion_viva()
     # El orden de los parámetros es el de APARICIÓN en el texto: `viva` va en el SELECT,
     # que se escribe antes del FROM donde entra el perfil. La misma trampa que ya
@@ -1568,7 +1894,7 @@ def _bloque_comunidades(con, perfil, desde, hasta) -> dict:
     return datos
 
 
-def _bloque_plazo(con, perfil, desde, hasta) -> dict:
+def _bloque_plazo(con, ambito, desde, hasta) -> dict:
     """Cuántos días hay desde que sale el anuncio hasta que se cierra el plazo.
 
     No es lo mismo que el ciclo: aquél mide cuándo se DECIDE —para el forecast— y éste
@@ -1581,8 +1907,8 @@ def _bloque_plazo(con, perfil, desde, hasta) -> dict:
     publicación —anuncios que repiten un plazo ya vencido— y se cuentan aparte en vez de
     colarlos como ceros, que hundirían la mediana.
     """
-    entrada, params = _entrada_expedientes(perfil)
-    filtro, p_rango = _solo_en_rango(perfil, desde, hasta)
+    entrada, params = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
     filas = con.execute(
         "SELECT pub, lim FROM ("
         "  SELECT l.fecha_publicacion AS pub, l.fecha_limite_presentacion AS lim,"
@@ -1630,7 +1956,7 @@ def _bloque_plazo(con, perfil, desde, hasta) -> dict:
     }
 
 
-def _bloque_procedimiento(con, perfil, desde, hasta) -> dict:
+def _bloque_procedimiento(con, ambito, desde, hasta) -> dict:
     """Por qué puerta se entra: abierto, simplificado, restringido o por invitación.
 
     Importa porque no todas se pueden pelear igual. En un negociado sin publicidad no se
@@ -1640,7 +1966,7 @@ def _bloque_procedimiento(con, perfil, desde, hasta) -> dict:
     Los nombres se normalizan al castellano porque la fuente catalana publica en catalán
     y «Obert» y «Abierto» son el mismo procedimiento partido en dos barras.
     """
-    base, params = _expedientes(perfil, desde, hasta,
+    base, params = _expedientes(ambito, desde, hasta,
                                 columnas="MAX(l.procedimiento) AS proc")
     cuenta: dict = {}
     total = sin_dato = 0
@@ -1671,7 +1997,7 @@ def _bloque_procedimiento(con, perfil, desde, hasta) -> dict:
     }
 
 
-def _bloque_organos(con, perfil, desde, hasta) -> dict:
+def _bloque_organos(con, ambito, desde, hasta) -> dict:
     """Quién compra esto de verdad, y cuáles repiten.
 
     Se agrupa por NOMBRE y no por `nif_organo`, aunque el NIF parezca lo correcto: 947
@@ -1683,7 +2009,7 @@ def _bloque_organos(con, perfil, desde, hasta) -> dict:
     de nombres parecidos junta cosas que no son la misma, y la pestaña lo advierte en vez
     de arreglarlo por su cuenta.
     """
-    base, params = _expedientes(perfil, desde, hasta, columnas="MAX(l.organo) AS organo")
+    base, params = _expedientes(ambito, desde, hasta, columnas="MAX(l.organo) AS organo")
     cuenta: dict = {}
     total = sin_organo = 0
     for f in con.execute(f"SELECT organo FROM ({base})", params):
@@ -1700,6 +2026,38 @@ def _bloque_organos(con, perfil, desde, hasta) -> dict:
         "sin_organo": sin_organo,
         "distintos": len(cuenta),
         "organos": [{"organo": k, "expedientes": n} for k, n in orden[:TOP_ORGANOS]],
+    }
+
+
+def _bloque_adjudicatarios(con, ambito, desde, hasta) -> dict:
+    """Quién gana: las empresas que más expedientes se llevan en este ámbito.
+
+    Es el mismo ranking que la pestaña Adjudicatarios, con dos diferencias que lo hacen
+    encajar en la Analítica: respeta el rango temporal —por el mes de primera
+    publicación, como el resto de bloques— y cuenta EXPEDIENTES, no anuncios, igual que
+    los demás. Un acuerdo marco de ocho lotes ganados por la misma empresa es un
+    expediente, y su importe es el mayor publicado, no la suma de los ocho anuncios.
+
+    La agrupación de razones sociales es la de `_ranking_empresas`, compartida con la
+    pestaña: si no, «S2 Grupo» saldría con una cifra aquí y otra allí.
+    """
+    entrada, params = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
+    filas = con.execute(
+        f"SELECT {_GRUPO} AS g, l.adjudicatario,"
+        " COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe, l.organo"
+        f"{entrada}{filtro} AND l.adjudicatario IS NOT NULL",
+        params + p_rango,
+    ).fetchall()
+    ranking, distintas = _ranking_empresas(filas, TOP_ADJUDICATARIOS)
+    return {
+        "expedientes_adjudicados": len({f["g"] for f in filas}),
+        "empresas": [
+            {"empresa": e["empresa"], "expedientes": e["contratos"],
+             "importe": e["importe"], "organos": e["organos"]}
+            for e in ranking
+        ],
+        "distintas": distintas,
     }
 
 
@@ -1722,16 +2080,21 @@ _MEMO_MAXIMO = 8
 def _firma_de_la_base(con) -> tuple:
     """Lo que tiene que cambiar para que la Analítica cambie. Cuesta 1,5 ms.
 
-    Tres cosas pueden mover estas cifras y solo tres: que entren licitaciones nuevas, que
-    se reevalúen los perfiles y que el usuario tríe algo. Una columna por cada una.
+    Cuatro cosas pueden mover estas cifras y solo cuatro: que entren licitaciones nuevas,
+    que se reevalúen los perfiles, que el usuario tríe algo y que cambien las reglas de
+    las temáticas —lo que reclasifica la base sin que entre ni una ficha—. Una columna
+    por cada una.
     """
     return tuple(con.execute(
         "SELECT (SELECT MAX(id) FROM licitaciones),"
         "       (SELECT COUNT(*) FROM matches),"
-        "       (SELECT MAX(actualizado_en) FROM revisiones)").fetchone())
+        "       (SELECT MAX(actualizado_en) FROM revisiones),"
+        "       (SELECT valor FROM preferencias WHERE clave = ?)",
+        (categorias.CLAVE_VERSION,)).fetchone())
 
 
 def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
+              categoria: str | None = None,
               desde: str | None = None, hasta: str | None = None) -> dict:
     """Qué patrones tiene este mercado: cuándo publica, a cuánto cierra, contra quién.
 
@@ -1751,34 +2114,42 @@ def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
     `desde` y `hasta` son 'AAAA-MM' y acotan por el mes de PRIMERA publicación del
     expediente. Los bloques de renovaciones y de cartera los ignoran a propósito, porque
     hablan de hoy, y lo dicen con `siempre_a_fecha_de_hoy`.
+
+    Con `categoria` se mira una temática del mercado entera (ver `Ambito`) en lugar de
+    lo que traen los perfiles. Entonces no hay cartera: la cartera es tu triaje y tus
+    puntuaciones, y de una temática no hay ni lo uno ni lo otro.
     """
-    clave = (_firma_de_la_base(con), perfil, desde, hasta)
+    ambito = Ambito.de(perfil, categoria)
+    clave = (_firma_de_la_base(con), ambito, desde, hasta)
     if clave in _MEMO:
         return _MEMO[clave]
 
-    entrada, p_entrada = _entrada_expedientes(perfil)
-    filtro, p_rango = _solo_en_rango(perfil, desde, hasta)
+    entrada, p_entrada = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
     anuncios = con.execute(
         f"SELECT COUNT(*){entrada}{filtro}", p_entrada + p_rango).fetchone()[0]
-    base, p_base = _expedientes(perfil, desde, hasta)
+    base, p_base = _expedientes(ambito, desde, hasta)
     expedientes = con.execute(f"SELECT COUNT(*) FROM ({base})", p_base).fetchone()[0]
 
     datos = {
         "generado_para": {
-            "perfil": perfil, "desde": desde, "hasta": hasta,
+            "perfil": ambito.perfil, "categoria": ambito.categoria,
+            "ambito": ambito.etiqueta, "mercado": ambito.mercado,
+            "desde": desde, "hasta": hasta,
             "expedientes": expedientes, "anuncios": anuncios,
         },
-        "calendario": _bloque_calendario(con, perfil, desde, hasta),
-        "importes": _bloque_importes(con, perfil, desde, hasta),
-        "baja": _bloque_baja(con, perfil, desde, hasta),
-        "renovaciones": _bloque_renovaciones(con, perfil),
-        "ciclo": _bloque_ciclo(con, perfil, desde, hasta),
-        "cpv": _bloque_cpv(con, perfil, desde, hasta),
-        "comunidades": _bloque_comunidades(con, perfil, desde, hasta),
-        "plazo": _bloque_plazo(con, perfil, desde, hasta),
-        "procedimiento": _bloque_procedimiento(con, perfil, desde, hasta),
-        "organos": _bloque_organos(con, perfil, desde, hasta),
-        "cartera": _bloque_cartera(con, perfil),
+        "calendario": _bloque_calendario(con, ambito, desde, hasta),
+        "importes": _bloque_importes(con, ambito, desde, hasta),
+        "baja": _bloque_baja(con, ambito, desde, hasta),
+        "renovaciones": _bloque_renovaciones(con, ambito),
+        "ciclo": _bloque_ciclo(con, ambito, desde, hasta),
+        "cpv": _bloque_cpv(con, ambito, desde, hasta),
+        "comunidades": _bloque_comunidades(con, ambito, desde, hasta),
+        "plazo": _bloque_plazo(con, ambito, desde, hasta),
+        "procedimiento": _bloque_procedimiento(con, ambito, desde, hasta),
+        "organos": _bloque_organos(con, ambito, desde, hasta),
+        "adjudicatarios": _bloque_adjudicatarios(con, ambito, desde, hasta),
+        "cartera": None if ambito.mercado else _bloque_cartera(con, ambito),
     }
 
     if len(_MEMO) >= _MEMO_MAXIMO:

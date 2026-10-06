@@ -351,9 +351,10 @@ async function cargarResumen() {
                d.por_perfil.map((p) => [p.perfil, `${p.perfil} (${p.total})`]));
   llenarSelect($('ccaa'),
                d.ccaa.map((c) => [c.ccaa, `${c.ccaa} (${c.total})`]));
-  // El de la Analítica es otro control, no el mismo: el de arriba vive dentro de
-  // #filtros, que se oculta en cualquier vista que no sea la bandeja.
-  llenarSelect($('analitica-perfil'), d.por_perfil.map((p) => [p.perfil, p.perfil]));
+  // Los de Analítica y Adjudicatarios son otros controles, no el mismo: el de arriba
+  // vive dentro de #filtros, que se oculta en cualquier vista que no sea la bandeja.
+  ultimosPerfiles = d.por_perfil.map((p) => p.perfil);
+  llenarAmbitos();
 
   // Salud de las fuentes: una fuente rota y una fuente sin novedades se ven
   // igual si no se avisa explícitamente.
@@ -487,6 +488,12 @@ function tarjeta(it) {
   for (const p of (it.perfil || '').split(',').filter(Boolean)) {
     meta.appendChild(pildora(p.trim(), { clase: 'perfil' }));
   }
+  // Las fichas de «Otras licitaciones» no traen perfil y sí temáticas. «Resto» no se
+  // pinta: no dice nada que no diga ya la falta de las demás.
+  for (const c of (it.categorias || [])) {
+    if (TEMAS.resto && c === TEMAS.resto.clave) continue;
+    meta.appendChild(pildora(nombreTema(c), { clase: 'tema' }));
+  }
   meta.appendChild(pildora(fmtImporte(it.importe_referencia), { clase: 'importe' }));
   // La fecha en la que salió, al lado de la del cierre. La cifra pequeña de la derecha
   // dice «hace 3 días», que es la antigüedad y sirve para ordenar; esto dice el día, que
@@ -578,6 +585,136 @@ async function cargarLista(reset = true) {
   offset += d.items.length;
   $('mas').hidden = offset >= d.total;
   $('exportar').href = '/api/export.csv?' + query();
+}
+
+// --- Otras licitaciones ----------------------------------------------------
+//
+// Lo que el radar descarga y no casa con ningún perfil. Es casi toda la base, así que
+// arranca acotado —solo lo abierto— y se ordena por temáticas, que son chips de
+// selección múltiple: ninguno elegido es «todas».
+
+const TEMAS_OTRAS = 'temas-otras';
+let otrasOffset = 0;
+let otrasTemas = new Set();
+try {
+  otrasTemas = new Set(JSON.parse(localStorage.getItem(TEMAS_OTRAS) || '[]'));
+} catch { /* sin almacén se abre con todas, que es lo de fábrica */ }
+
+// Los chips se crean una vez y luego solo cambian su cifra y su estado. Rehacerlos en
+// cada carga movería el foco de quien está navegando con el teclado.
+function pintarChipsTemas() {
+  const cont = $('otras-temas');
+  const todos = [...TEMAS.categorias, ...(TEMAS.resto ? [TEMAS.resto] : [])];
+  cont.textContent = '';
+  for (const c of todos) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip-tema' + (c.clave === (TEMAS.resto || {}).clave ? ' resto' : '');
+    b.dataset.tema = c.clave;
+    b.setAttribute('aria-pressed', otrasTemas.has(c.clave) ? 'true' : 'false');
+    const t = document.createElement('span');
+    t.textContent = c.nombre;
+    const n = document.createElement('span');
+    n.className = 'n';
+    b.append(t, n);
+    b.addEventListener('click', () => {
+      if (otrasTemas.has(c.clave)) otrasTemas.delete(c.clave);
+      else otrasTemas.add(c.clave);
+      b.setAttribute('aria-pressed', otrasTemas.has(c.clave) ? 'true' : 'false');
+      try {
+        localStorage.setItem(TEMAS_OTRAS, JSON.stringify([...otrasTemas]));
+      } catch { /* sin almacén, la elección dura lo que la ventana */ }
+      cargarOtras();
+    });
+    cont.appendChild(b);
+  }
+  // Quitar lo elegido que ya no existe: una temática renombrada en una versión nueva
+  // dejaría un filtro invisible que nadie puede desmarcar.
+  for (const clave of [...otrasTemas]) {
+    if (!todos.some((c) => c.clave === clave)) otrasTemas.delete(clave);
+  }
+}
+
+function cifrasChips(porCategoria) {
+  for (const b of $('otras-temas').querySelectorAll('.chip-tema')) {
+    const n = porCategoria ? (porCategoria[b.dataset.tema] || 0) : null;
+    b.querySelector('.n').textContent = n === null ? '' : n.toLocaleString('es-ES');
+  }
+}
+
+function queryOtras(extra = {}) {
+  const p = new URLSearchParams({
+    q: $('otras-q').value.trim(),
+    categorias: [...otrasTemas].join(','),
+    ccaa: $('otras-ccaa').value,
+    tipo: $('otras-tipo').value,
+    importe_min: $('otras-importe').value,
+    orden: $('otras-orden').value,
+    vivas: $('otras-vivas').checked ? '1' : '0',
+    estado: $('otras-descartadas').checked ? 'descartado' : '',
+    ...extra,
+  });
+  for (const [k, v] of [...p.entries()]) if (!v) p.delete(k);
+  return p.toString();
+}
+
+async function cargarOtras(reset = true) {
+  const carga = reset
+    ? empezarCarga('otras-lista', $('otras-vivas').checked
+        ? 'Cargando…'
+        : 'Cargando… con las cerradas son cientos de miles y puede tardar unos segundos')
+    : null;
+  if (reset) otrasOffset = 0;
+
+  let d;
+  try {
+    const r = await fetch('/api/otras?' + queryOtras({ limite: POR_PAGINA, offset: otrasOffset }));
+    d = await r.json();
+  } catch {
+    if (!carga || carga.terminar()) $('otras-contador').textContent = 'No se pudo cargar la lista.';
+    return;
+  }
+  if (carga && !carga.terminar()) return;
+
+  if (d.error) {
+    $('otras-contador').textContent = d.error;
+    $('otras-mas').hidden = true;
+    return;
+  }
+
+  // Sin cifra cuando el servidor no las ha calculado —con las cerradas y sin búsqueda
+  // serían ocho segundos solo para esto—, en vez de enseñar ceros que no lo son.
+  if (reset) cifrasChips(d.por_categoria);
+
+  const aviso = $('otras-aviso');
+  aviso.hidden = !d.clasificacion_pendiente;
+  aviso.textContent = d.clasificacion_pendiente
+    ? 'Las temáticas se están calculando por primera vez: se hace en la próxima ' +
+      'búsqueda y tarda alrededor de un minuto. Hasta entonces, filtrar por temática ' +
+      'puede no encontrar nada.'
+    : '';
+
+  const frag = document.createDocumentFragment();
+  for (const it of d.items) frag.appendChild(tarjeta(it));
+  $('otras-lista').appendChild(frag);
+
+  const total = d.total.toLocaleString('es-ES');
+  const partes = [];
+  if (otrasTemas.size) partes.push([...otrasTemas].map(nombreTema).join(' + '));
+  if ($('otras-vivas').checked) partes.push('solo abiertas');
+  if ($('otras-descartadas').checked) partes.push('descartadas');
+  $('otras-contador').textContent =
+    `${total} ${d.total === 1 ? 'licitación' : 'licitaciones'} fuera de tus perfiles` +
+    (partes.length ? ` · ${partes.join(' · ')}` : '');
+
+  $('otras-vacio').hidden = d.total !== 0;
+  if (d.total === 0) {
+    $('otras-vacio').textContent = $('otras-vivas').checked
+      ? 'Nada abierto con estos filtros. Prueba a quitar «Solo abiertas».'
+      : 'Nada con estos filtros.';
+  }
+  otrasOffset += d.items.length;
+  $('otras-mas').hidden = otrasOffset >= d.total;
 }
 
 // --- Buscar ahora ----------------------------------------------------------
@@ -1249,12 +1386,84 @@ async function cargarVencimientos() {
 
 // --- Adjudicatarios --------------------------------------------------------
 
+// --- Ámbito: perfiles o temática del mercado --------------------------------
+//
+// Analítica y Adjudicatarios se pueden mirar sobre lo que traen tus perfiles —lo de
+// siempre— o sobre una temática entera del mercado, case o no con ellos. El valor del
+// desplegable lleva el tipo delante («perfil:…», «categoria:…») porque un perfil se
+// puede llamar como una temática y son dos preguntas distintas.
+
+// Las temáticas las dice el servidor (`/api/categorias`), no este fichero: viven en
+// `radar/categorias.py`, y una lista copiada aquí acabaría desfasada.
+let TEMAS = { categorias: [], resto: null, toda_la_it: null, ccaa: [] };
+let ultimosPerfiles = [];
+
+function nombreTema(clave) {
+  if (TEMAS.resto && clave === TEMAS.resto.clave) return TEMAS.resto.nombre;
+  if (TEMAS.toda_la_it && clave === TEMAS.toda_la_it.clave) return TEMAS.toda_la_it.nombre;
+  const c = TEMAS.categorias.find((x) => x.clave === clave);
+  return c ? c.nombre : clave;
+}
+
+async function cargarTemas() {
+  try {
+    TEMAS = await (await fetch('/api/categorias')).json();
+  } catch { /* sin temáticas, los selectores ofrecen solo los perfiles */ }
+  llenarAmbitos();
+  pintarChipsTemas();
+  llenarSelect($('otras-ccaa'), TEMAS.ccaa.map((c) => [c, c]));
+}
+
+// Los dos desplegables de ámbito, con dos grupos. Se construyen con `Option` y no con
+// cadenas: el nombre de un perfil lo escribe quien usa la herramienta.
+function llenarAmbitos() {
+  for (const sel of [$('analitica-perfil'), $('adjudicatarios-ambito')]) {
+    const firma = JSON.stringify([ultimosPerfiles, TEMAS.categorias]);
+    if (sel.dataset.firma === firma) continue;
+    sel.dataset.firma = firma;
+    const elegido = sel.value;
+    sel.textContent = '';
+    const perfiles = document.createElement('optgroup');
+    perfiles.label = 'Tus perfiles';
+    perfiles.appendChild(new Option('Todos los perfiles', ''));
+    for (const p of ultimosPerfiles) perfiles.appendChild(new Option(p, 'perfil:' + p));
+    sel.appendChild(perfiles);
+    if (TEMAS.categorias.length) {
+      // «Resto» no se ofrece: son 600.000 fichas de obras y limpieza, la primera
+      // vez tardaría decenas de segundos y no dice nada del mercado IT.
+      const mercado = document.createElement('optgroup');
+      mercado.label = 'Mercado por temática';
+      if (TEMAS.toda_la_it) {
+        mercado.appendChild(new Option(TEMAS.toda_la_it.nombre,
+                                       'categoria:' + TEMAS.toda_la_it.clave));
+      }
+      for (const c of TEMAS.categorias) {
+        mercado.appendChild(new Option(c.nombre, 'categoria:' + c.clave));
+      }
+      sel.appendChild(mercado);
+    }
+    sel.value = [...sel.options].some((o) => o.value === elegido) ? elegido : '';
+  }
+}
+
+// «perfil:X» → perfil=X, «categoria:Y» → categoria=Y, «» → nada (todos los perfiles).
+function ponerAmbito(params, valor) {
+  const i = (valor || '').indexOf(':');
+  if (i > 0) params.set(valor.slice(0, i), valor.slice(i + 1));
+  return params;
+}
+
+const esMercado = (valor) => (valor || '').startsWith('categoria:');
+
+let ambitoAdjudicatarios = '';
+
 async function cargarAdjudicatarios() {
   const carga = empezarCarga('lista-adjudicatarios');
   const cont = $('lista-adjudicatarios');
   let d;
   try {
-    const r = await fetch('/api/adjudicatarios?limite=30');
+    const p = ponerAmbito(new URLSearchParams({ limite: 30 }), ambitoAdjudicatarios);
+    const r = await fetch('/api/adjudicatarios?' + p);
     d = await r.json();
   } catch {
     if (carga.terminar()) {
@@ -1264,6 +1473,11 @@ async function cargarAdjudicatarios() {
   }
   if (!carga.terminar()) return;
 
+  if (d.error) {
+    cont.innerHTML = '<p class="vacio"></p>';
+    cont.firstChild.textContent = d.error;
+    return;
+  }
   if (!d.items.length) {
     cont.innerHTML = `<p class="vacio">Aún no hay adjudicaciones en la base.
       Prueba: <code>python3 radar.py ingest --primera-carga</code></p>`;
@@ -1291,7 +1505,10 @@ async function cargarAdjudicatarios() {
 async function alternarContratos(el, empresa) {
   const previo = el.querySelector('.contratos-empresa');
   if (previo) { previo.remove(); return; }
-  const r = await fetch('/api/contratos-empresa?empresa=' + encodeURIComponent(empresa));
+  // Con el mismo ámbito que el ranking: si no, el desglose de una empresa de cloud
+  // enseñaría solo lo que casa con los perfiles y no cuadraría con su cifra.
+  const p = ponerAmbito(new URLSearchParams({ empresa }), ambitoAdjudicatarios);
+  const r = await fetch('/api/contratos-empresa?' + p);
   const d = await r.json();
   const ul = document.createElement('ul');
   ul.className = 'contratos-empresa';
@@ -1516,8 +1733,12 @@ function cerrarCajon() {
   $('panel-fondo').hidden = true;
 }
 
+let vistaActual = 'bandeja';
+
 function mostrarVista(vista) {
-  for (const v of ['bandeja', 'vencimientos', 'adjudicatarios', 'analitica', 'ajustes']) {
+  vistaActual = vista;
+  for (const v of ['bandeja', 'otras', 'vencimientos', 'adjudicatarios', 'analitica',
+                   'ajustes']) {
     $('vista-' + v).hidden = v !== vista;
   }
   $('filtros').hidden = vista !== 'bandeja';
@@ -1528,6 +1749,7 @@ function mostrarVista(vista) {
     // primera dejaba a un lector de pantalla seis pestañas sin ninguna seleccionada.
     b.setAttribute('aria-selected', activa ? 'true' : 'false');
   }
+  if (vista === 'otras') cargarOtras();
   if (vista === 'vencimientos') cargarVencimientos();
   if (vista === 'adjudicatarios') cargarAdjudicatarios();
   if (vista === 'analitica') cargarAnalitica();
@@ -1586,6 +1808,7 @@ async function abrirPanel(id) {
     ['Tipo', d.tipo_contrato],
     ['Lugar', [d.lugar, d.ccaa].filter(Boolean).join(' · ')],
     ['CPV', (d.cpv || []).join(', ')],
+    ['Temática', (d.categorias || []).map(nombreTema).join(' · ')],
     ['Fuente', d.fuente],
     ['Adjudicatario', d.adjudicatario],
   ].filter(([, v]) => v);
@@ -1609,9 +1832,13 @@ async function abrirPanel(id) {
   for (const [k, v] of campos) {
     cont.querySelector(`dd[data-c="${k}"]`).textContent = v;
   }
+  const temas = (d.categorias || []).filter((c) => !TEMAS.resto || c !== TEMAS.resto.clave);
   $('p-motivo').textContent = d.motivo
     ? (d.perfil ? `${d.perfil.split(',').join(' · ')} — ${d.motivo}` : d.motivo)
-    : 'Esta licitación está en la base pero no casa con ningún perfil activo.';
+    : temas.length
+      ? 'No casa con ningún perfil activo: está en «Otras licitaciones» por su ' +
+        `temática (${temas.map(nombreTema).join(' · ')}).`
+      : 'Esta licitación está en la base pero no casa con ningún perfil activo.';
   if (d.descripcion) {
     const p = document.createElement('p');
     p.className = 'descripcion';
@@ -1639,6 +1866,9 @@ async function abrirPanel(id) {
       abrirPanel(id);
       cargarLista();
       cargarResumen();
+      // Desde «Otras», seguir o descartar saca la ficha de esa lista —seguirla la pasa a
+      // la Bandeja—, así que hay que rehacerla también.
+      if (vistaActual === 'otras') cargarOtras();
     });
   }
 
@@ -1728,9 +1958,23 @@ for (const b of document.querySelectorAll('.tab[data-vista]')) {
   b.addEventListener('click', () => mostrarVista(b.dataset.vista));
 }
 $('analitica-perfil').addEventListener('change', () => {
-  perfilAnalitica = $('analitica-perfil').value;
+  ambitoAnalitica = $('analitica-perfil').value;
   cargarAnalitica();
 });
+$('adjudicatarios-ambito').addEventListener('change', () => {
+  ambitoAdjudicatarios = $('adjudicatarios-ambito').value;
+  cargarAdjudicatarios();
+});
+let debounceOtras;
+$('otras-q').addEventListener('input', () => {
+  clearTimeout(debounceOtras);
+  debounceOtras = setTimeout(() => cargarOtras(), 300);
+});
+for (const id of ['otras-ccaa', 'otras-tipo', 'otras-importe', 'otras-orden', 'otras-vivas',
+                  'otras-descartadas']) {
+  $(id).addEventListener('change', () => cargarOtras());
+}
+$('otras-mas').addEventListener('click', () => cargarOtras(false));
 $('buscar-ahora').addEventListener('click', () => lanzarBusqueda());
 $('arranque-entrar').addEventListener('click', cerrarArranque);
 $('previsualizar').addEventListener('click', () => previsualizarAjustes());
@@ -1761,6 +2005,7 @@ try {
 // base, para que al destaparla no haya que esperar a nada más.
 cargarResumen();
 cargarLista();
+cargarTemas();
 // Y `arrancar()` decide qué pasa delante: instalar la versión nueva si la hay, y
 // después buscar lo nuevo y esperarlo, engancharse a la carga que ya venía de antes
 // —start.command lanza las etapas caras en segundo plano y abre la aplicación acto
@@ -1781,7 +2026,8 @@ const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
                       'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 let rangoAnalitica = 'todo';
-let perfilAnalitica = '';
+// '' (todos los perfiles), 'perfil:…' o 'categoria:…'. Ver `ponerAmbito`.
+let ambitoAnalitica = '';
 
 // Los tres rangos. No hay selector libre de fechas a propósito: un comercial quiere «lo de
 // este año», y pedir 2019 devolvería una serie de un expediente al mes que se lee como si
@@ -2028,7 +2274,7 @@ function pintarCiclo(d) {
   return el;
 }
 
-function pintarRenovaciones(d) {
+function pintarRenovaciones(d, mercado) {
   const el = bloqueAnalitica('A quién llamo antes del pliego',
     '¿Quién tiene un contrato acabándose antes de que salga el pliego nuevo?');
   const titular = document.createElement('p');
@@ -2039,12 +2285,17 @@ function pintarRenovaciones(d) {
                     'incumbente identificado';
   titular.appendChild(pie);
   el.appendChild(titular);
-  const enlace = document.createElement('button');
-  enlace.className = 'boton-sec';
-  enlace.textContent = 'Ver la lista en Vencimientos';
-  enlace.addEventListener('click', () => mostrarVista('vencimientos'));
-  el.appendChild(enlace);
-  nota(el, 'Siempre a fecha de hoy: el rango de arriba no le afecta.');
+  // Vencimientos solo lista lo de tus perfiles: mandar ahí desde una temática del
+  // mercado llevaría a una lista que no cuadra con esta cifra.
+  if (!mercado) {
+    const enlace = document.createElement('button');
+    enlace.className = 'boton-sec';
+    enlace.textContent = 'Ver la lista en Vencimientos';
+    enlace.addEventListener('click', () => mostrarVista('vencimientos'));
+    el.appendChild(enlace);
+  }
+  nota(el, 'Siempre a fecha de hoy: el rango de arriba no le afecta.' +
+           (mercado ? ' La pestaña Vencimientos lista solo lo de tus perfiles.' : ''));
   return el;
 }
 
@@ -2060,15 +2311,18 @@ function pintarCpv(d) {
     // El nombre de la división va aparte: no lo trae la etiqueta.
     el.lastChild.querySelector('.etiqueta').textContent = `${x.division} ${x.nombre}`;
   }
-  nota(el, 'Los tres códigos que son literalmente tu producto:');
-  tablaEscueta(el, d.del_producto.map((x) => [
-    `${x.codigo} · ${x.nombre}`, x.expedientes.toLocaleString('es-ES'),
-  ]));
-  const boton = document.createElement('button');
-  boton.className = 'boton-sec';
-  boton.textContent = 'Afinar los términos de búsqueda';
-  boton.addEventListener('click', () => mostrarVista('ajustes'));
-  el.appendChild(boton);
+  // En una temática del mercado no hay «tu producto»: el servidor manda la lista vacía.
+  if (d.del_producto.length) {
+    nota(el, 'Los tres códigos que son literalmente tu producto:');
+    tablaEscueta(el, d.del_producto.map((x) => [
+      `${x.codigo} · ${x.nombre}`, x.expedientes.toLocaleString('es-ES'),
+    ]));
+    const boton = document.createElement('button');
+    boton.className = 'boton-sec';
+    boton.textContent = 'Afinar los términos de búsqueda';
+    boton.addEventListener('click', () => mostrarVista('ajustes'));
+    el.appendChild(boton);
+  }
   nota(el, `Un expediente tiene varios CPV, así que los recuentos no suman el total y no ` +
            `se pueden repartir en porcentajes. ${d.sin_cpv} expedientes no traen ninguno.`);
   return el;
@@ -2210,7 +2464,7 @@ function pintarProcedimiento(d) {
   return el;
 }
 
-function pintarOrganos(d) {
+function pintarOrganos(d, mercado) {
   const el = bloqueAnalitica('Quién compra',
     '¿Qué compradores repiten, y a quién merece la pena ir a ver?');
   const tope = Math.max(1, ...d.organos.map((x) => x.expedientes));
@@ -2219,11 +2473,43 @@ function pintarOrganos(d) {
                              x.expedientes.toLocaleString('es-ES'), { apilada: true }));
   }
   nota(el, `${d.distintos.toLocaleString('es-ES')} órganos distintos han publicado algo ` +
-           'que casa con el radar; aquí están los que más repiten.');
+           (mercado ? 'de esta temática' : 'que casa con el radar') +
+           '; aquí están los que más repiten.');
   // Se advierte en lugar de fusionar: una regla de «nombres parecidos» junta cosas que
   // no son la misma, y aquí el coste de equivocarse lo paga quien coja el teléfono.
   nota(el, 'La fuente publica el órgano que firma, no el organismo, así que una misma ' +
            'agencia puede aparecer varias veces con firmantes distintos.');
+  return el;
+}
+
+function pintarAdjudicatarios(d) {
+  const el = bloqueAnalitica('Quién gana',
+    '¿Qué empresas se llevan estos contratos, y contra quién voy a competir?');
+  if (!d.empresas.length) {
+    nota(el, 'No hay ningún expediente adjudicado con empresa publicada en este periodo.');
+    return el;
+  }
+  const tope = Math.max(1, ...d.empresas.map((x) => x.expedientes));
+  for (const x of d.empresas) {
+    el.appendChild(filaBarra(x.empresa, 100 * x.expedientes / tope,
+                             `${x.expedientes.toLocaleString('es-ES')} · ` +
+                             fmtImporteCorto(x.importe),
+                             { apilada: true }));
+  }
+  nota(el, `${d.distintas.toLocaleString('es-ES')} empresas distintas se han repartido ` +
+           `${d.expedientes_adjudicados.toLocaleString('es-ES')} expedientes adjudicados. ` +
+           'Se cuentan expedientes, no anuncios, y se juntan las variantes de la misma ' +
+           'razón social; el importe es el mayor publicado de cada expediente.');
+  const boton = document.createElement('button');
+  boton.className = 'boton-sec';
+  boton.textContent = 'Ver el ranking completo';
+  boton.addEventListener('click', () => {
+    // El mismo ámbito en la pestaña, para que la lista empiece por estas empresas.
+    ambitoAdjudicatarios = ambitoAnalitica;
+    $('adjudicatarios-ambito').value = ambitoAnalitica;
+    mostrarVista('adjudicatarios');
+  });
+  el.appendChild(boton);
   return el;
 }
 
@@ -2264,8 +2550,10 @@ function pintarCartera(d) {
 
 async function cargarAnalitica() {
   const rango = rangosAnalitica().find((r) => r.clave === rangoAnalitica);
-  const perfil = perfilAnalitica;
-  const carga = empezarCarga('analitica', 'Calculando sobre el histórico…');
+  const ambito = ambitoAnalitica;
+  const carga = empezarCarga('analitica', esMercado(ambito)
+    ? 'Calculando sobre el histórico… la primera vez que se mira una temática tarda unos segundos'
+    : 'Calculando sobre el histórico…');
   // Los adornos que viven fuera del contenedor gobernado se limpian a mano: son del
   // rango anterior y dejarlos mientras carga el nuevo es peor que no mostrar nada.
   $('analitica-resumen').textContent = '';
@@ -2284,8 +2572,7 @@ async function cargarAnalitica() {
   const cont = $('analitica');
   let d;
   try {
-    const p = new URLSearchParams({ desde: rango.desde });
-    if (perfil) p.set('perfil', perfil);
+    const p = ponerAmbito(new URLSearchParams({ desde: rango.desde }), ambito);
     d = await (await fetch('/api/analitica?' + p)).json();
   } catch {
     if (carga.terminar()) {
@@ -2299,13 +2586,16 @@ async function cargarAnalitica() {
     cont.firstChild.textContent = d.error;
     return;
   }
-  if (!d.generado_para.expedientes) {
-    cont.innerHTML = `<p class="vacio">Sin coincidencias en este periodo.
-      Para tener histórico: <code>python3 radar.py ingest --primera-carga</code></p>`;
+  const g = d.generado_para;
+  if (!g.expedientes) {
+    cont.innerHTML = g.mercado
+      ? `<p class="vacio">Nada de esta temática en este periodo. Si acabas de actualizar,
+         las temáticas se calculan en la próxima búsqueda.</p>`
+      : `<p class="vacio">Sin coincidencias en este periodo.
+         Para tener histórico: <code>python3 radar.py ingest --primera-carga</code></p>`;
     return;
   }
 
-  const g = d.generado_para;
   $('analitica-resumen').innerHTML =
     `<strong>${g.expedientes.toLocaleString('es-ES')}</strong> expedientes ` +
     `(<span id="an-anuncios"></span> anuncios) desde <span id="an-desde"></span>` +
@@ -2314,9 +2604,11 @@ async function cargarAnalitica() {
   $('an-desde').textContent = g.desde || 'el principio';
   // Los perfiles no suman: un 9,5% de los expedientes casa con dos o más, así que si
   // alguien suma los filtros le sale más que el total.
-  $('an-perfil').textContent = g.perfil
-    ? ` · perfil «${g.perfil}» (algunos cuentan también en otros perfiles)`
-    : '';
+  $('an-perfil').textContent = g.mercado
+    ? ` · temática «${g.ambito}»: todo el mercado, case o no con tus perfiles`
+    : g.perfil
+      ? ` · perfil «${g.perfil}» (algunos cuentan también en otros perfiles)`
+      : '';
 
   // Las filas se escriben aquí y no las decide el CSS porque el emparejado no es
   // estético: cada fila junta dos bloques que se leen del mismo tirón, y el orden es el
@@ -2341,9 +2633,10 @@ async function cargarAnalitica() {
      pintarComunidadesRecuento(d.comunidades.activas,
                        'Top comunidades por número de licitaciones activas',
                        '¿Dónde hay más pliegos abiertos ahora mismo?')],
-    [pintarOrganos(d.organos), pintarCpv(d.cpv)],
-    [pintarProcedimiento(d.procedimiento), pintarCiclo(d.ciclo),
-     pintarRenovaciones(d.renovaciones)],
+    // Quién compra y quién gana, juntos: son las dos llamadas que salen de esta pestaña.
+    [pintarOrganos(d.organos, g.mercado), pintarAdjudicatarios(d.adjudicatarios)],
+    [pintarCpv(d.cpv), pintarProcedimiento(d.procedimiento)],
+    [pintarCiclo(d.ciclo), pintarRenovaciones(d.renovaciones, g.mercado)],
   ];
   for (const fila of filas) {
     const caja = document.createElement('div');
@@ -2352,6 +2645,7 @@ async function cargarAnalitica() {
     cont.appendChild(caja);
   }
   // Va sola y a lo ancho, y la última: es la que dice si todo lo de arriba es un
-  // pipeline o un archivo histórico.
-  cont.appendChild(pintarCartera(d.cartera));
+  // pipeline o un archivo histórico. Con una temática no hay cartera —es tu triaje y
+  // tus puntuaciones— y el servidor la manda vacía.
+  if (d.cartera) cont.appendChild(pintarCartera(d.cartera));
 }

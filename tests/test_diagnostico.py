@@ -22,7 +22,7 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-from radar import busqueda, db, diagnostico, matching, net, programar
+from radar import busqueda, categorias, db, diagnostico, matching, net, programar
 from radar.model import Licitacion
 
 
@@ -96,7 +96,11 @@ class TestNoTocaNada(Base):
         # Las migraciones de datos solo se aplican con la tabla ya poblada, así que hace
         # falta un arranque más: es exactamente lo que pasa en una instalación nueva
         # entre la primera ingesta y la siguiente vez que se abre la aplicación.
-        db.conectar(self.bd).close()
+        con = db.conectar(self.bd)
+        # Y la clasificación por temáticas, que no la hace el arranque sino la búsqueda
+        # que lanza al abrirse.
+        categorias.asegurar_al_dia(con)
+        con.close()
         self.assertEqual(diagnostico.migraciones_pendientes(self.bd).estado, "ok")
 
     def test_entre_la_primera_ingesta_y_el_siguiente_arranque_lo_dice(self):

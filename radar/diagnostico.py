@@ -32,7 +32,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import busqueda, consultas, db, matching, net, programar, rutas
+from . import busqueda, categorias, consultas, db, matching, net, programar, rutas
 from .sources import placsp
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -311,6 +311,9 @@ def migraciones_pendientes(bd: Path | str | None = None) -> Comprobacion:
         "version_clave_grupo": db.VERSION_CLAVE_GRUPO,
         "version_texto_norm": db.VERSION_TEXTO_NORM,
         "version_snapshot": db.VERSION_SNAPSHOT,
+        # Esta no la aplica el arranque sino la búsqueda que lanza al abrirse: tras una
+        # versión con temáticas nuevas, esa primera búsqueda tarda un minuto más.
+        categorias.CLAVE_VERSION: categorias.VERSION_CATEGORIAS,
     }
     pendientes = []
     try:
