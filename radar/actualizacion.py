@@ -73,6 +73,9 @@ REEMPLAZABLES = (
     "radar.py",
     "start.command",
     "README.md",
+    # El README en español: `README.md` está en inglés, y este es el que abre el menú
+    # Ayuda de la ventana nativa.
+    "README.es.md",
     # El almacén de certificados sí se actualiza: caduca, y si se queda atrás PLACSP
     # deja de validar. `config/perfiles.json`, en cambio, no se toca jamás.
     "config/certs",

@@ -570,9 +570,15 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         web.evaluateJavaScript("document.getElementById('buscar-ahora')?.click()")
     }
 
+    /// El README en español, que es el idioma de la app. `README.md` está en inglés para
+    /// quien llega al repositorio desde fuera, y queda solo de respaldo para una copia
+    /// anterior a la traducción, que no trae el `.es.md`.
     @objc private func abrirReadme() {
         guard let raiz = Ajustes.raizProyecto() else { return }
-        NSWorkspace.shared.open(raiz.appendingPathComponent("README.md"))
+        let espanol = raiz.appendingPathComponent("README.es.md")
+        let readme = FileManager.default.fileExists(atPath: espanol.path)
+            ? espanol : raiz.appendingPathComponent("README.md")
+        NSWorkspace.shared.open(readme)
     }
 
     @objc private func mostrarCarpeta() {
