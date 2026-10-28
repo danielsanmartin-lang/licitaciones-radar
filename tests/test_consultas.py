@@ -371,7 +371,8 @@ class TestCoherenciaContadores(unittest.TestCase):
     # El filtro que aplica cada contador de la cabecera. Debe coincidir con KPIS
     # en web/app.js.
     FILTROS = {
-        "coincidencias": dict(solo_vivas=False),
+        # Sin lo de plazo vencido: lo que todavía se puede mirar.
+        "coincidencias": dict(solo_vivas=False, sin_vencidas=True),
         "en_plazo": dict(solo_vivas=True),
         "cierran_7_dias": dict(solo_vivas=True, cierran_en_dias=7),
         "sin_revisar": dict(solo_vivas=False, estado_revision="nuevo"),
@@ -393,7 +394,10 @@ class TestCoherenciaContadores(unittest.TestCase):
         r = consultas.resumen(self.con)
         anuncios = self.con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
         self.assertEqual(anuncios, 4)
-        self.assertEqual(r["coincidencias"], 3, "EXP/1 debe contar una sola vez")
+        self.assertEqual(consultas.contar(self.con, solo_vivas=False), 3,
+                         "EXP/1 debe contar una sola vez")
+        # Y el contador, además, deja fuera EXP/3, que tiene el plazo vencido.
+        self.assertEqual(r["coincidencias"], 2)
 
     def test_sigue_coincidiendo_tras_triar(self):
         lic_id = self.con.execute(

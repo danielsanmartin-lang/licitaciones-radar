@@ -207,7 +207,10 @@ CREATE TABLE IF NOT EXISTS busquedas (
 );
 """
 
-ESTADOS_REVISION = ("nuevo", "siguiendo", "descartado", "presentada")
+# «vista» es lo que deja «Limpiar sin revisar»: ya no cuenta como pendiente, pero sigue en
+# la Bandeja y en la Analítica, porque nadie ha decidido que no interese. Es la diferencia
+# con «descartado», que sí quita de en medio.
+ESTADOS_REVISION = ("nuevo", "vista", "siguiendo", "descartado", "presentada")
 
 
 def ahora() -> str:
@@ -903,6 +906,64 @@ def propagar_revisiones_en_grupos(con) -> int:
            VALUES (?, ?, ?, ?, ?, ?)""",
         [(f["id"], *(f[c] for c in CAMPOS_REVISION), momento) for f in faltantes],
     )
+    con.commit()
+    return con.total_changes - antes
+
+
+def _por_tandas(ids, tamano: int = 500):
+    """SQLite admite un número limitado de `?` por consulta; se va de 500 en 500."""
+    ids = list(ids)
+    for i in range(0, len(ids), tamano):
+        yield ids[i:i + tamano]
+
+
+def marcar_vistas(con, ids) -> list[int]:
+    """Pasa a «vista» los anuncios de `ids` que sigan sin revisar. Devuelve los cambiados.
+
+    Solo toca lo que está en «nuevo» (o sin fila en `revisiones`, que es lo mismo): lo
+    que sigues, lo presentado o lo descartado no se mueve aunque venga en la lista. Las
+    notas y el asignado se conservan. Lo que devuelve es lo que hay que pasar a
+    `desmarcar_vistas` para deshacerlo.
+    """
+    cambiados: list[int] = []
+    for tanda in _por_tandas(ids):
+        marcas = ", ".join("?" * len(tanda))
+        cambiados += [
+            f["id"] for f in con.execute(
+                f"""SELECT l.id FROM licitaciones l
+                      LEFT JOIN revisiones r ON r.licitacion_id = l.id
+                     WHERE l.id IN ({marcas}) AND COALESCE(r.estado, 'nuevo') = 'nuevo'""",
+                tanda,
+            )
+        ]
+    momento = ahora()
+    con.executemany(
+        """INSERT INTO revisiones (licitacion_id, estado, actualizado_en)
+           VALUES (?, 'vista', ?)
+           ON CONFLICT(licitacion_id) DO UPDATE SET
+             estado = 'vista', actualizado_en = excluded.actualizado_en
+           WHERE revisiones.estado = 'nuevo'""",
+        [(i, momento) for i in cambiados],
+    )
+    con.commit()
+    return sorted(cambiados)
+
+
+def desmarcar_vistas(con, ids) -> int:
+    """Deshace `marcar_vistas`: vuelve a «nuevo» lo que siga en «vista». Devuelve cuántos.
+
+    Lo que se haya movido entre tanto —lo que pasaste a seguir después de limpiar— se
+    queda como lo dejaste: deshacer la limpieza no puede deshacer otra decisión.
+    """
+    antes = con.total_changes
+    momento = ahora()
+    for tanda in _por_tandas(ids):
+        marcas = ", ".join("?" * len(tanda))
+        con.execute(
+            f"""UPDATE revisiones SET estado = 'nuevo', actualizado_en = ?
+                 WHERE estado = 'vista' AND licitacion_id IN ({marcas})""",
+            [momento, *tanda],
+        )
     con.commit()
     return con.total_changes - antes
 

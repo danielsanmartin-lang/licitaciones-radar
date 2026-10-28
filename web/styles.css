@@ -498,8 +498,8 @@ section > .intro { display: none; }
  */
 .kpis {
   display: grid;
-  /* auto-fit y un mínimo bajo: son cinco, y con la ficha abierta al lado tienen que
-     seguir cabiendo en una fila en lugar de dejar la quinta sola debajo. */
+  /* auto-fit y un mínimo bajo: con la ficha abierta al lado tienen que seguir cabiendo
+     en una fila en lugar de dejar la última sola debajo. */
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: var(--e-2);
   margin-bottom: var(--e-4);
@@ -655,6 +655,66 @@ textarea {
   margin-bottom: var(--e-4);
 }
 .filtros-otras { margin-top: var(--e-3); }
+
+/* «Limpiar sin revisar…»: se abre debajo de los filtros, con las tres opciones como fichas
+   de cifra. Es un paso intermedio, no un aviso: el fondo es el de un control. */
+.limpiar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--e-2);
+  margin: 0 0 var(--e-4);
+  padding: var(--e-3) var(--e-4);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-lg);
+  background: var(--panel);
+  font-size: var(--txt-md);
+}
+.limpiar .ventanas { margin: var(--e-1) 0; }
+.limpiar .ventana:disabled { opacity: .45; }
+.limpiar .ventana:disabled:hover { background: var(--relleno); }
+
+/* El aviso de lo que se acaba de limpiar, con «Deshacer». */
+.lote-aviso {
+  position: fixed;
+  left: 50%;
+  bottom: var(--e-5);
+  z-index: 65;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--e-3);
+  max-width: calc(100% - 2 * var(--e-5));
+  padding: var(--e-2) var(--e-2) var(--e-2) var(--e-4);
+  background: var(--panel);
+  border: 1px solid var(--borde-fuerte);
+  border-radius: var(--radio-lg);
+  box-shadow: var(--sombra-2);
+  font-size: var(--txt-md);
+}
+.lote-cerrar {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radio);
+  background: none;
+  color: var(--texto-ter);
+  font-size: 18px;
+  line-height: 1;
+}
+.lote-cerrar:hover { background: var(--relleno); color: var(--texto); }
+
+/* Los dos grupos de «Siguiendo». */
+.grupo-titulo {
+  display: flex;
+  align-items: baseline;
+  gap: var(--e-2);
+  margin: var(--e-4) 0 var(--e-2);
+  font: 600 var(--txt-base)/1.3 var(--letra-titulo);
+}
+.grupo-titulo:first-of-type { margin-top: 0; }
+.grupo-n { font-size: var(--txt-sm); font-weight: 500; color: var(--texto-ter); font-variant-numeric: tabular-nums; }
+.lista + .grupo-titulo { margin-top: var(--e-5); }
 
 .contador { color: var(--texto-sec); font-size: var(--txt-sm); margin: 0 0 var(--e-2); }
 .vacio { color: var(--texto-sec); text-align: center; padding: 56px 0; }

@@ -263,10 +263,11 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 ## How to use it
 
 The views live in the **sidebar**, as in Zepo Desk: Bandeja (Inbox), Resumen (Summary)
-and Otras licitaciones (Other tenders) at the top; Vencimientos (Expiring contracts),
-Adjudicatarios (Winning bidders) and Analítica (Analytics) under «Mercado» (Market); and
-Términos de búsqueda (Search terms) at the bottom, next to the radar's status (last search,
-how the sources are doing and the version). **⌘1…⌘7** switch views in that same order.
+and Otras licitaciones (Other tenders) at the top; Siguiendo (Following), Vencimientos
+(Expiring contracts), Adjudicatarios (Winning bidders) and Analítica (Analytics) under
+«Mercado» (Market); and Términos de búsqueda (Search terms) at the bottom, next to the
+radar's status (last search, how the sources are doing and the version). **⌘1…⌘8** switch
+views in that same order.
 
 Clicking a tender **opens its record on the right** and the list narrows to make room,
 with the row highlighted; in a narrow window the record floats on top. Escape closes it.
@@ -322,14 +323,38 @@ all count **procurement files**, not notices, just like the list.
 |---|---|
 | abiertas (open) | passed the filter, still live and the deadline has not passed |
 | cierran ≤7d (closing ≤7d) | of those, the ones that close this week |
-| sin revisar (not reviewed) | you have marked them neither Seguir (Follow) nor Descartar (Discard) |
-| siguiendo (following) | the ones you have marked to work on |
-| coincidencias (matches) | everything that passed the filter, regardless of deadline or triage |
+| coincidencias (matches) | everything that passed the filter except what is past its deadline: what can still be looked at |
+| sin revisar (not reviewed) | you have marked them neither Seguir (Follow), nor Descartar (Discard), nor seen |
+
+What you follow no longer has a counter here: it has its own view, **Siguiendo**
+(Following, below).
 
 Under the list it says «110 de 2.716 coincidencias» (110 of 2,716 matches) and which
 filters are applied, because the triage drop-down and the **«Solo abiertas» (Open only)
 checkbox combine**: choosing «todo menos descartadas» (everything except discarded)
-without unticking the box still shows only the open ones.
+without unticking the box still shows only the open ones. «Ver todas» (see all) clears
+the filters, and then what is past its deadline shows too.
+
+**«Ocultar sin plazo»** (Hide without deadline) removes from the list what does not
+publish a deadline. It combines with any counter and is remembered next time.
+
+**«Limpiar sin revisar…»** (Clear not reviewed) is for when hundreds of «sin revisar»
+pile up that nobody is going to look at one by one. It offers three options, each with
+its figure: those **past their deadline**, those **without a date**, or **all**. The
+chosen ones become **«vista»** (seen): they no longer count as not reviewed, but stay in
+the Inbox and in Analytics, which is the difference with discarding. What you follow,
+have submitted or discarded is not touched. It is decided per procurement file, with the
+latest deadline among its notices, and when it finishes a notice offers **«Deshacer»**
+(Undo).
+
+### Siguiendo (Following)
+
+What you have marked to follow and what you have submitted, even if it no longer matches
+any profile, in two groups: **en plazo** (open), by what closes first, and **plazo
+vencido o cerradas** (past deadline or closed), from most recent to oldest. Closed ones
+show **who won and for how much** — looking at every notice of the procurement file, not
+just the last one — or «adjudicación pendiente» (award pending) if it is not known yet.
+The figure in the sidebar is what is still open.
 
 ### Bandeja (Inbox)
 
