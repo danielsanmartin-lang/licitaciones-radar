@@ -29,6 +29,16 @@ class SalidaRota(SalidaFalsa):
         raise OSError("la terminal ya no existe")
 
 
+def _hasta(condicion, limite: float = 3.0) -> bool:
+    """Lo que tarde el hilo del indicador en verlo, con un tope generoso."""
+    fin = time.monotonic() + limite
+    while time.monotonic() < fin:
+        if condicion():
+            return True
+        time.sleep(0.02)
+    return bool(condicion())
+
+
 class TestSinAvance(unittest.TestCase):
     def setUp(self):
         self.ind = progreso._Indicador()
@@ -37,6 +47,24 @@ class TestSinAvance(unittest.TestCase):
         self.addCleanup(self.dir.cleanup)
         self.estado = Path(self.dir.name) / "progreso.json"
 
+    # Las pruebas de abajo no comparan contra un reloj fijo. El indicador anota el avance
+    # en su propio hilo, una vez por tic, y en el macOS de la integración continua ese hilo
+    # llegó a ir 0,16 s tarde: «esperar 0,5 s y exigir 0,4» fallaba sin que nada estuviera
+    # mal. Lo que se comprueba es lo que importa: que sin cambios la cifra crece al ritmo
+    # del reloj, y que un cambio la devuelve abajo en cuanto el hilo lo ve.
+
+    def _visto(self):
+        """Espera a que el hilo haya anotado lo que se le acaba de contar."""
+        self.assertTrue(_hasta(lambda: self.ind._huella and self.ind._huella[1]),
+                        "el indicador no ha dado ni una vuelta")
+        time.sleep(0.25)  # dos tics más, para que la huella ya no esté recién cambiada
+
+    def _avanza_tras(self, cambio):
+        antes = self.ind.sin_avance()
+        cambio()
+        self.assertTrue(_hasta(lambda: self.ind.sin_avance() < antes - 0.15),
+                        "el cambio no se ha contado como avance")
+
     def test_sin_indicador_no_hay_atasco_que_medir(self):
         self.assertEqual(self.ind.sin_avance(), 0.0)
 
@@ -44,29 +72,25 @@ class TestSinAvance(unittest.TestCase):
         self.ind.iniciar(SalidaFalsa(), estado=self.estado)
         self.ind.fuente("placsp:licitaciones")
         self.ind.fase("descargando")
-        time.sleep(0.5)
+        self._visto()
+        uno = self.ind.sin_avance()
+        time.sleep(0.4)
         # Solo pasa el tiempo: el reloj de `segundos` no cuenta como avance.
-        self.assertGreaterEqual(self.ind.sin_avance(), 0.4)
-        self.ind.sumar_bytes(64 << 10)
-        # Un tic (0,1 s) para que lo vea, con margen.
-        time.sleep(0.15)
-        self.assertLess(self.ind.sin_avance(), 0.3)
+        self.assertGreaterEqual(self.ind.sin_avance() - uno, 0.35)
+        self._avanza_tras(lambda: self.ind.sumar_bytes(64 << 10))
 
     def test_un_reintento_tambien_es_avance(self):
         """Durante los reintentos no llegan bytes, pero la fase cambia: es lentitud, no
         un atasco, y no debe acercar la búsqueda al corte."""
         self.ind.iniciar(SalidaFalsa(), estado=self.estado)
         self.ind.fuente("placsp:licitaciones")
-        time.sleep(0.5)
-        self.assertGreaterEqual(self.ind.sin_avance(), 0.4)
-        self.ind.fase("falló el intento 1/4, reintento en 2s")
-        time.sleep(0.15)
-        self.assertLess(self.ind.sin_avance(), 0.3)
+        self._visto()
+        self._avanza_tras(lambda: self.ind.fase("falló el intento 1/4, reintento en 2s"))
 
     def test_la_instantanea_lo_publica(self):
         self.ind.iniciar(SalidaFalsa(), estado=self.estado)
         self.ind.fuente("ted")
-        time.sleep(0.2)
+        self._visto()
         self.assertIn("sin_avance", self.ind.instantanea())
 
     def test_cerrar_la_terminal_no_deja_de_contar(self):
@@ -74,12 +98,10 @@ class TestSinAvance(unittest.TestCase):
         siempre y la cortaría por haber cerrado una ventana."""
         self.ind.iniciar(SalidaRota(), estado=self.estado)
         self.ind.fuente("ted")
-        time.sleep(0.5)
-        self.ind.fichas(10)
-        time.sleep(0.15)
+        self._visto()
+        self._avanza_tras(lambda: self.ind.fichas(10))
         self.assertTrue(self.ind._hilo.is_alive())
-        self.assertLess(self.ind.sin_avance(), 0.3)
-        self.assertTrue(self.estado.exists(), "la instantánea se sigue publicando")
+        self.assertTrue(_hasta(self.estado.exists), "la instantánea se sigue publicando")
 
 
 class TestVigilante(unittest.TestCase):
