@@ -124,6 +124,22 @@ class TestRecienActualizada(unittest.TestCase):
         novedades.marcar_vista(self.con)
         self.assertIsNone(novedades.recien_actualizada(self.con))
 
+    def test_si_ya_estaba_vista_no_escribe_y_no_espera_a_la_busqueda(self):
+        """La pantalla de arranque pregunta por las novedades cada vez que se abre, casi
+        siempre con una búsqueda escribiendo por detrás. Si volviera a apuntar la misma
+        versión, esperaría a que la búsqueda soltara la base: medido, 15 s."""
+        db.escribir_preferencia(self.con, novedades.CLAVE_VISTA, "1.8.0")
+        self.con.commit()
+        # Otra conexión con la escritura tomada, como la de una búsqueda en marcha.
+        busqueda = db.conectar(Path(self.dir.name) / "t.db")
+        self.addCleanup(busqueda.close)
+        busqueda.execute("BEGIN IMMEDIATE")
+        self.addCleanup(busqueda.rollback)
+        # Con la espera de 30 s de `db.conectar` la prueba tardaría medio minuto en fallar.
+        self.con.execute("PRAGMA busy_timeout = 100")
+        novedades.marcar_vista(self.con)  # si intentara escribir, «database is locked»
+        self.assertIsNone(novedades.recien_actualizada(self.con))
+
     def test_una_instalacion_nueva_no_tiene_novedades(self):
         self.assertIsNone(novedades.recien_actualizada(self.con))
 
