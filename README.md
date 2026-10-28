@@ -207,8 +207,8 @@ off; and as soon as it records where it has got to, it never looks further back 
 With a plain `ingest` you would be left with about **50 matches** and no way of
 recovering the rest.
 
-That is why `start.command` detects that the database is empty and builds the history in
-four stages, from cheapest to most expensive:
+That is why, when the database is empty, neither the app nor `start.command` runs a
+normal search: they build the history in four stages, from cheapest to most expensive:
 
 | | what it fetches | what it costs |
 |---|---|---|
@@ -225,10 +225,20 @@ only depends on your machine.
 
 **The application opens as soon as stage 1 finishes**, already with about a thousand
 matching procurement files (*expedientes*: one procurement procedure, which can produce
-several notices over its life). The other stages keep downloading in the background
-while you work: a notice at the top shows the stage, the megabytes arriving and a
-progress bar, and the counters in the header go up by themselves without reloading the
-page.
+several notices over its life). In the app, the start-up screen explains it meanwhile —
+«Primera vez: preparando tu radar», with what the stage fetches and what it costs —,
+welcomes you with the notes of the version you start on and, when it finishes, shows a
+summary of what has arrived and **Continuar**. The other stages keep downloading in the
+background while you work: a notice at the top shows the stage, the megabytes arriving
+and a progress bar, and the counters in the header go up by themselves without reloading
+the page.
+
+**If it is interrupted, it resumes by itself.** The load records in the database which
+stages are still missing (`etapas_pendientes` in `preferencias`): the requested ones when
+it starts, and each one is removed when it finishes without errors. If you close the app
+halfway, the network drops or a source fails, the next time you open it the missing
+stages run in the background instead of the usual start-up search. A database that
+already had history before this record has nothing recorded, and nothing is asked of it.
 
 Stages 2 and 3 are the ones that fill **Vencimientos** (Expiring contracts) and
 **Adjudicatarios** (Winning bidders), which need award history. And stage 3 is the one
@@ -614,7 +624,8 @@ new since the version you had**, which is the GitHub release notes for each inte
 version (up to six; the rest are linked). You read them while the tender search carries
 on, and once both are done the screen waits for **Continuar**. If you close it before
 pressing it, you will see them again next time. Without an update in between, start-up is
-as usual and the screen goes away by itself.
+as usual and the screen goes away by itself. On a fresh install, with no version
+recorded, the screen welcomes you and shows the notes of the version you start on.
 
 To know which version you are coming from, the database records the version the
 application was opened with last time (`version_vista` in `preferencias`). The first time

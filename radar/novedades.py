@@ -13,6 +13,8 @@ Dos piezas:
   actualizado. La base es el sitio porque es lo único que sobrevive a la actualización en
   las dos maneras de instalar: la copia de trabajo cambia `radar/` y la app empaquetada
   cambia el bundle entero, pero los datos se quedan.
+  Sin ninguna versión apuntada es una instalación nueva, y se le enseña lo que trae la
+  versión con la que empieza.
 - **Qué ha cambiado.** Las notas de las releases de GitHub, que son las que ya se
   escriben para cada versión. Copiarlas además a un fichero del repositorio sería
   escribirlas dos veces y que acabaran diciendo cosas distintas.
@@ -60,7 +62,8 @@ def _version_anterior_en_disco() -> str | None:
 def recien_actualizada(con: sqlite3.Connection) -> dict | None:
     """`{"desde": …, "hasta": …}` si esta versión todavía no se ha estrenado; si no, None.
 
-    `desde` puede ser None: se sabe que se ha actualizado, pero no desde dónde.
+    `desde` puede ser None: se sabe que se ha actualizado, pero no desde dónde. En una
+    instalación nueva sale además `"bienvenida": True`.
     """
     vista = leer_preferencia(con, CLAVE_VISTA)
     if vista:
@@ -68,17 +71,20 @@ def recien_actualizada(con: sqlite3.Connection) -> dict | None:
             return {"desde": vista, "hasta": __version__}
         return None
 
-    # Sin constancia de ninguna versión: o es una instalación nueva, o la base viene de
-    # una versión que todavía no la apuntaba —la primera actualización a esta—. Se
-    # distinguen por el registro del actualizador, que dice qué instaló la última vez.
-    # Una instalación nueva no tiene registro, y no hay que darle la bienvenida con
-    # novedades de cosas que nunca ha conocido de otra manera.
+    # Sin constancia de ninguna versión: o la base viene de una versión que todavía no la
+    # apuntaba —la primera actualización a esta—, o es una instalación nueva. Lo primero
+    # lo dice el registro del actualizador, que apunta qué instaló la última vez.
     resultado = actualizacion._resultado()
     if (resultado and resultado.get("ok") and not resultado.get("sin_cambios")
             and resultado.get("version_nueva")
             and _tupla(resultado["version_nueva"]) == _tupla(__version__)):
         return {"desde": _version_anterior_en_disco(), "hasta": __version__}
-    return None
+
+    # Lo segundo: quien acaba de descargarla de GitHub. Antes no se le contaba nada, y la
+    # pantalla de arranque se pasaba los minutos de la primera carga sin decir qué hace
+    # la herramienta. Se le enseñan las notas de la versión con la que empieza: no las de
+    # las anteriores, que nunca ha tenido.
+    return {"desde": None, "hasta": __version__, "bienvenida": True}
 
 
 def marcar_vista(con: sqlite3.Connection) -> None:

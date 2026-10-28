@@ -83,8 +83,8 @@
        en app.js). Antes solo existía la segunda, y una búsqueda lenta pero viva dejaba
        la pantalla puesta durante horas.
 
-       No hay barra de etapas como en `#carga`: una búsqueda normal no las tiene, y la
-       carga inicial (la de horas) ni siquiera espera aquí. -->
+       No hay barra de etapas como en `#carga`: una búsqueda normal no las tiene, y de la
+       carga inicial aquí solo se espera la etapa 1, la de unos minutos. -->
   <div id="arranque" class="arranque" role="status" aria-live="polite">
     <div class="arranque-caja" id="arranque-caja">
       <span class="arranque-logo">
@@ -105,9 +105,10 @@
             <circle cx="21" cy="18.5" r="2.7" fill="#7BE9E4"/>
           </svg>
       </span>
-      <!-- Solo tras una actualización: qué versión ha entrado y qué trae. Se lee mientras
-           el paso 2 sigue buscando debajo, que es justo el rato en que no hay otra cosa
-           que hacer. Lo rellena `pintarNovedades()` con lo que devuelve /api/novedades. -->
+      <!-- Tras una actualización, o la primera vez que se abre: qué versión ha entrado y
+           qué trae. Se lee mientras el paso 2 sigue buscando debajo, que es justo el rato
+           en que no hay otra cosa que hacer. Lo rellena `pintarNovedades()` con lo que
+           devuelve /api/novedades. -->
       <section id="arranque-novedades" class="arranque-novedades" hidden>
         <p class="arranque-ok"><svg class="ico" aria-hidden="true"><use href="#ico-visto"/></svg><span id="novedades-titulo"></span></p>
         <p id="novedades-sub" class="pista"></p>
@@ -116,6 +117,16 @@
       </section>
       <p id="arranque-paso" class="arranque-paso"></p>
       <h2 id="arranque-titulo">Abriendo el radar…</h2>
+      <!-- Solo la primera vez, mientras se hace la etapa 1 de la carga inicial: por qué
+           tarda unos minutos y qué viene después. Lo enseña `pintarPrimeraVez()`, y la
+           línea de la etapa la rellena `pintarArranque()` con el texto de
+           `pipeline.ETAPAS_PRIMERA_CARGA`. -->
+      <div id="arranque-explica" class="arranque-explica" hidden>
+        <p>Es la primera vez que abres el radar en este equipo, así que empieza con la base
+           vacía. Esta primera parte tarda unos minutos; al terminar podrás entrar, y el
+           resto del histórico seguirá bajando por detrás mientras trabajas.</p>
+        <p id="arranque-explica-etapa" class="pista"></p>
+      </div>
       <p id="arranque-frase" class="arranque-frase"></p>
       <progress id="arranque-barra" max="100"></progress>
       <p id="arranque-tiempo" class="pista"></p>
