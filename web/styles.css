@@ -1020,9 +1020,49 @@ progress:not([value]) { opacity: .7; }
 
 .fila-empresa .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
 .fila-empresa .cifras b { font-weight: 600; color: var(--texto); }
-.contratos-empresa { grid-column: 1 / -1; margin-top: var(--e-3); font-size: var(--txt-md); }
-.contratos-empresa li { margin-bottom: var(--e-1); color: var(--texto-sec); }
-.contratos-empresa a { color: var(--acento-texto); }
+/* --- Fichas de organismo y competidor -------------------------------------------- */
+
+.detalle-barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--e-2);
+  margin-bottom: var(--e-4);
+}
+/* Una fila del listado de organismos: el nombre y sus cifras, como las de empresa. */
+.fila-organismo .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
+.fila-organismo .cifras b { font-weight: 600; color: var(--texto); }
+/* Lo que lleva a una ficha desde otro sitio: un nombre que se puede pulsar, sin pintarse
+   de enlace hasta pasar por encima, para no convertir cada tarjeta en un subrayado. */
+.enlace-ficha {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+.enlace-ficha:hover, .enlace-ficha:focus-visible { color: var(--acento-texto); text-decoration: underline; }
+.fila-barra.pulsable { cursor: default; }
+.fila-barra.pulsable:hover .etiqueta,
+.fila-barra.pulsable:focus-visible .etiqueta { color: var(--acento-texto); text-decoration: underline; }
+/* Las listas de una ficha (contratos, vencimientos) van dentro de su tarjeta. */
+.bloque .lista { margin-top: var(--e-2); }
+.lista-ficha { display: flex; flex-direction: column; }
+.fila-ficha {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--e-1) var(--e-3);
+  padding: var(--e-2) 0;
+  border-top: 1px solid var(--borde);
+  font-size: var(--txt-md);
+}
+.fila-ficha:first-child { border-top: 0; }
+.fila-ficha .objeto { color: var(--texto); }
+.fila-ficha .detalle { grid-column: 1; font-size: var(--txt-sm); color: var(--texto-sec); }
+.fila-ficha .cifra { grid-row: 1; grid-column: 2; font-variant-numeric: tabular-nums; color: var(--texto-sec); white-space: nowrap; }
 
 /* --- Ficha (panel de detalle) ------------------------------------------------
  *
@@ -1464,6 +1504,8 @@ progress:not([value]) { opacity: .7; }
   transition: box-shadow var(--transicion), border-color var(--transicion);
 }
 .cifra-clave:hover { border-color: var(--acento-borde); }
+/* Las de las fichas no llevan a ningún sitio: sin el aviso de que se pueden pulsar. */
+.cifra-clave.fija:hover { border-color: var(--borde); }
 .cifra-clave .t { font-size: var(--txt-xs); color: var(--texto-ter); }
 /* Cifras proporcionales y no tabulares: a este tamaño, con `tabular-nums` un «121» se ve
    desencajado. Las tabulares se quedan para lo que va en columna. */

@@ -264,10 +264,10 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 The views live in the **sidebar**, as in Zepo Desk: Bandeja (Inbox), Resumen (Summary)
 and Otras licitaciones (Other tenders) at the top; Siguiendo (Following), Vencimientos
-(Expiring contracts), Adjudicatarios (Winning bidders) and Analítica (Analytics) under
-«Mercado» (Market); and Términos de búsqueda (Search terms) at the bottom, next to the
-radar's status (last search, how the sources are doing and the version). **⌘1…⌘8** switch
-views in that same order.
+(Expiring contracts), Adjudicatarios (Winning bidders), Organismos (Contracting bodies) and
+Analítica (Analytics) under «Mercado» (Market); and Términos de búsqueda (Search terms) at
+the bottom, next to the radar's status (last search, how the sources are doing and the
+version). **⌘1…⌘9** switch views in that same order.
 
 Clicking a tender **opens its record on the right** and the list narrows to make room,
 with the row highlighted; in a narrow window the record floats on top. Escape closes it.
@@ -494,17 +494,47 @@ The window buttons (3, 6, 12, 24 months) show how many expire in each period and
 much, so you can compare at a glance. This is the list to call *before* the tender
 documents come out, while you can still influence them. Only contracts that publish an
 end date or a duration appear: if the source does not give one, the tender is left out
-rather than estimated by eye.
+rather than estimated by eye. The contracting body and the incumbent on each card lead
+to their profile.
 
 ### Adjudicatarios (Winning bidders)
 
 Who is winning these contracts, grouping the variants of each company's registered name
 («S2 GRUPO …, S.L.U.» and «S2 Grupo … S.L.» are the same company). Clicking a company
-expands its contracts.
+opens its **competitor profile** (below).
 
 By default it looks at what matches your profiles. The drop-down at the top changes the
 **scope**: a specific profile, or a whole market topic — cybersecurity, cloud, all of
 IT… — whether or not it matches your profiles. It is the same selector as in Analítica.
+
+### Organismos (Contracting bodies)
+
+Who buys in your scope, from most to fewest procurement files, with a search box that
+ignores accents and case. Each row says how many files it has, how many are still open
+and how many are awarded, and leads to its profile. The body is the one that signs, as
+the source publishes it: the same agency can appear several times, once per signatory,
+just as in Analytics.
+
+### Contracting body and competitor profiles
+
+What Analytics tells about the whole market, told about **a single body** or **a single
+company**, with the same rules — per procurement file, without what was discarded, the
+discount from a single notice and the deadline from the first — and the same scope
+selector.
+
+- **Body**: its figures (files, median value, discount and deadline when there are at
+  least three cases, awarded), in which months it publishes, whom it awards to, which of
+  its contracts expire in the next 24 months and with whom, what it has open today and
+  its earlier files with the usual card.
+- **Competitor**: what it has won and for how much, year by year, in which regions, which
+  bodies it sells to, which of its contracts expire — the chance to take them — and its
+  awards, merging its registered names as the Adjudicatarios ranking does.
+
+You reach them from the rows of Organismos and Adjudicatarios, from «Quién compra» and
+«Quién gana» in Analytics, from the body and the incumbent in Vencimientos, and from the
+body and the winner in any tender's detail. Every name in a profile leads to its own,
+and **«Volver»** (Back) retraces your steps to where you were, with your place on the
+page. From a tender that does not match your profiles, the profile opens with all of IT.
 
 ### Analítica (Analytics)
 

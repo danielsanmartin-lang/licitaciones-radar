@@ -221,6 +221,31 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._error(str(exc))
             self._json({"items": consultas.contratos_de(self.con, empresa, ambito=ambito)})
 
+        elif partes.path in ("/api/organismos", "/api/organismo", "/api/competidor"):
+            try:
+                ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
+            except ValueError as exc:
+                return self._error(str(exc))
+            if partes.path == "/api/organismos":
+                return self._json(consultas.organismos(
+                    self.con, ambito=ambito, q=params.get("q") or None))
+            if partes.path == "/api/organismo":
+                nombre = params.get("nombre")
+                if not nombre:
+                    return self._error("falta nombre")
+                ficha = consultas.ficha_organismo(self.con, nombre, ambito=ambito)
+                quien = "ese órgano"
+            else:
+                empresa = params.get("empresa")
+                if not empresa:
+                    return self._error("falta empresa")
+                ficha = consultas.ficha_competidor(self.con, empresa, ambito=ambito)
+                quien = "esa empresa"
+            if ficha is None:
+                # 404 y no una ficha vacía: la pantalla lo dice, y sugiere cambiar el ámbito.
+                return self._error(f"No hay expedientes de {quien} en «{ambito.etiqueta}».", 404)
+            self._json(ficha)
+
         elif partes.path == "/api/motivos-descarte":
             self._json({"items": consultas.motivos_descarte(self.con)})
 

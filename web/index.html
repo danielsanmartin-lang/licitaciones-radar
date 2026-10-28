@@ -207,6 +207,8 @@
                 data-vista="vencimientos"><span class="tab-ico tono-rojo"><svg class="ico" aria-hidden="true"><use href="#ico-calendario"/></svg></span><span class="tab-txt">Vencimientos</span></button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-adjudicatarios"
                 data-vista="adjudicatarios"><span class="tab-ico tono-verde"><svg class="ico" aria-hidden="true"><use href="#ico-trofeo"/></svg></span><span class="tab-txt">Adjudicatarios</span></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-organismos"
+                data-vista="organismos"><span class="tab-ico tono-ambar"><svg class="ico" aria-hidden="true"><use href="#ico-organo"/></svg></span><span class="tab-txt">Organismos</span></button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-analitica"
                 data-vista="analitica"><span class="tab-ico tono-turquesa"><svg class="ico" aria-hidden="true"><use href="#ico-grafico"/></svg></span><span class="tab-txt">Analítica</span></button>
       </div>
@@ -431,12 +433,50 @@
             <section id="vista-adjudicatarios" role="tabpanel" hidden data-titulo="Adjudicatarios"
                      data-icono="ico-trofeo" data-tono="verde">
               <p class="intro">
-                Quién se lleva estos contratos. Agrupa las variantes de razón social.
+                Quién se lleva estos contratos. Agrupa las variantes de razón social; pulsa una
+                empresa para ver su ficha.
               </p>
               <p class="filtros-activos">
                 <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
               </p>
               <div id="lista-adjudicatarios" class="lista"></div>
+            </section>
+
+            <!-- Quién compra, con buscador. Cada fila abre la ficha del organismo. -->
+            <section id="vista-organismos" role="tabpanel" hidden data-titulo="Organismos"
+                     data-icono="ico-organo" data-tono="ambar">
+              <p class="intro">
+                Quién compra en tu ámbito, de más a menos expedientes. Pulsa uno para ver su
+                ficha: cuándo publica, a quién adjudica y qué le vence.
+              </p>
+              <div class="filtros">
+                <input type="search" id="organismos-q" placeholder="Buscar un organismo…" autocomplete="off">
+                <select id="organismos-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+              </div>
+              <p id="organismos-contador" class="contador"></p>
+              <div id="lista-organismos" class="lista"></div>
+            </section>
+
+            <!-- Las dos fichas. No están en la barra lateral: se llega a ellas desde una
+                 fila, una tarjeta o la ficha de una licitación, y «Volver» deja donde
+                 estabas. El título lo pone `cargarFicha()` con el nombre. -->
+            <section id="vista-organismo" role="tabpanel" hidden data-titulo="Organismo"
+                     data-icono="ico-organo" data-tono="ambar">
+              <p class="intro">Lo que el radar sabe de este órgano en el ámbito elegido.</p>
+              <div class="detalle-barra">
+                <button class="boton-sec" data-volver>← Volver</button>
+                <select id="organismo-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+              </div>
+              <div id="ficha-organismo" class="analitica"></div>
+            </section>
+            <section id="vista-competidor" role="tabpanel" hidden data-titulo="Competidor"
+                     data-icono="ico-trofeo" data-tono="verde">
+              <p class="intro">Lo que ha ganado esta empresa en el ámbito elegido.</p>
+              <div class="detalle-barra">
+                <button class="boton-sec" data-volver>← Volver</button>
+                <select id="competidor-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+              </div>
+              <div id="ficha-competidor" class="analitica"></div>
             </section>
 
             <section id="vista-analitica" role="tabpanel" hidden data-titulo="Analítica"
