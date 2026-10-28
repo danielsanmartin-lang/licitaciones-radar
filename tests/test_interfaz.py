@@ -43,6 +43,12 @@ def _clases_del_js() -> set[str]:
         clases.add(m)
     for m in re.findall(r"\bclase:\s*'([^']+)'", JS):
         clases |= set(m.split())
+    # `crear('div', 'col-barra')`, el atajo de las gráficas de la Analítica. Las clases
+    # compuestas con `${…}` (`muestra rect ${s.clase}`) aportan su parte fija.
+    for m in re.findall(r"\bcrear\('\w+',\s*'([^']*)'", JS):
+        clases |= set(m.split())
+    for m in re.findall(r"\bcrear\('\w+',\s*`([^`]*)`", JS):
+        clases |= set(re.sub(r"\$\{[^}]*\}", " ", m).split())
     return clases
 
 

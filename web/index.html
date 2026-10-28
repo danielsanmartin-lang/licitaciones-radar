@@ -403,10 +403,12 @@
                 Los patrones de este mercado, no lo que hay hoy: cuándo se publica, a cuánto se
                 cierra y cuánto tarda en decidirse. Sale del histórico descargado.
               </p>
-              <div class="ventanas" id="analitica-rango"></div>
-              <p class="filtros-activos" id="analitica-filtro">
+              <!-- Los dos filtros en una sola fila y encima de todo lo que filtran: el rango
+                   y el ámbito valen para todas las tarjetas a la vez, nunca para una sola. -->
+              <div class="analitica-filtros">
+                <div class="ventanas" id="analitica-rango"></div>
                 <select id="analitica-perfil" class="selector-ambito" aria-label="Ámbito"></select>
-              </p>
+              </div>
               <p class="total-ventana" id="analitica-resumen"></p>
               <div id="analitica" class="analitica"></div>
             </section>

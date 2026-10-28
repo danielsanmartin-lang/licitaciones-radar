@@ -67,6 +67,10 @@
   --serie-1: #2a78d6;
   --serie-2: #eb6834;
   --serie-3: #1baf7a;
+  /* El gris de lo que no se trabaja (lo cerrado de la cartera) y uno más claro para lo
+     que ni siquiera tiene estado. De-énfasis: no son series, son el fondo de la historia. */
+  --serie-gris: #b4b8ca;
+  --serie-gris-2: #dcdee8;
 
   --letra: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", sans-serif;
   --letra-titulo: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
@@ -141,6 +145,8 @@
     --serie-1: #3987e5;
     --serie-2: #d95926;
     --serie-3: #199e70;
+    --serie-gris: #4a5078;
+    --serie-gris-2: #33385c;
 
     --sombra-1: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .3);
     --sombra-2: 0 2px 6px rgb(0 0 0 / .4), 0 24px 60px rgb(0 0 0 / .5);
@@ -1334,115 +1340,350 @@ progress:not([value]) { opacity: .7; }
 
 /* --- Analítica -----------------------------------------------------------
  *
- * Las tarjetas de gráfica de Zepo Desk (`ChartCard`): esquinas de 16, línea y sombra
- * suave, título en negrita y la pregunta debajo en gris. Las barras son `div` con su cifra
- * en texto al lado, que es lo que hace que el dato se lea con un lector de pantalla y no
- * solo se vea.
+ * Un tablero como los de Zepo Desk: una fila de cifras clave y, debajo, tarjetas de
+ * gráfica (`ChartCard`): esquinas de 16, línea y sombra suave, el título en negrita y la
+ * pregunta debajo en gris. Las marcas siguen la guía de visualización: columnas de 24 px
+ * como mucho y barras de 10, esquinas de 4 solo en el extremo del dato, rejilla en hilo de
+ * 1 px, y el color de la serie solo en la marca; las cifras van en color de texto.
  */
 
-/* 1.180 y no menos: con etiquetas que son nombres de comunidad y de órgano, cada pareja
-   son dos columnas de ~560 px, que es donde una barra con su etiqueta se lee de un vistazo. */
-.analitica { display: grid; gap: var(--e-3); }
-/* auto-fit sin un solo breakpoint: dos columnas cuando caben, una cuando no. */
+.analitica-filtros {
+  display: flex;
+  align-items: center;
+  gap: var(--e-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--e-3);
+}
+.analitica-filtros .ventanas { margin: 0; }
+
+.analitica { display: grid; gap: var(--e-3); transition: opacity var(--transicion); }
+/* Mientras llega otro rango, lo de antes se queda a la vista y apagado: no salta nada de
+   sitio y se ve qué va a cambiar. */
+.analitica.recargando { opacity: .45; pointer-events: none; }
+/* Dos columnas cuando caben, una cuando no, sin un solo corte fijo. Cada tarjeta con su
+   altura: estiradas a la de la más alta, quedaba un hueco enmarcado que se lee como fallo. */
 .analitica .pareja {
   display: grid;
   gap: var(--e-3);
   grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
-  /* Cada tarjeta con su altura y no estiradas a la de la más alta: un hueco enmarcado
-     se lee como un fallo. */
   align-items: start;
 }
 
-.bloque {
-  padding: var(--e-4);
+/* Las cifras clave: fichas de cifra que llevan a su tarjeta. */
+.cifras-clave {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--e-2);
+  margin-bottom: var(--e-1);
+}
+.cifra-clave {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--e-3) var(--e-4);
   background: var(--panel);
   border: 1px solid var(--borde);
   border-radius: var(--radio-xl);
   box-shadow: var(--sombra-1);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+  transition: box-shadow var(--transicion), border-color var(--transicion);
 }
-.bloque h3 { margin: 0 0 2px; font-size: var(--txt-base); font-weight: 600; }
-.bloque .pregunta { margin: 0 0 var(--e-3); font-size: 11.5px; color: var(--texto-ter); }
-.bloque .nota { margin: var(--e-3) 0 0; font-size: var(--txt-sm); color: var(--texto-ter); }
-.bloque .titular {
-  font: 600 var(--txt-2xl)/1.15 var(--letra-titulo);
+.cifra-clave:hover { border-color: var(--acento-borde); }
+.cifra-clave .t { font-size: var(--txt-xs); color: var(--texto-ter); }
+/* Cifras proporcionales y no tabulares: a este tamaño, con `tabular-nums` un «121» se ve
+   desencajado. Las tabulares se quedan para lo que va en columna. */
+.cifra-clave .n { font: 600 24px/30px var(--letra-titulo); letter-spacing: -0.01em; }
+.cifra-clave .s { font-size: var(--txt-xs); color: var(--texto-sec); }
+
+/* La tarjeta. */
+.bloque {
+  padding: var(--e-4) var(--e-4) var(--e-3);
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-xl);
+  box-shadow: var(--sombra-1);
+  scroll-margin-top: var(--e-4);
+}
+/* La tarjeta a la que se acaba de saltar desde una cifra clave: un anillo de acento que se
+   apaga solo. */
+.bloque.destacado { animation: destacar 1.4s ease-out; }
+@keyframes destacar {
+  0%, 35% { box-shadow: 0 0 0 2px var(--acento-borde), var(--sombra-1); }
+  100% { box-shadow: var(--sombra-1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bloque.destacado { animation: none; box-shadow: 0 0 0 2px var(--acento-borde), var(--sombra-1); }
+}
+.bloque-cab { margin-bottom: var(--e-3); }
+.bloque h3 { font-size: var(--txt-base); font-weight: 600; }
+.bloque .pregunta { margin-top: 2px; font-size: 11.5px; color: var(--texto-ter); }
+.bloque h4 {
+  margin: var(--e-4) 0 var(--e-1);
+  font-size: var(--txt-xs);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--texto-ter);
+}
+.bloque > .boton-sec { margin-top: var(--e-3); }
+.bloque .nota { margin-top: var(--e-3); font-size: var(--txt-sm); color: var(--texto-sec); line-height: 1.5; }
+
+/* La cifra que responde a la tarjeta, encima de su gráfica. */
+.titular { display: flex; align-items: baseline; gap: var(--e-2); flex-wrap: wrap; margin-bottom: var(--e-3); }
+.titular-valor { font: 600 var(--txt-2xl)/1.1 var(--letra-titulo); letter-spacing: -0.02em; }
+.titular-pie { font-size: var(--txt-sm); color: var(--texto-sec); }
+
+.bloque-vacio {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--e-4);
+  background: var(--relleno);
+  border-radius: var(--radio-lg);
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+}
+.bloque-vacio strong { color: var(--texto); font-weight: 600; }
+
+/* «Cómo se calcula»: la explicación, plegada debajo de la gráfica. */
+.metodo { margin-top: var(--e-3); padding-top: var(--e-2); border-top: 1px solid var(--borde); }
+.metodo summary {
+  cursor: default;
+  list-style: none;
+  font-size: var(--txt-sm);
+  color: var(--texto-ter);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.metodo summary::-webkit-details-marker { display: none; }
+.metodo summary::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 8px 2px 1px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform .15s;
+}
+.metodo[open] summary::before { transform: rotate(45deg); }
+.metodo summary:hover { color: var(--texto-sec); }
+.metodo .nota:first-of-type { margin-top: var(--e-2); }
+.metodo .tabla-escueta { margin-top: var(--e-2); }
+@media (prefers-reduced-motion: reduce) {
+  .metodo summary::before { transition: none; }
+}
+
+/* --- Columnas --------------------------------------------------------------- */
+
+.columnas { padding-left: 34px; margin-top: var(--e-1); }
+.col-area { position: relative; height: 180px; }
+/* La rejilla: hilos de 1 px, uno por marca redonda del eje, y la cifra a la izquierda. */
+.col-guia {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--borde);
+}
+.col-guia.base { border-top-color: var(--borde-fuerte); }
+.col-marca {
+  position: absolute;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+  font-size: var(--txt-xs);
+  color: var(--texto-ter);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  white-space: nowrap;
 }
-.bloque .titular small { font: 400 var(--txt-md)/1.4 var(--letra); color: var(--texto-sec); }
-/* Las cifras sueltas, como fichas de cifra. */
-.bloque .cifras-fila { display: flex; gap: var(--e-2); flex-wrap: wrap; margin-bottom: var(--e-2); }
+.col-plot { position: absolute; inset: 0; display: grid; }
+/* Cada columna entera es la zona de pasar el ratón, no solo la barra: así se apunta al mes
+   y no a un palito de 24 px. */
+.col {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: var(--radio-sm) var(--radio-sm) 0 0;
+  outline-offset: -2px;
+}
+.col:hover, .col:focus-visible { background: var(--relleno); }
+.col-barra {
+  width: min(24px, 62%);
+  min-height: 1px;
+  background: var(--serie-1);
+  border-radius: 4px 4px 0 0;
+  transition: filter var(--transicion);
+}
+.col:hover .col-barra, .col:focus-visible .col-barra { filter: brightness(1.12); }
+/* El mes en curso, más claro: sus datos están a medias y no se pueden leer como los demás. */
+.col-barra.parcial { opacity: .4; }
+.col-valor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: var(--txt-xs);
+  font-weight: 600;
+  color: var(--texto-sec);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+/* La segunda serie, por encima: la línea y sus puntos no reciben el ratón, que ya lo
+   recoge la columna de debajo. */
+.col-linea { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.col-linea polyline {
+  fill: none;
+  stroke: var(--serie-2);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.col-puntos { pointer-events: none; }
+.col-hueco { position: relative; }
+.col-punto {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: 0 0 -4px -4px;
+  border-radius: 50%;
+  background: var(--serie-2);
+  /* El anillo del color del fondo, para que el punto se despegue de la línea y la barra. */
+  box-shadow: 0 0 0 2px var(--panel);
+}
+.col-punto.parcial { background: var(--panel); box-shadow: inset 0 0 0 2px var(--serie-2), 0 0 0 2px var(--panel); }
+.col-ejes {
+  display: grid;
+  margin-top: 6px;
+  font-size: var(--txt-xs);
+  line-height: 1.25;
+  color: var(--texto-ter);
+  text-align: center;
+}
+.col-ejes span { padding: 0 2px; overflow-wrap: anywhere; }
+
+/* La leyenda imita a la marca: cuadrado para las columnas, trazo para la línea. */
+.leyenda { display: flex; flex-wrap: wrap; gap: 4px var(--e-4); margin-top: var(--e-3); font-size: var(--txt-sm); color: var(--texto-sec); }
+.leyenda-item { display: inline-flex; align-items: center; gap: 6px; }
+.muestra { display: inline-block; flex: none; }
+.muestra.rect { width: 10px; height: 10px; border-radius: 3px; }
+.muestra.linea { width: 14px; height: 2px; border-radius: 1px; }
+.muestra.serie-1, .apilada-seg.serie-1 { background: var(--serie-1); }
+.muestra.serie-2, .apilada-seg.serie-2 { background: var(--serie-2); }
+.muestra.serie-gris, .apilada-seg.serie-gris { background: var(--serie-gris); }
+.muestra.serie-gris-2, .apilada-seg.serie-gris-2 { background: var(--serie-gris-2); }
+
+/* --- Barras horizontales (los rankings) -------------------------------------- */
+
+/* Etiqueta, carril y cifra. La cifra va SIEMPRE en texto al lado de su barra. */
+.fila-barra {
+  display: grid;
+  grid-template-columns: var(--ancho-etiqueta, 5.5em) 1fr auto;
+  align-items: center;
+  gap: var(--e-3);
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-radius: var(--radio-sm);
+  font-size: var(--txt-sm);
+}
+.fila-barra:hover { background: var(--relleno); }
+.fila-barra .etiqueta { color: var(--texto-sec); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Tres anchos de etiqueta, medidos contra el texto más largo de cada bloque: 5,5 em para
+   los meses, 8 para los tramos y 13 para las categorías. */
+.bloque.etiquetas-medias { --ancho-etiqueta: 8em; }
+.bloque.etiquetas-anchas { --ancho-etiqueta: 12em; }
+/* Cuando la etiqueta es un NOMBRE —un órgano pasa de sesenta caracteres— va encima del
+   carril y ocupa el ancho entero. */
+.fila-barra.apilada {
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "etiqueta valor" "barra barra";
+  gap: 4px var(--e-3);
+  padding: 6px;
+}
+.fila-barra.apilada .etiqueta { grid-area: etiqueta; color: var(--texto); line-height: 1.3; white-space: normal; }
+.fila-barra.apilada .barra { grid-area: barra; }
+.fila-barra.apilada .valor { grid-area: valor; }
+.fila-barra .valor { text-align: right; color: var(--texto); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* El carril es casi invisible: lo que se lee es la barra, que crece desde la izquierda con
+   el extremo del dato redondeado y la base recta. */
+.barra { height: 10px; background: var(--relleno); border-radius: 0 4px 4px 0; }
+.barra-relleno { height: 100%; min-width: 2px; background: var(--serie-1); border-radius: 0 4px 4px 0; }
+.fila-barra:hover .barra-relleno { filter: brightness(1.12); }
+.barra-parcial { opacity: .4; }
+
+/* --- Barra partida (la cartera) --------------------------------------------- */
+
+.apilada { margin-top: var(--e-3); }
+/* Dos píxeles del color del fondo entre segmento y segmento, nunca un borde. */
+.apilada-barra { display: flex; gap: 2px; height: 14px; }
+.apilada-seg { min-width: 3px; transition: filter var(--transicion); }
+.apilada-seg:first-child { border-radius: 4px 0 0 4px; }
+.apilada-seg:last-child { border-radius: 0 4px 4px 0; }
+.apilada-seg:only-child { border-radius: 4px; }
+.apilada-seg:hover, .apilada-seg:focus-visible { filter: brightness(1.15); }
+.apilada-leyenda {
+  list-style: none;
+  margin: var(--e-3) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px var(--e-4);
+  font-size: var(--txt-sm);
+}
+.apilada-leyenda li { display: flex; align-items: center; gap: 6px; }
+.apilada-nombre { color: var(--texto-sec); flex: 1; }
+.apilada-leyenda strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.apilada-pct { min-width: 3em; text-align: right; color: var(--texto-ter); font-variant-numeric: tabular-nums; }
+
+/* Las cifras de la cartera, como fichas de cifra. */
+.bloque .cifras-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--e-2); }
 .bloque .cifras-fila div {
-  flex: 1 1 110px;
   padding: var(--e-2) var(--e-3);
   background: var(--relleno);
   border-radius: var(--radio-lg);
   font-size: var(--txt-xs);
   color: var(--texto-ter);
 }
-.bloque .cifras-fila b {
-  display: block;
-  font: 600 var(--txt-xl)/1.3 var(--letra-titulo);
-  color: var(--texto);
-  font-variant-numeric: tabular-nums;
-}
+.bloque .cifras-fila b { display: block; margin-top: 2px; font: 600 var(--txt-xl)/1.3 var(--letra-titulo); color: var(--texto); }
 .bloque .cifras-fila .ojo b { color: var(--ambar); }
 
-/* Una fila de barra: etiqueta, carril y cifra. */
-.fila-barra {
-  display: grid;
-  grid-template-columns: var(--ancho-etiqueta, 5.5em) 1fr auto;
-  align-items: center;
-  gap: var(--e-2);
-  margin-bottom: 4px;
-  font-size: var(--txt-sm);
-}
-.fila-barra .etiqueta { color: var(--texto-sec); }
-/* Tres anchos de etiqueta, medidos contra el texto más largo de cada bloque: 5,5 em para
-   los meses, 8 para los tramos de importe y 13 para las categorías. */
-.bloque.etiquetas-medias { --ancho-etiqueta: 8em; }
-.bloque.etiquetas-anchas { --ancho-etiqueta: 13em; }
-/* Cuando la etiqueta es un NOMBRE —un órgano pasa de sesenta caracteres— va encima del
-   carril y ocupa el ancho entero. */
-.fila-barra.apilada {
-  grid-template-columns: 1fr auto;
-  grid-template-areas: "etiqueta etiqueta" "barra valor";
-  gap: 2px var(--e-2);
-  margin-bottom: var(--e-2);
-}
-.fila-barra.apilada .etiqueta { grid-area: etiqueta; line-height: 1.3; }
-.fila-barra.apilada .barra { grid-area: barra; }
-.fila-barra.apilada .valor { grid-area: valor; }
-.fila-barra .valor { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
-.barra { position: relative; height: 12px; background: var(--relleno); border-radius: 4px; }
-.barra-relleno { height: 100%; min-width: 2px; background: var(--serie-1); border-radius: 4px; }
-/* La segunda serie (el año en curso) va superpuesta y más fina, en el segundo color de la
-   paleta, para que la desviación se vea en lugar de promediarse. */
-.barra-encima {
-  position: absolute;
-  top: 3px;
-  left: 0;
-  height: 6px;
-  min-width: 2px;
-  background: var(--serie-2);
-  border-radius: 3px;
-}
-/* El mes en curso, rayado: sus datos están a medias y no se puede leer como los demás. */
-.barra-parcial {
-  background: repeating-linear-gradient(
-    135deg, var(--serie-1), var(--serie-1) 4px, transparent 4px, transparent 8px);
-}
-.leyenda { margin: var(--e-2) 0 0; font-size: var(--txt-xs); color: var(--texto-sec); }
-.leyenda .muestra { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; }
-.leyenda .muestra.media { background: var(--serie-1); }
-.leyenda .muestra.curso { background: var(--serie-2); }
-
-/* Tabla escueta para los cinco mayores y para los CPV: sin bordes, que aquí lo que se
-   compara son las cifras y no las celdas. */
+/* Tabla escueta para los cinco mayores, los CPV y los datos de cada gráfica: sin bordes de
+   celda, que aquí lo que se compara son las cifras. */
+.bloque-lista { margin-top: var(--e-1); }
 .tabla-escueta { width: 100%; border-collapse: collapse; font-size: var(--txt-sm); }
-.tabla-escueta td { padding: 4px 0; vertical-align: top; border-bottom: 1px solid var(--borde); }
+.tabla-escueta td { padding: 5px 0; vertical-align: top; border-bottom: 1px solid var(--borde); }
 .tabla-escueta tr:last-child td { border-bottom: 0; }
-.tabla-escueta td.num { padding-left: var(--e-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tabla-escueta .apagado { color: var(--texto-ter); }
+.tabla-escueta td.num { padding-left: var(--e-3); text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tabla-escueta .apagado { color: var(--texto-sec); }
+
+/* --- El tooltip -------------------------------------------------------------- *
+ * Uno para toda la pestaña, fijo sobre la ventana. El valor delante y en negrita; la
+ * serie, detrás y en gris, con un trazo de su color y no un cuadrado: a este tamaño un
+ * cuadrado relleno pesa más que el número. */
+.tt {
+  position: fixed;
+  z-index: 70;
+  max-width: 320px;
+  padding: var(--e-2) var(--e-3);
+  background: var(--panel);
+  border: 1px solid var(--borde-fuerte);
+  border-radius: var(--radio);
+  box-shadow: var(--sombra-2);
+  font-size: var(--txt-sm);
+  pointer-events: none;
+}
+.tt-titulo { margin-bottom: 2px; color: var(--texto-sec); font-size: var(--txt-xs); }
+.tt-fila { display: flex; align-items: center; gap: 6px; }
+.tt-fila strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tt-nombre { color: var(--texto-sec); }
+.tt-clave { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+.tt-clave.serie-1 { background: var(--serie-1); }
+.tt-clave.serie-2 { background: var(--serie-2); }
 
 /* --- Ventanas estrechas -------------------------------------------------------
  *
