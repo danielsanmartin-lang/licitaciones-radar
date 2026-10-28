@@ -1571,6 +1571,12 @@ function textoVersion(n) {
   const actual = sinV((infoVersion && infoVersion.version_actual) ||
                       (n && (n.hasta || n.version)));
   if (!actual) return '';
+  // La que corre es más nueva que la última de GitHub: una versión montada desde la copia
+  // de trabajo antes de publicarla. Decir «es la última publicada» sería mentir.
+  const publicada = infoVersion && !infoVersion.error && sinV(infoVersion.version_nueva);
+  if (publicada && publicada !== actual && !infoVersion.hay_nueva) {
+    return `Versión ${actual}, todavía sin publicar en GitHub (allí la última es la ${publicada}).`;
+  }
   if (n && n.actualizada) return `Versión ${actual}: recién instalada, es la última publicada.`;
   if (!infoVersion) return `Versión ${actual}.`;
   if (infoVersion.error) {
