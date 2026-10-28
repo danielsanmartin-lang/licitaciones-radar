@@ -246,9 +246,9 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 ## Cómo se usa
 
 Las vistas están en la **barra lateral**, como en Zepo Desk: Bandeja, Resumen y Otras
-licitaciones arriba; Vencimientos, Adjudicatarios y Analítica en «Mercado»; y Términos de
-búsqueda al pie, junto al estado del radar (la última búsqueda, cómo van las fuentes y la
-versión). **⌘1…⌘7** cambian de vista en ese mismo orden.
+licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios y Analítica en «Mercado»; y
+Términos de búsqueda al pie, junto al estado del radar (la última búsqueda, cómo van las
+fuentes y la versión). **⌘1…⌘8** cambian de vista en ese mismo orden.
 
 Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
 dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
@@ -303,13 +303,34 @@ Todas cuentan **expedientes**, no anuncios, igual que la lista.
 |---|---|
 | abiertas | han pasado el filtro, siguen vivas y el plazo no ha vencido |
 | cierran ≤7d | de las anteriores, las que se acaban esta semana |
-| sin revisar | no les has dado ni Seguir ni Descartar |
-| siguiendo | las que has marcado para trabajar |
-| coincidencias | todas las que han pasado el filtro, sin filtrar por plazo ni triaje |
+| coincidencias | todas las que han pasado el filtro menos las de plazo vencido: lo que todavía se puede mirar |
+| sin revisar | no les has dado ni Seguir, ni Descartar, ni las has marcado como vistas |
+
+Lo que sigues ya no tiene contador aquí: tiene su propia vista, **Siguiendo** (más abajo).
 
 Debajo de la lista pone «110 de 2.716 coincidencias» y qué filtros están puestos, porque
 el desplegable de triaje y la casilla **«Solo abiertas» se combinan**: elegir «todo
-menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas.
+menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas. «Ver
+todas» quita los filtros, y entonces sí sale también lo vencido.
+
+**«Ocultar sin plazo»** quita de la lista lo que no publica fecha límite. Se suma a
+cualquier contador y se recuerda la próxima vez.
+
+**«Limpiar sin revisar…»** es para cuando se acumulan cientos de «sin revisar» que nadie
+va a mirar una a una. Ofrece tres opciones, cada una con su cifra: las de **plazo
+vencido**, las que **no tienen fecha** o **todas**. Las elegidas pasan a **«vista»**:
+dejan de contar como sin revisar, pero siguen en la Bandeja y en la Analítica, que es la
+diferencia con descartar. Lo que sigues, has presentado o descartado no se toca. Se
+decide por expediente, con la fecha límite mayor de sus anuncios, y al terminar sale un
+aviso con **«Deshacer»**.
+
+### Siguiendo
+
+Lo que has marcado para seguir y lo que has presentado, aunque ya no case con ningún
+perfil, en dos grupos: **en plazo**, por lo que cierra antes, y **plazo vencido o
+cerradas**, de lo más reciente a lo más antiguo. En las cerradas sale **quién ganó y por
+cuánto** —mirando todos los anuncios del expediente, no solo el último— o «adjudicación
+pendiente» si todavía no se sabe. La cifra de la barra lateral es lo que sigue en plazo.
 
 ### Bandeja
 

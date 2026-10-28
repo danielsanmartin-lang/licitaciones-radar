@@ -10,7 +10,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from . import categorias
+from . import categorias, db
 from .model import ESTADOS_VIVOS
 
 ORDENES = {
@@ -93,9 +93,22 @@ _DESDE_BANDEJA = """FROM licitaciones l
               LEFT JOIN revisiones r ON r.licitacion_id = l.id"""
 
 _marcas_protegidos = ", ".join("?" * len(ESTADOS_PROTEGIDOS))
+# La primera mitad no cambia qué se ve, solo por dónde entra SQLite. Lo visible ya está
+# por fuerza en `matches` o en `revisiones` con un estado protegido, pero sin decirlo
+# el planificador recorre las 673.755 filas de `licitaciones`. Con un filtro sobre la
+# fecha límite tiene que leer cada fila entera, y el contador «coincidencias» sin lo
+# vencido tardaba de 1 a 9 s en una base real. Entrando por ahí: 1 ms, y los demás
+# contadores bajan de unos 100 ms a lo mismo. Es la misma lección que
+# `_entrada_expedientes` en la Analítica. Los estados van escritos y no como `?` porque
+# son constantes de este módulo.
+_ENTRADA_BANDEJA = (
+    "l.id IN (SELECT licitacion_id FROM matches"
+    " UNION SELECT licitacion_id FROM revisiones WHERE estado IN ("
+    + ", ".join(f"'{e}'" for e in ESTADOS_PROTEGIDOS) + "))"
+)
 _VISIBLE = (
-    f"(m.licitacion_id IS NOT NULL"
-    f" OR COALESCE(r.estado, 'nuevo') IN ({_marcas_protegidos}))"
+    f"({_ENTRADA_BANDEJA} AND (m.licitacion_id IS NOT NULL"
+    f" OR COALESCE(r.estado, 'nuevo') IN ({_marcas_protegidos})))"
 )
 
 
@@ -140,6 +153,8 @@ def _condiciones(
     importe_min: float | None = None,
     busqueda: str | None = None,
     solo_novedades: bool = False,
+    con_plazo: bool = False,
+    sin_vencidas: bool = False,
 ) -> tuple[list[str], list]:
     """Construye el WHERE de la bandeja. Lo comparten la lista y los contadores.
 
@@ -177,6 +192,19 @@ def _condiciones(
             "BETWEEN date('now') AND date('now', ?)"
         )
         params.append(f"+{int(cierran_en_dias)} day")
+    if con_plazo:
+        # «Ocultar sin plazo»: lo que no publica fecha límite no se puede preparar con
+        # calendario, y en una base real son casi la cuarta parte de lo sin revisar.
+        where.append("l.fecha_limite_presentacion IS NOT NULL")
+    if sin_vencidas:
+        # La mitad del plazo de `solo_vivas`, sin la del estado: lo que publica fecha y ya
+        # la ha pasado fuera, y lo que no publica fecha se queda. Es lo que cuenta el
+        # contador «coincidencias», que con lo vencido decía 412 donde había 101 que
+        # todavía se podían mirar.
+        where.append(
+            "(l.fecha_limite_presentacion IS NULL"
+            " OR substr(l.fecha_limite_presentacion, 1, 10) >= date('now'))"
+        )
     if ccaa:
         where.append("l.ccaa = ?")
         params.append(ccaa)
@@ -226,6 +254,8 @@ def bandeja(
     importe_min: float | None = None,
     busqueda: str | None = None,
     solo_novedades: bool = False,
+    con_plazo: bool = False,
+    sin_vencidas: bool = False,
     orden: str = ORDEN_POR_DEFECTO,
     limite: int = 200,
     offset: int = 0,
@@ -239,6 +269,7 @@ def bandeja(
         perfil=perfil, estado_revision=estado_revision, solo_vivas=solo_vivas,
         cierran_en_dias=cierran_en_dias, ccaa=ccaa, fuente=fuente,
         importe_min=importe_min, busqueda=busqueda, solo_novedades=solo_novedades,
+        con_plazo=con_plazo, sin_vencidas=sin_vencidas,
     )
     where, params = _condiciones(con, **filtros)
     orden_sql = ORDENES.get(orden, ORDENES[ORDEN_POR_DEFECTO])
@@ -579,15 +610,23 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False,
         key=lambda p: (-p["total"], p["perfil"]),
     )
 
+    por_plazo = sin_revisar_por_plazo(con)
     return {
-        # Todas las coincidencias, sin filtrar por plazo ni por triaje. Es el
-        # denominador de "57 de 668".
-        "coincidencias": contar(con, solo_vivas=False),
+        # Las coincidencias que todavía se pueden mirar: todas menos las de plazo
+        # vencido. El denominador de «57 de 668» sigue siendo el total sin filtros
+        # (`bandeja()["total_sin_filtros"]`), que es lo que sale al pulsar «ver todas».
+        "coincidencias": contar(con, solo_vivas=False, sin_vencidas=True),
         "en_plazo": contar(con, solo_vivas=True),
         "cierran_7_dias": contar(con, solo_vivas=True, cierran_en_dias=7),
         "sin_revisar": contar(con, solo_vivas=False, estado_revision="nuevo"),
+        # El reparto de las sin revisar que ofrece «Limpiar sin revisar…».
+        "sin_revisar_vencidas": por_plazo["vencidas"],
+        "sin_revisar_sin_fecha": por_plazo["sin_fecha"],
         "siguiendo": contar(con, solo_vivas=False, estado_revision="siguiendo"),
         "presentadas": contar(con, solo_vivas=False, estado_revision="presentada"),
+        # El número de la entrada «Siguiendo» de la barra lateral: lo que sigues o has
+        # presentado y todavía está en plazo.
+        "siguiendo_en_plazo": _siguiendo_en_plazo(con),
         "novedades": _novedades(con),
         "ultima_visita": _ultima_visita(con),
         "ultima_busqueda": _ultima_busqueda(con),
@@ -604,6 +643,145 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False,
         "fuentes": salud(con, en_marcha),
         "cobertura": cobertura(con),
     }
+
+
+# --- Limpiar lo sin revisar ----------------------------------------------------
+#
+# Con una base real se acumulan cientos de expedientes «sin revisar» que nadie va a
+# mirar uno a uno: 410, de los que 311 tenían el plazo vencido, 96 no publicaban fecha y
+# solo 3 estaban en plazo. «Limpiar sin revisar…» los pasa a «vista» de una vez.
+
+CRITERIOS_LIMPIEZA = ("vencidas", "sin_fecha", "todas")
+
+
+def _sin_revisar_por_expediente(con) -> list[dict]:
+    """Cada expediente sin revisar de la Bandeja, con su plazo: `vencidas`, `sin_fecha` o
+    `en_plazo`.
+
+    Se decide por EXPEDIENTE y con la fecha límite mayor de TODOS sus anuncios, casen o
+    no con un perfil: una corrección que amplía el plazo manda sobre el anuncio original
+    aunque su texto ya no case. Es la misma unidad que el contador «sin revisar», así que
+    el reparto suma lo que dice el contador.
+    """
+    filas = con.execute(
+        f"""SELECT clave, id,
+                   CASE WHEN limite IS NULL THEN 'sin_fecha'
+                        WHEN limite < date('now') THEN 'vencidas'
+                        ELSE 'en_plazo' END AS plazo
+              FROM (
+                   SELECT e.clave, e.id,
+                          COALESCE(
+                              (SELECT MAX(substr(l2.fecha_limite_presentacion, 1, 10))
+                                 FROM licitaciones l2 WHERE l2.clave_grupo = e.clave),
+                              e.limite) AS limite
+                     FROM (
+                          SELECT {_GRUPO} AS g, MAX(l.clave_grupo) AS clave, MIN(l.id) AS id,
+                                 MAX(substr(l.fecha_limite_presentacion, 1, 10)) AS limite
+                            {_DESDE_BANDEJA}
+                           WHERE {_VISIBLE} AND COALESCE(r.estado, 'nuevo') = 'nuevo'
+                           GROUP BY g
+                     ) e
+              )""",
+        list(ESTADOS_PROTEGIDOS),
+    ).fetchall()
+    return [dict(f) for f in filas]
+
+
+def sin_revisar_por_plazo(con) -> dict:
+    cuenta = {"vencidas": 0, "sin_fecha": 0, "en_plazo": 0}
+    for f in _sin_revisar_por_expediente(con):
+        cuenta[f["plazo"]] += 1
+    return cuenta
+
+
+def limpiar_sin_revisar(con, criterio: str) -> dict:
+    """Pasa a «vista» los expedientes sin revisar que cumplan `criterio`.
+
+    `vencidas` son las de plazo vencido, `sin_fecha` las que no publican fecha límite y
+    `todas`, todas las sin revisar. Se escribe en todos los anuncios de cada expediente,
+    como cualquier triaje (ver `db.ids_del_grupo`), y solo en los que siguen en «nuevo»:
+    lo que sigues o has presentado no se toca. Devuelve los ids, que son lo que necesita
+    `db.desmarcar_vistas` para deshacerlo.
+    """
+    if criterio not in CRITERIOS_LIMPIEZA:
+        raise ValueError(
+            f"criterio no válido: {criterio}. Válidos: {', '.join(CRITERIOS_LIMPIEZA)}"
+        )
+    elegidos = [f for f in _sin_revisar_por_expediente(con)
+                if criterio == "todas" or f["plazo"] == criterio]
+    # Por `clave_grupo` cuando la hay, que usa su índice; los anuncios sin grupo son
+    # expedientes de un solo anuncio. Pasar por el COALESCE de `_GRUPO` recorrería la
+    # base entera.
+    claves = [f["clave"] for f in elegidos if f["clave"]]
+    ids = [f["id"] for f in elegidos if not f["clave"]]
+    for tanda in db._por_tandas(claves):
+        marcas = ", ".join("?" * len(tanda))
+        ids += [r[0] for r in con.execute(
+            f"SELECT id FROM licitaciones WHERE clave_grupo IN ({marcas})", tanda)]
+    cambiados = db.marcar_vistas(con, ids)
+    return {"expedientes": len(elegidos), "ids": cambiados}
+
+
+# --- Siguiendo -------------------------------------------------------------------
+#
+# Lo que sigues o has presentado, en su propia vista y en dos grupos: lo que todavía está
+# en plazo y lo que ya no. De lo segundo interesa sobre todo quién se lo llevó.
+
+
+def _clave_expediente(it: dict) -> str:
+    return it.get("clave_grupo") or str(it["id"])
+
+
+def _siguiendo_en_plazo(con) -> int:
+    """Cuántos de «Siguiendo» siguen en plazo. La misma regla que su grupo «En plazo»."""
+    return sum(contar(con, solo_vivas=True, estado_revision=e) for e in ESTADOS_PROTEGIDOS)
+
+
+def _adjudicacion(con, it: dict) -> dict | None:
+    """Quién ganó el expediente, mirando todos sus anuncios y no solo el que se enseña.
+
+    La tarjeta enseña el anuncio más reciente, y no siempre es el que trae el ganador: una
+    corrección o un anuncio de formalización sin adjudicatario puede llegar después.
+    """
+    if it.get("clave_grupo"):
+        donde, valor = "clave_grupo = ?", it["clave_grupo"]
+    else:
+        donde, valor = "id = ?", it["id"]
+    fila = con.execute(
+        f"""SELECT adjudicatario, importe_adjudicacion, fecha_adjudicacion
+              FROM licitaciones
+             WHERE {donde} AND adjudicatario IS NOT NULL
+             ORDER BY fecha_adjudicacion IS NULL, fecha_adjudicacion DESC,
+                      fecha_publicacion DESC, id DESC
+             LIMIT 1""",
+        (valor,),
+    ).fetchone()
+    return dict(fila) if fila else None
+
+
+def siguiendo(con) -> dict:
+    """Lo que sigues y lo presentado, en «en plazo» y «plazo vencido o cerradas».
+
+    «En plazo» es la misma regla que el contador «abiertas» (estado vivo y plazo sin
+    vencer, o sin fecha), ordenado por lo que cierra antes. El resto, de la fecha límite
+    más reciente a la más antigua, con el adjudicatario cuando se conoce.
+    """
+    en_plazo: list[dict] = []
+    todas: list[dict] = []
+    for estado in ESTADOS_PROTEGIDOS:
+        en_plazo += bandeja(con, estado_revision=estado, solo_vivas=True, limite=1000)["items"]
+        todas += bandeja(con, estado_revision=estado, solo_vivas=False, limite=1000)["items"]
+    vivos = {_clave_expediente(it) for it in en_plazo}
+    vencidas = [it for it in todas if _clave_expediente(it) not in vivos]
+
+    en_plazo.sort(key=lambda it: (it["dias_restantes"] is None, it["dias_restantes"] or 0))
+    vencidas.sort(key=lambda it: it.get("fecha_limite_presentacion") or "", reverse=True)
+    for it in vencidas:
+        ganador = _adjudicacion(con, it)
+        if ganador:
+            it.update(ganador)
+    return {"en_plazo": en_plazo, "vencidas": vencidas,
+            "total": len(en_plazo) + len(vencidas)}
 
 
 def cobertura(con) -> dict:

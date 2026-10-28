@@ -61,6 +61,8 @@
         <circle cx="12" cy="12" r="2.8"/>
       </symbol>
       <symbol id="ico-visto" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></symbol>
+      <!-- Doble marca, como un mensaje leído: «vista» no es presentada (la marca sola). -->
+      <symbol id="ico-leida" viewBox="0 0 24 24"><path d="M2 12.5l4.5 4.5 9.5-10.5"/><path d="M11.5 16.5l.5.5 9.5-10.5"/></symbol>
       <symbol id="ico-cruz" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
       <symbol id="ico-punto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></symbol>
       <symbol id="ico-capas" viewBox="0 0 24 24">
@@ -199,6 +201,8 @@
                 data-vista="otras"><span class="tab-ico tono-violeta"><svg class="ico" aria-hidden="true"><use href="#ico-capas"/></svg></span><span class="tab-txt">Otras licitaciones</span></button>
 
         <p class="lateral-seccion">Mercado</p>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-siguiendo"
+                data-vista="siguiendo"><span class="tab-ico tono-acento"><svg class="ico" aria-hidden="true"><use href="#ico-ojo"/></svg></span><span class="tab-txt">Siguiendo</span><span class="cuenta" id="cuenta-siguiendo" title="en plazo"></span></button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-vencimientos"
                 data-vista="vencimientos"><span class="tab-ico tono-rojo"><svg class="ico" aria-hidden="true"><use href="#ico-calendario"/></svg></span><span class="tab-txt">Vencimientos</span></button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-adjudicatarios"
@@ -298,6 +302,7 @@
                 <select id="estado">
                   <option value="">Todo menos descartadas</option>
                   <option value="nuevo">Sin revisar</option>
+                  <option value="vista">Vistas</option>
                   <option value="siguiendo">En seguimiento</option>
                   <option value="presentada">Presentadas</option>
                   <option value="descartado">Descartadas</option>
@@ -318,7 +323,19 @@
                   <option value="importe">Ordenar: mayor importe</option>
                 </select>
                 <label class="check"><input type="checkbox" id="vivas" checked> Solo abiertas</label>
+                <label class="check"><input type="checkbox" id="con-plazo"> Ocultar sin plazo</label>
+                <button id="limpiar-abrir" class="boton-sec">Limpiar sin revisar…</button>
                 <a id="exportar" class="boton-sec" href="/api/export.csv">Exportar CSV</a>
+              </div>
+              <!-- «Limpiar sin revisar…»: pasa a «vista» lo que no se va a mirar una a una.
+                   Las tres opciones llevan su cifra y se aplican al pulsarlas; para eso está
+                   «Deshacer» en el aviso que sale después. Lo rellena `abrirLimpiar()`. -->
+              <div id="limpiar" class="limpiar" role="group" aria-labelledby="limpiar-titulo" hidden>
+                <p id="limpiar-titulo"><strong>Marcar como vistas las que están sin revisar</strong></p>
+                <p class="pista">Dejan de contar como «sin revisar», pero siguen en la Bandeja y en
+                   la Analítica. Lo que sigues, has presentado o descartado no se toca.</p>
+                <div id="limpiar-opciones" class="ventanas"></div>
+                <button id="limpiar-cancelar" class="boton-sec">Cancelar</button>
               </div>
               <p id="contador" class="contador"></p>
               <p id="filtros-activos" class="filtros-activos" hidden></p>
@@ -384,6 +401,20 @@
               <div id="otras-lista" class="lista"></div>
               <p id="otras-vacio" class="vacio" hidden></p>
               <button id="otras-mas" class="boton-sec mas" hidden>Cargar más</button>
+            </section>
+
+            <!-- Lo que sigues y lo presentado, aunque ya no case con ningún perfil, en dos
+                 grupos. De lo que ya no está en plazo interesa quién se lo llevó. -->
+            <section id="vista-siguiendo" role="tabpanel" hidden data-titulo="Siguiendo"
+                     data-icono="ico-ojo" data-tono="acento">
+              <p class="intro">
+                Lo que sigues y lo que has presentado. Para añadir algo, ábrelo y pulsa
+                «Seguir».
+              </p>
+              <h3 class="grupo-titulo">En plazo <span id="siguiendo-n-plazo" class="grupo-n"></span></h3>
+              <div id="siguiendo-en-plazo" class="lista"></div>
+              <h3 class="grupo-titulo">Plazo vencido o cerradas <span id="siguiendo-n-vencidas" class="grupo-n"></span></h3>
+              <div id="siguiendo-vencidas" class="lista"></div>
             </section>
 
             <section id="vista-vencimientos" role="tabpanel" hidden data-titulo="Vencimientos"
@@ -476,6 +507,14 @@
       <button class="cerrar" id="cerrar" aria-label="Cerrar">×</button>
       <div id="panel-contenido"></div>
     </aside>
+  </div>
+
+  <!-- Lo que acaba de hacer «Limpiar sin revisar…», con la forma de volver atrás. Abajo y
+       flotando, porque se puede estar en cualquier punto de la lista. -->
+  <div id="lote-aviso" class="lote-aviso" role="status" hidden>
+    <span id="lote-aviso-txt"></span>
+    <button id="lote-deshacer" class="boton-sec">Deshacer</button>
+    <button id="lote-cerrar" class="lote-cerrar" aria-label="Cerrar">×</button>
   </div>
 
   <script src="/app.js"></script>

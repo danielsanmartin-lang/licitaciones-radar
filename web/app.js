@@ -66,17 +66,21 @@ function empezarCarga(idContenedor, texto = 'Cargando…') {
 
 let soloNovedades = false;
 let cierranEnDias = '';
+// El otro filtro que solo pone un contador: «coincidencias» deja fuera lo vencido.
+let sinVencidas = '';
 let kpiActivo = 'en_plazo';
 
 // Cada contador de la cabecera y el filtro que aplica. Tiene que coincidir con lo
 // que calcula consultas.resumen() o el número volvería a no cuadrar con la lista.
+// «coincidencias» no cuenta lo de plazo vencido: con ello decía 412 donde quedaban 101 que
+// todavía se podían mirar. Lo que sigues ya no tiene contador aquí: tiene su vista.
 const KPIS = [
   { clave: 'en_plazo', etiqueta: 'abiertas', filtro: { vivas: '1' } },
   { clave: 'cierran_7_dias', etiqueta: 'cierran ≤7d', clase: 'urgente',
     filtro: { vivas: '1', cierran_en_dias: '7' } },
+  { clave: 'coincidencias', etiqueta: 'coincidencias',
+    filtro: { vivas: '0', sin_vencidas: '1' } },
   { clave: 'sin_revisar', etiqueta: 'sin revisar', filtro: { vivas: '0', estado: 'nuevo' } },
-  { clave: 'siguiendo', etiqueta: 'siguiendo', filtro: { vivas: '0', estado: 'siguiendo' } },
-  { clave: 'coincidencias', etiqueta: 'coincidencias', filtro: { vivas: '0' } },
 ];
 
 function fmtFechaHora(iso) {
@@ -99,6 +103,8 @@ function filtros() {
     vivas: $('vivas').checked ? '1' : '0',
     novedades: soloNovedades ? '1' : '',
     cierran_en_dias: cierranEnDias,
+    sin_vencidas: sinVencidas,
+    con_plazo: $('con-plazo').checked ? '1' : '',
   };
 }
 
@@ -107,6 +113,7 @@ function aplicarKpi(clave) {
   if (!kpi) return;
   kpiActivo = clave;
   cierranEnDias = kpi.filtro.cierran_en_dias || '';
+  sinVencidas = kpi.filtro.sin_vencidas || '';
   $('vivas').checked = kpi.filtro.vivas === '1';
   $('estado').value = kpi.filtro.estado || '';
   mostrarVista('bandeja');
@@ -119,7 +126,9 @@ function aplicarKpi(clave) {
 function limpiarFiltros() {
   kpiActivo = null;
   cierranEnDias = '';
+  sinVencidas = '';
   soloNovedades = false;
+  ponerConPlazo(false);
   $('q').value = '';
   $('perfil').value = '';
   $('estado').value = '';
@@ -137,6 +146,8 @@ function describirFiltros() {
   const partes = [];
   if ($('vivas').checked) partes.push('solo abiertas (plazo sin vencer)');
   if (cierranEnDias) partes.push(`cierran en ${cierranEnDias} días`);
+  if (sinVencidas) partes.push('sin las de plazo vencido');
+  if ($('con-plazo').checked) partes.push('sin las que no publican plazo');
   const estado = $('estado');
   if (estado.value) partes.push(estado.options[estado.selectedIndex].text.toLowerCase());
   if ($('perfil').value) partes.push($('perfil').value);
@@ -242,6 +253,16 @@ const AVISOS_DESCARTADOS = 'avisos-descartados';
 // defecto sin dar manera de fijar el propio es cambiárselo dos veces a quien prefería
 // el anterior.
 const ORDEN_BANDEJA = 'orden-bandeja';
+// «Ocultar sin plazo», que también se recuerda: es una forma de mirar la Bandeja, como el
+// orden, y no un filtro de un momento.
+const CON_PLAZO = 'ocultar-sin-plazo';
+
+function ponerConPlazo(activo) {
+  $('con-plazo').checked = activo;
+  try {
+    localStorage.setItem(CON_PLAZO, activo ? '1' : '0');
+  } catch { /* sin almacén, se olvidará al recargar */ }
+}
 
 function claveAviso(f) {
   return `${f.fuente}|${f.iniciado_en || ''}`;
@@ -381,6 +402,99 @@ async function cargarResumen() {
     `${f.fuente}: ${f.ok ? `${f.vistos.toLocaleString('es-ES')} vistas, ${f.nuevos} nuevas` : 'error'}`
   ).join('\n');
   $('cuenta-bandeja').textContent = d.sin_revisar ? d.sin_revisar.toLocaleString('es-ES') : '';
+  $('cuenta-siguiendo').textContent =
+    d.siguiendo_en_plazo ? d.siguiendo_en_plazo.toLocaleString('es-ES') : '';
+  ultimoResumen = d;
+  $('limpiar-abrir').disabled = !d.sin_revisar;
+  if (!$('limpiar').hidden) pintarLimpiar();
+}
+
+// --- Limpiar lo sin revisar ---------------------------------------------------
+//
+// Cientos de «sin revisar» que nadie va a mirar una a una —en una base real, 410: 311 con
+// el plazo vencido, 96 sin fecha y 3 en plazo— se pasan a «vista» de una vez. Siguen en la
+// Bandeja; lo que sigues, has presentado o descartado no se toca, y se puede deshacer.
+
+// Lo último que contestó /api/resumen: las cifras de las tres opciones salen de ahí.
+let ultimoResumen = null;
+// Los ids de la última limpieza, para «Deshacer».
+let ultimaLimpieza = null;
+let relojAvisoLote = null;
+
+const CRITERIOS_LIMPIEZA = [
+  { criterio: 'vencidas', cifra: (d) => d.sin_revisar_vencidas, texto: 'con el plazo vencido' },
+  { criterio: 'sin_fecha', cifra: (d) => d.sin_revisar_sin_fecha, texto: 'sin fecha de cierre' },
+  { criterio: 'todas', cifra: (d) => d.sin_revisar, texto: 'todas las sin revisar' },
+];
+
+function pintarLimpiar() {
+  const cont = $('limpiar-opciones');
+  cont.textContent = '';
+  for (const c of CRITERIOS_LIMPIEZA) {
+    const n = (ultimoResumen && c.cifra(ultimoResumen)) || 0;
+    const b = crear('button', 'ventana');
+    b.dataset.criterio = c.criterio;
+    b.disabled = !n;
+    b.appendChild(crear('div', 'n', n.toLocaleString('es-ES')));
+    b.appendChild(crear('div', 't', c.texto));
+    b.addEventListener('click', () => limpiarSinRevisar(c.criterio));
+    cont.appendChild(b);
+  }
+}
+
+function abrirLimpiar() {
+  const abierto = !$('limpiar').hidden;
+  $('limpiar').hidden = abierto;
+  if (!abierto) pintarLimpiar();
+}
+
+async function limpiarSinRevisar(criterio) {
+  for (const b of $('limpiar-opciones').querySelectorAll('button')) b.disabled = true;
+  let d;
+  try {
+    d = await pedirJSON('/api/revision/lote', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ criterio }) });
+  } catch {
+    d = { error: 'No se ha podido hablar con el radar.' };
+  }
+  $('limpiar').hidden = true;
+  if (d.error) {
+    avisarLote(d.error, false);
+    return;
+  }
+  ultimaLimpieza = d.ids;
+  avisarLote(`${d.expedientes.toLocaleString('es-ES')} ` +
+             `${d.expedientes === 1 ? 'marcada' : 'marcadas'} como vistas`, d.ids.length > 0);
+  await cargarResumen();
+  cargarLista();
+}
+
+async function deshacerLimpieza() {
+  if (!ultimaLimpieza) return;
+  const ids = ultimaLimpieza;
+  ultimaLimpieza = null;
+  $('lote-deshacer').disabled = true;
+  try {
+    await fetch('/api/revision/lote/deshacer', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+  } catch {
+    avisarLote('No se ha podido deshacer: no hay conexión con el radar.', false);
+    return;
+  }
+  avisarLote('Deshecho: vuelven a estar sin revisar.', false);
+  await cargarResumen();
+  cargarLista();
+}
+
+function avisarLote(texto, conDeshacer) {
+  $('lote-aviso-txt').textContent = texto;
+  $('lote-deshacer').hidden = !conDeshacer;
+  $('lote-deshacer').disabled = false;
+  $('lote-aviso').hidden = false;
+  // Se va solo, pero con margen para pensárselo: deshacer es justo lo que se decide tarde,
+  // después de echar un vistazo a la lista. Con 15 s se iba antes de haberla mirado.
+  clearTimeout(relojAvisoLote);
+  relojAvisoLote = setTimeout(() => { $('lote-aviso').hidden = true; }, 45000);
 }
 
 // --- Lista -----------------------------------------------------------------
@@ -1884,6 +1998,56 @@ async function pintarVersionPie() {
 
 let mesesVencimiento = 6;
 
+// --- Siguiendo -----------------------------------------------------------------
+//
+// Lo que sigues y lo presentado, en dos grupos. Las tarjetas son las de la Bandeja: abren
+// la misma ficha, y «ganó X» ya sale cuando el expediente está adjudicado.
+async function cargarSiguiendo() {
+  const carga = empezarCarga('siguiendo-en-plazo');
+  $('siguiendo-vencidas').textContent = '';
+  $('siguiendo-n-plazo').textContent = '';
+  $('siguiendo-n-vencidas').textContent = '';
+  let d;
+  try {
+    d = await pedirJSON('/api/siguiendo');
+  } catch {
+    if (carga.terminar()) {
+      $('siguiendo-en-plazo').innerHTML = '<p class="vacio">No se ha podido cargar.</p>';
+    }
+    return;
+  }
+  if (!carga.terminar()) return;
+  pintarGrupoSiguiendo('siguiendo-en-plazo', 'siguiendo-n-plazo', d.en_plazo,
+    'Nada de lo que sigues está en plazo ahora mismo.', false);
+  pintarGrupoSiguiendo('siguiendo-vencidas', 'siguiendo-n-vencidas', d.vencidas,
+    'Todavía no se ha cerrado nada de lo que sigues.', true);
+}
+
+function pintarGrupoSiguiendo(idLista, idCifra, items, vacio, cerradas) {
+  $(idCifra).textContent = items.length ? items.length.toLocaleString('es-ES') : '';
+  const cont = $(idLista);
+  if (!items.length) {
+    cont.appendChild(crear('p', 'vacio', vacio));
+    return;
+  }
+  for (const it of items) {
+    const el = tarjeta(it);
+    // De lo cerrado, lo que se quiere saber es quién se lo llevó y por cuánto. «ganó X»
+    // ya lo pinta la tarjeta; aquí se le añade el importe, o se dice que todavía no se
+    // sabe, en el mismo sitio: detrás del plazo.
+    const ganador = el.querySelector('.pill.incumbente');
+    if (ganador && it.importe_adjudicacion) {
+      ganador.lastChild.textContent += ` · ${fmtImporte(it.importe_adjudicacion)}`;
+    } else if (cerradas && !it.adjudicatario) {
+      const pendiente = pildora('adjudicación pendiente');
+      const plazo = el.querySelector('.pill.plazo-vencido, .pill.plazo-pronto, .pill.plazo-ok');
+      if (plazo) plazo.after(pendiente);
+      else el.querySelector('.meta').appendChild(pendiente);
+    }
+    cont.appendChild(el);
+  }
+}
+
 async function cargarVencimientos() {
   const meses = mesesVencimiento;
   const carga = empezarCarga('lista-vencimientos');
@@ -2343,8 +2507,8 @@ function cerrarCajon() {
 
 let vistaActual = 'bandeja';
 
-// El orden de la barra lateral, que es también el de los atajos ⌘1…⌘7.
-const VISTAS = ['bandeja', 'resumen', 'otras', 'vencimientos', 'adjudicatarios',
+// El orden de la barra lateral, que es también el de los atajos ⌘1…⌘8.
+const VISTAS = ['bandeja', 'resumen', 'otras', 'siguiendo', 'vencimientos', 'adjudicatarios',
                 'analitica', 'ajustes'];
 
 // La cabecera de la vista sale de su propia sección: `data-titulo`, `data-icono`,
@@ -2380,6 +2544,7 @@ function mostrarVista(vista) {
   }
   if (vista === 'resumen') cargarResumenVista();
   if (vista === 'otras') cargarOtras();
+  if (vista === 'siguiendo') cargarSiguiendo();
   if (vista === 'vencimientos') cargarVencimientos();
   if (vista === 'adjudicatarios') cargarAdjudicatarios();
   if (vista === 'analitica') cargarAnalitica();
@@ -2392,6 +2557,7 @@ function mostrarVista(vista) {
 // cuatro botones idénticos en fila y el único que se pulsa por error es el de descartar.
 const ESTADOS = [
   ['nuevo', 'Sin revisar', 'ico-punto'],
+  ['vista', 'Vista', 'ico-leida'],
   ['siguiendo', 'Seguir', 'ico-ojo'],
   ['presentada', 'Presentada', 'ico-visto'],
   ['descartado', 'Descartar', 'ico-cruz'],
@@ -2498,8 +2664,10 @@ async function abrirPanel(id) {
       cargarLista();
       cargarResumen();
       // Desde «Otras», seguir o descartar saca la ficha de esa lista —seguirla la pasa a
-      // la Bandeja—, así que hay que rehacerla también.
+      // la Bandeja—, así que hay que rehacerla también. Y en «Siguiendo», dejar de
+      // seguirla la saca de allí.
       if (vistaActual === 'otras') cargarOtras();
+      if (vistaActual === 'siguiendo') cargarSiguiendo();
     });
   }
 
@@ -2573,6 +2741,7 @@ for (const id of ['perfil', 'estado', 'ccaa', 'importe_min', 'orden', 'vivas']) 
     if (id !== 'orden') {
       kpiActivo = null;
       cierranEnDias = '';
+      sinVencidas = '';
       for (const b of $('kpis').querySelectorAll('button.kpi')) b.classList.remove('activo');
     } else {
       try {
@@ -2582,6 +2751,15 @@ for (const id of ['perfil', 'estado', 'ccaa', 'importe_min', 'orden', 'vivas']) 
     cargarLista();
   });
 }
+// No quita el contador activo: ocultar lo que no tiene plazo se suma a cualquiera de ellos.
+$('con-plazo').addEventListener('change', () => {
+  ponerConPlazo($('con-plazo').checked);
+  cargarLista();
+});
+$('limpiar-abrir').addEventListener('click', abrirLimpiar);
+$('limpiar-cancelar').addEventListener('click', () => { $('limpiar').hidden = true; });
+$('lote-deshacer').addEventListener('click', deshacerLimpieza);
+$('lote-cerrar').addEventListener('click', () => { $('lote-aviso').hidden = true; });
 $('mas').addEventListener('click', () => cargarLista(false));
 $('cerrar').addEventListener('click', cerrarCajon);
 $('panel-fondo').addEventListener('click', cerrarCajon);
@@ -2631,14 +2809,17 @@ $('tab-novedades').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') cerrarCajon();
-  // ⌘1…⌘7 cambian de vista en el orden de la barra lateral, como en Zepo Desk. Con la
+  // ⌘1…⌘8 cambian de vista en el orden de la barra lateral, como en Zepo Desk. Con la
   // pantalla de arranque delante no: todavía no hay nada a lo que ir.
-  if ((e.metaKey || e.ctrlKey) && /^[1-7]$/.test(e.key) && !enArranque) {
+  if ((e.metaKey || e.ctrlKey) && /^[1-8]$/.test(e.key) && !enArranque) {
     e.preventDefault();
     mostrarVista(VISTAS[Number(e.key) - 1]);
   }
 });
 
+try {
+  $('con-plazo').checked = localStorage.getItem(CON_PLAZO) === '1';
+} catch { /* sin almacén, se enseña todo, que es lo de fábrica */ }
 try {
   const guardado = localStorage.getItem(ORDEN_BANDEJA);
   if (guardado && [...$('orden').options].some((o) => o.value === guardado)) {
