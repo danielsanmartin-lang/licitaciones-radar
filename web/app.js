@@ -370,11 +370,17 @@ async function cargarResumen() {
     tabN.hidden = true;
   }
 
-  $('salud').textContent = (d.fuentes || []).length
-    ? 'Última ingesta — ' + d.fuentes.map((f) =>
-        `${f.fuente}: ${f.ok ? `${f.vistos.toLocaleString('es-ES')} vistas, ${f.nuevos} nuevas` : 'error'}`
-      ).join(' · ')
-    : 'Sin ingestas todavía. Ejecuta: python3 radar.py ingest';
+  // En la barra lateral, en corto: cuántas fuentes van bien. El detalle de cada una, al
+  // pasar el ratón, que es donde cabe; los fallos ya los cuenta en rojo `#avisos`.
+  const fuentes = d.fuentes || [];
+  const rotas = fuentes.filter((f) => !f.ok && !f.en_curso).length;
+  $('salud').textContent = !fuentes.length ? 'Sin búsquedas todavía'
+    : rotas ? `Fuentes: ${rotas} con error de ${fuentes.length}`
+    : `Fuentes: las ${fuentes.length} al día`;
+  $('salud').title = fuentes.map((f) =>
+    `${f.fuente}: ${f.ok ? `${f.vistos.toLocaleString('es-ES')} vistas, ${f.nuevos} nuevas` : 'error'}`
+  ).join('\n');
+  $('cuenta-bandeja').textContent = d.sin_revisar ? d.sin_revisar.toLocaleString('es-ES') : '';
 }
 
 // --- Lista -----------------------------------------------------------------
@@ -2183,25 +2189,76 @@ async function guardarAjustes() {
 
 // El panel y su fondo se abren y se cierran juntos. Antes había tres sitios distintos
 // poniendo `$('panel').hidden` a mano, y con el fondo serían seis.
+// La ficha es la tercera columna cuando cabe al lado de la lista, como el panel de
+// detalle de Zepo Desk, y flota encima cuando no. El corte es el mismo que el de la
+// consulta `@media (max-width: 1239px)` de styles.css: si cambia uno, el otro.
+const FICHA_FLOTANTE = window.matchMedia('(max-width: 1239px)');
+
+function fichaFlotante() {
+  return FICHA_FLOTANTE.matches;
+}
+
 function abrirCajon() {
-  $('panel-fondo').hidden = false;
+  // El fondo oscurecido solo cuando flota: fija, la ficha no tapa nada que haya que
+  // apartar, y oscurecer la lista que se sigue leyendo al lado no tendría sentido.
+  $('panel-fondo').hidden = !fichaFlotante();
   $('panel').hidden = false;
 }
+
+// La fila de la ficha abierta se queda marcada, como en Zepo Desk: con la ficha al lado,
+// es lo que dice de cuál de las cien es lo que se está leyendo.
+function marcarSeleccionada(id) {
+  for (const el of document.querySelectorAll('.tarjeta.seleccionada')) {
+    el.classList.remove('seleccionada');
+  }
+  if (id == null) return;
+  for (const el of document.querySelectorAll(`.tarjeta[data-id="${Number(id)}"]`)) {
+    el.classList.add('seleccionada');
+  }
+}
+
+// Si la ventana cambia de ancho con la ficha abierta, el fondo tiene que aparecer o irse:
+// si no, una ficha que pasa a flotar se quedaría sin dónde pulsar para cerrarla.
+FICHA_FLOTANTE.addEventListener('change', () => {
+  if (!$('panel').hidden) $('panel-fondo').hidden = !fichaFlotante();
+});
 
 function cerrarCajon() {
   $('panel').hidden = true;
   $('panel-fondo').hidden = true;
+  marcarSeleccionada(null);
 }
 
 let vistaActual = 'bandeja';
 
+// El orden de la barra lateral, que es también el de los atajos ⌘1…⌘7.
+const VISTAS = ['bandeja', 'resumen', 'otras', 'vencimientos', 'adjudicatarios',
+                'analitica', 'ajustes'];
+
+// La cabecera de la vista sale de su propia sección: `data-titulo`, `data-icono`,
+// `data-tono` y el párrafo `.intro`. Es marcado estático de `index.html`, nunca texto de un
+// pliego, y por eso puede ir por `innerHTML` (lleva algún `<strong>`).
+function pintarCabecera(vista) {
+  const sec = $('vista-' + vista);
+  $('vista-titulo').textContent = sec.dataset.titulo || '';
+  const intro = sec.querySelector(':scope > .intro');
+  $('vista-sub').innerHTML = intro ? intro.innerHTML : '';
+  $('vista-icono').className = `vista-icono tono-${sec.dataset.tono || 'acento'}`;
+  $('vista-icono-uso').setAttribute('href', '#' + (sec.dataset.icono || 'ico-bandeja'));
+  document.title = vista === 'bandeja' ? 'Radar de Licitaciones'
+    : `${sec.dataset.titulo} · Radar de Licitaciones`;
+}
+
 function mostrarVista(vista) {
   vistaActual = vista;
-  for (const v of ['bandeja', 'resumen', 'otras', 'vencimientos', 'adjudicatarios',
-                   'analitica', 'ajustes']) {
+  for (const v of VISTAS) {
     $('vista-' + v).hidden = v !== vista;
   }
   $('filtros').hidden = vista !== 'bandeja';
+  pintarCabecera(vista);
+  // Cada vista empieza arriba: el scroll vive en `.cuerpo`, que es el mismo para todas, y
+  // sin esto se heredaba la posición de la anterior.
+  $('cuerpo').scrollTop = 0;
   for (const b of document.querySelectorAll('.tab[data-vista]')) {
     const activa = b.dataset.vista === vista;
     b.classList.toggle('activo', activa);
@@ -2257,6 +2314,7 @@ async function abrirPanel(id) {
   const r = await fetch('/api/licitacion/' + id);
   const d = await r.json();
   if (d.error) return;
+  marcarSeleccionada(id);
 
   const campos = [
     ['Órgano', d.organo],
@@ -2461,6 +2519,12 @@ $('tab-novedades').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') cerrarCajon();
+  // ⌘1…⌘7 cambian de vista en el orden de la barra lateral, como en Zepo Desk. Con la
+  // pantalla de arranque delante no: todavía no hay nada a lo que ir.
+  if ((e.metaKey || e.ctrlKey) && /^[1-7]$/.test(e.key) && !enArranque) {
+    e.preventDefault();
+    mostrarVista(VISTAS[Number(e.key) - 1]);
+  }
 });
 
 try {
@@ -2469,6 +2533,15 @@ try {
     $('orden').value = guardado;
   }
 } catch { /* sin almacén se abre con el de fábrica, que es lo correcto */ }
+
+// Dentro de la app de macOS la barra de título va integrada: la clase deja libre la franja
+// de arriba, que es la que la ventana usa para arrastrarse (ver `html.nativa` en styles.css).
+if (ventanaNativa()) document.documentElement.classList.add('nativa');
+pintarCabecera('bandeja');
+// La versión, al pie de la barra lateral. No sale a internet: es la que ejecuta el servidor.
+pedirJSON('/api/actualizacion/estado')
+  .then((e) => { if (e && e.version) $('version-app').textContent = `Versión ${e.version}`; })
+  .catch(() => {});
 
 // La bandeja se pinta por detrás de la pantalla de arranque, con lo que ya haya en la
 // base, para que al destaparla no haya que esperar a nada más.

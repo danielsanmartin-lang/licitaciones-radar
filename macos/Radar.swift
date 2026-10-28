@@ -324,6 +324,31 @@ final class Servidor {
     }
 }
 
+// MARK: - La franja de arriba
+
+/// Por dónde se arrastra la ventana. Con la barra de título integrada, como en Zepo Desk,
+/// la web llega hasta arriba del todo, y un WKWebView se queda todos los clics que caen
+/// encima: sin esta vista la ventana no se podría mover. Va por encima de la web y ocupa
+/// la misma franja que la web deja libre (`--franja` en `styles.css`), así que no tapa
+/// nada que se pueda pulsar. El doble clic hace lo que diga Ajustes del Sistema —ampliar,
+/// minimizar o nada—, igual que en cualquier barra de título.
+final class ZonaArrastre: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let ventana = window else { return }
+        if event.clickCount == 2 {
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize": ventana.performMiniaturize(nil)
+            case "None": break
+            default: ventana.performZoom(nil)
+            }
+            return
+        }
+        ventana.performDrag(with: event)
+    }
+}
+
 // MARK: - La aplicación
 
 final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
@@ -389,8 +414,17 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered, defer: false)
+        // El título se queda para el menú Ventana y Mission Control, pero no se pinta: la
+        // barra de título va integrada, como en Zepo Desk, y la barra lateral de la web sube
+        // hasta los botones de cerrar y minimizar.
         ventana.title = "Radar de Licitaciones"
-        ventana.titlebarAppearsTransparent = false
+        ventana.titleVisibility = .hidden
+        ventana.titlebarAppearsTransparent = true
+        // Una barra de herramientas vacía y unificada no es para poner nada en ella: es lo
+        // que baja los botones de la ventana al centro de una franja de 52 px, a la altura
+        // del logo de la barra lateral. Sin ella quedan pegados al borde de arriba.
+        ventana.toolbar = NSToolbar(identifier: "radar")
+        ventana.toolbarStyle = .unified
         // Por debajo de esto la bandeja empieza a apilar los filtros en cuatro líneas.
         ventana.minSize = NSSize(width: 820, height: 560)
         // Recuerda tamaño y posición sin que haya que guardar preferencias a mano.
@@ -424,12 +458,22 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         aviso.textColor = .secondaryLabelColor
         aviso.translatesAutoresizingMaskIntoConstraints = false
 
+        let arrastre = ZonaArrastre()
+        arrastre.translatesAutoresizingMaskIntoConstraints = false
+
         let contenedor = NSView(frame: ventana.contentView!.bounds)
         contenedor.addSubview(web)
         contenedor.addSubview(aviso)
+        // La última, para quedar por encima de la web.
+        contenedor.addSubview(arrastre)
         NSLayoutConstraint.activate([
             aviso.centerXAnchor.constraint(equalTo: contenedor.centerXAnchor),
             aviso.centerYAnchor.constraint(equalTo: contenedor.centerYAnchor),
+            arrastre.topAnchor.constraint(equalTo: contenedor.topAnchor),
+            arrastre.leadingAnchor.constraint(equalTo: contenedor.leadingAnchor),
+            arrastre.trailingAnchor.constraint(equalTo: contenedor.trailingAnchor),
+            // La misma altura que `--franja` en `styles.css`: si cambia una, la otra.
+            arrastre.heightAnchor.constraint(equalToConstant: 52),
         ])
         ventana.contentView = contenedor
 

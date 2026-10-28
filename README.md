@@ -252,9 +252,15 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 ## How to use it
 
-There are seven tabs along the top: Bandeja (Inbox), Resumen (Summary), Otras
-licitaciones (Other tenders), Vencimientos (Expiring contracts), Adjudicatarios (Winning
-bidders), Analítica (Analytics) and Términos de búsqueda (Search terms).
+The views live in the **sidebar**, as in Zepo Desk: Bandeja (Inbox), Resumen (Summary)
+and Otras licitaciones (Other tenders) at the top; Vencimientos (Expiring contracts),
+Adjudicatarios (Winning bidders) and Analítica (Analytics) under «Mercado» (Market); and
+Términos de búsqueda (Search terms) at the bottom, next to the radar's status (last search,
+how the sources are doing and the version). **⌘1…⌘7** switch views in that same order.
+
+Clicking a tender **opens its record on the right** and the list narrows to make room,
+with the row highlighted; in a narrow window the record floats on top. Escape closes it.
+The app follows macOS light or dark mode.
 
 ### On opening: the search and the summary
 
@@ -297,7 +303,7 @@ The first two count what entered the radar; the calendar ones, what was publishe
 that after the initial load «last quarter» is not three years of history. The case files
 are listed below, with the same card as the Inbox.
 
-### The numbers in the header
+### The numbers in the Inbox
 
 Every figure is a button: clicking it makes the list show exactly those tenders. They
 all count **procurement files**, not notices, just like the list.
