@@ -246,9 +246,9 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 ## Cómo se usa
 
 Las vistas están en la **barra lateral**, como en Zepo Desk: Bandeja, Resumen y Otras
-licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios y Analítica en «Mercado»; y
-Términos de búsqueda al pie, junto al estado del radar (la última búsqueda, cómo van las
-fuentes y la versión). **⌘1…⌘8** cambian de vista en ese mismo orden.
+licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios, Organismos y Analítica en
+«Mercado»; y Términos de búsqueda al pie, junto al estado del radar (la última búsqueda,
+cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
 
 Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
 dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
@@ -457,17 +457,47 @@ Contratos **ya adjudicados** cuyo plazo termina pronto, con el incumbente y el
 importe. Los botones de ventana (3, 6, 12, 24 meses) muestran cuántos vencen en cada
 plazo y por cuánto importe, para poder comparar de un vistazo. Es la lista para llamar *antes* de que salga el pliego, cuando todavía se
 puede influir. Solo aparecen los que publican fecha de fin o duración: si la fuente
-no la da, la licitación no se lista en lugar de estimarla a ojo.
+no la da, la licitación no se lista en lugar de estimarla a ojo. El órgano y el
+incumbente de cada tarjeta llevan a su ficha.
 
 ### Adjudicatarios
 
 Quién se está llevando estos contratos, agrupando las variantes de razón social
 («S2 GRUPO …, S.L.U.» y «S2 Grupo … S.L.» son la misma empresa). Al pulsar una
-empresa se despliegan sus contratos.
+empresa se abre su **ficha de competidor** (más abajo).
 
 Por defecto mira lo que casa con tus perfiles. El desplegable de arriba cambia el
 **ámbito**: un perfil concreto, o una temática entera del mercado —ciberseguridad, cloud,
 toda la IT…—, case o no con tus perfiles. Es el mismo selector que el de la Analítica.
+
+### Organismos
+
+Quién compra en tu ámbito, de más a menos expedientes, con un buscador que no distingue
+acentos ni mayúsculas. Cada fila dice cuántos expedientes tiene, cuántos siguen abiertos
+y cuántos están adjudicados, y lleva a su ficha. El órgano es el que firma, tal como lo
+publica la fuente: una misma agencia puede salir varias veces, una por firmante, igual
+que en la Analítica.
+
+### Las fichas de organismo y de competidor
+
+Lo que la Analítica cuenta del mercado entero, contado de **un solo órgano** o de **una
+sola empresa**, con las mismas reglas —por expediente, sin lo descartado, la baja de un
+solo anuncio y el plazo del primero— y con el mismo selector de ámbito.
+
+- **Organismo**: sus cifras (expedientes, importe mediano, baja y plazo cuando hay al
+  menos tres casos, adjudicados), en qué meses publica, a quién adjudica, qué contratos
+  suyos vencen en los próximos 24 meses y con quién, lo que tiene abierto hoy y sus
+  expedientes anteriores con la tarjeta de siempre.
+- **Competidor**: lo que ha ganado y por cuánto, año a año, en qué comunidades, a qué
+  organismos les vende, qué contratos suyos vencen —la ocasión de quitárselos— y sus
+  adjudicaciones, juntando sus razones sociales como el ranking de Adjudicatarios.
+
+Se llega a ellas desde las filas de Organismos y Adjudicatarios, desde «Quién compra» y
+«Quién gana» de la Analítica, desde el órgano y el incumbente de Vencimientos y desde el
+órgano y el adjudicatario de la ficha de cualquier licitación. Todo nombre de una ficha
+lleva a la suya, y **«Volver»** deshace el camino hasta donde estabas, con su posición en
+la página. Desde una licitación que no casa con tus perfiles, la ficha se abre con toda
+la IT.
 
 ### Analítica
 

@@ -323,25 +323,26 @@ def bandeja(
     # que se entienda por qué no salen todas.
     total_sin_filtros = contar(con, solo_vivas=False)
 
-    items = []
-    for f in filas:
-        d = dict(f)
-        d["cpv"] = (d.get("cpv") or "").split()
-        try:
-            d["urls_pliegos"] = json.loads(d.get("urls_pliegos") or "[]")
-        except json.JSONDecodeError:
-            d["urls_pliegos"] = []
-        d.pop("raw", None)
-        d.pop("texto_busqueda", None)
-        d["dias_restantes"] = _dias_restantes(d.get("fecha_limite_presentacion"))
-        # «Nueva» se decide aquí y no en la interfaz: la regla vive en un sitio, y así
-        # el CSV y la pantalla no pueden discrepar sobre qué es reciente.
-        dias = _dias_desde(d.get("primera_publicacion"))
-        d["dias_desde_publicacion"] = dias
-        d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
-        items.append(d)
-
+    items = [_preparar_item(dict(f)) for f in filas]
     return {"total": total, "total_sin_filtros": total_sin_filtros, "items": items}
+
+
+def _preparar_item(d: dict) -> dict:
+    """Una fila de la bandeja tal como la pinta la tarjeta. La usan también las fichas."""
+    d["cpv"] = (d.get("cpv") or "").split()
+    try:
+        d["urls_pliegos"] = json.loads(d.get("urls_pliegos") or "[]")
+    except json.JSONDecodeError:
+        d["urls_pliegos"] = []
+    d.pop("raw", None)
+    d.pop("texto_busqueda", None)
+    d["dias_restantes"] = _dias_restantes(d.get("fecha_limite_presentacion"))
+    # «Nueva» se decide aquí y no en la interfaz: la regla vive en un sitio, y así
+    # el CSV y la pantalla no pueden discrepar sobre qué es reciente.
+    dias = _dias_desde(d.get("primera_publicacion"))
+    d["dias_desde_publicacion"] = dias
+    d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
+    return d
 
 
 # --- Otras licitaciones -------------------------------------------------------
@@ -1946,20 +1947,8 @@ def _bloque_baja(con, ambito, desde, hasta) -> dict:
         ") WHERE rn = 1", params + p_rango
     ).fetchall()
 
-    repetido = escalas = sobrecoste = 0
-    bajas = []
-    for f in filas:
-        if f["adj"] == f["pres"]:
-            repetido += 1
-            continue
-        baja = 100.0 * (f["pres"] - f["adj"]) / f["pres"]
-        if baja < 0:
-            sobrecoste += 1
-        elif baja > BAJA_MAXIMA_CREIBLE:
-            escalas += 1
-        else:
-            bajas.append(baja)
-    bajas.sort()
+    bajas, repetido, escalas, sobrecoste = _clasificar_bajas(
+        (f["pres"], f["adj"]) for f in filas)
 
     def pct(v):
         # Un decimal: la baja se lee «un 14%», no «un 13,884186928780824%».
@@ -1982,6 +1971,27 @@ def _bloque_baja(con, ambito, desde, hasta) -> dict:
         "suficiente": len(bajas) >= MINIMO_COMPARABLES_BAJA,
         "minimo_comparables": MINIMO_COMPARABLES_BAJA,
     }
+
+
+def _clasificar_bajas(pares) -> tuple[list, int, int, int]:
+    """Las bajas creíbles de unos pares (presupuesto, adjudicación), ordenadas, y cuántos
+    se han apartado por cada motivo. Lo comparten la Analítica y las fichas, para que la
+    baja de un organismo se mida igual que la del mercado."""
+    repetido = escalas = sobrecoste = 0
+    bajas = []
+    for pres, adj in pares:
+        if adj == pres:
+            repetido += 1
+            continue
+        baja = 100.0 * (pres - adj) / pres
+        if baja < 0:
+            sobrecoste += 1
+        elif baja > BAJA_MAXIMA_CREIBLE:
+            escalas += 1
+        else:
+            bajas.append(baja)
+    bajas.sort()
+    return bajas, repetido, escalas, sobrecoste
 
 
 def _bloque_renovaciones(con, ambito) -> dict:
@@ -2334,21 +2344,8 @@ def _bloque_plazo(con, ambito, desde, hasta) -> dict:
         params + p_rango,
     ).fetchall()
 
-    dias: list = []
-    ya_vencido = disparatado = ilegible = 0
-    for f in filas:
-        try:
-            d = (date.fromisoformat(f["lim"][:10]) - date.fromisoformat(f["pub"][:10])).days
-        except ValueError:
-            ilegible += 1
-            continue
-        if d < 0:
-            ya_vencido += 1
-        elif d > PLAZO_MAXIMO_CREIBLE:
-            disparatado += 1
-        else:
-            dias.append(d)
-    dias.sort()
+    dias, ya_vencido, disparatado, ilegible = _clasificar_plazos(
+        (f["pub"], f["lim"]) for f in filas)
 
     excluidos = [
         {"motivo": "el plazo ya estaba vencido al publicarse", "expedientes": ya_vencido},
@@ -2410,6 +2407,27 @@ def _bloque_procedimiento(con, ambito, desde, hasta) -> dict:
         "distintos": len(cuenta),
         "procedimientos": procedimientos,
     }
+
+
+def _clasificar_plazos(pares) -> tuple[list, int, int, int]:
+    """Los días para presentar de unos pares (publicación, fecha límite) del primer
+    anuncio de cada expediente, ordenados, y los apartados. Compartida con las fichas."""
+    dias: list = []
+    ya_vencido = disparatado = ilegible = 0
+    for pub, lim in pares:
+        try:
+            d = (date.fromisoformat(lim[:10]) - date.fromisoformat(pub[:10])).days
+        except ValueError:
+            ilegible += 1
+            continue
+        if d < 0:
+            ya_vencido += 1
+        elif d > PLAZO_MAXIMO_CREIBLE:
+            disparatado += 1
+        else:
+            dias.append(d)
+    dias.sort()
+    return dias, ya_vencido, disparatado, ilegible
 
 
 def _bloque_organos(con, ambito, desde, hasta) -> dict:
@@ -2571,3 +2589,337 @@ def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
         _MEMO.clear()
     _MEMO[clave] = datos
     return datos
+
+
+# --- Fichas de organismo y de competidor ---------------------------------------------
+#
+# Lo que la Analítica cuenta del mercado entero, contado de UN órgano o de UNA empresa:
+# a quién se le vende, contra quién se compite. Con las mismas reglas —por expediente, la
+# baja de un solo anuncio, el plazo del primero— y el mismo ámbito, porque la ficha de un
+# organismo que contradijera a la pestaña de al lado no serviría de nada.
+
+# Cuánto hacia delante miran las renovaciones de una ficha. Más que los seis meses de la
+# Analítica: de un solo órgano hay pocas, y lo útil es ver qué le cae este año y el que
+# viene para preparar la visita.
+MESES_RENOVACION_FICHA = 24
+LIMITE_EXPEDIENTES_FICHA = 100
+TOP_FICHA = 10
+
+# Aparte de `_MEMO` para no echar de allí la Analítica al abrir unas cuantas fichas.
+_MEMO_FICHAS: dict = {}
+_MEMO_FICHAS_MAXIMO = 32
+
+
+def _memo_fichas(con, clave: tuple, calcular):
+    clave = (_firma_de_la_base(con), *clave)
+    if clave not in _MEMO_FICHAS:
+        if len(_MEMO_FICHAS) >= _MEMO_FICHAS_MAXIMO:
+            _MEMO_FICHAS.clear()
+        _MEMO_FICHAS[clave] = calcular()
+    return _MEMO_FICHAS[clave]
+
+
+def _anuncios_del_ambito(con, ambito: Ambito | None, condicion: str = "",
+                         params: tuple = ()) -> list:
+    """Todos los anuncios del ámbito, con lo que necesitan las fichas, en una pasada.
+
+    Entra por `_entrada_expedientes`, como la Analítica: la misma regla de lo descartado y
+    del perfil, y entrando por `matches` o `categorias` en lugar de por las 673.755 filas.
+    """
+    entrada, p_entrada = _entrada_expedientes(ambito)
+    viva, p_viva = _condicion_viva()
+    return con.execute(
+        f"SELECT l.id, {_GRUPO} AS g, l.organo, l.nif_organo, l.ccaa, l.objeto,"
+        " l.fecha_publicacion, l.fecha_limite_presentacion, l.adjudicatario,"
+        " l.importe_adjudicacion, l.importe_referencia, l.importe_sin_iva,"
+        " l.fecha_adjudicacion, l.fecha_fin_prevista,"
+        f" CASE WHEN {viva} THEN 1 ELSE 0 END AS viva"
+        f"{entrada}{condicion}",
+        [*p_viva, *p_entrada, *params],
+    ).fetchall()
+
+
+def _importe(f) -> float | None:
+    v = f["importe_adjudicacion"]
+    return v if v is not None else f["importe_referencia"]
+
+
+def _por_expediente(filas) -> list[dict]:
+    """Los anuncios juntados en expedientes, con lo que de cada uno cuentan las fichas.
+
+    Cada cifra sale del anuncio que la Analítica usa para ella: el importe, el mayor; el
+    plazo, del primero; la baja, de la adjudicación más reciente con los dos importes.
+    """
+    grupos: dict = {}
+    for f in filas:
+        grupos.setdefault(f["g"], []).append(f)
+    salida = []
+    for g, anuncios in grupos.items():
+        primero = min(anuncios, key=lambda f: (f["fecha_publicacion"] or "9999", f["id"]))
+        ultimo = max(anuncios, key=lambda f: (f["fecha_publicacion"] or "", f["id"]))
+        importes = [i for i in map(_importe, anuncios) if i is not None]
+        con_ambos = [f for f in anuncios
+                     if (f["importe_sin_iva"] or 0) > 0 and (f["importe_adjudicacion"] or 0) > 0]
+        par = max(con_ambos, key=lambda f: (f["fecha_adjudicacion"] or "", -f["id"]),
+                  default=None)
+        salida.append({
+            "g": g,
+            "id": ultimo["id"],
+            "anuncios": len(anuncios),
+            "primera_publicacion": primero["fecha_publicacion"],
+            "mes": (primero["fecha_publicacion"] or "")[:7] or None,
+            "imp": max(importes) if importes else None,
+            "viva": any(f["viva"] for f in anuncios),
+            "plazo": (primero["fecha_publicacion"], primero["fecha_limite_presentacion"])
+                     if primero["fecha_publicacion"] and primero["fecha_limite_presentacion"]
+                     else None,
+            "baja": (par["importe_sin_iva"], par["importe_adjudicacion"]) if par else None,
+            "adjudicados": [f for f in anuncios if f["adjudicatario"]],
+            "anuncios_filas": anuncios,
+        })
+    return salida
+
+
+def _mediana_redondeada(valores, decimales=0):
+    m = _mediana(valores)
+    if m is None:
+        return None
+    return round(m, decimales) if decimales else round(m)
+
+
+def _cifras_de(expedientes: list[dict]) -> dict:
+    """Las cifras de cabecera de una ficha: las mismas de la Analítica, en pequeño."""
+    importes = sorted(e["imp"] for e in expedientes if e["imp"] is not None)
+    bajas = _clasificar_bajas(e["baja"] for e in expedientes if e["baja"])[0]
+    plazos = _clasificar_plazos(e["plazo"] for e in expedientes if e["plazo"])[0]
+    return {
+        "expedientes": len(expedientes),
+        "abiertos": sum(1 for e in expedientes if e["viva"]),
+        "adjudicados": sum(1 for e in expedientes if e["adjudicados"]),
+        "importe_mediano": _mediana_redondeada(importes),
+        "baja_mediana": _mediana_redondeada(bajas, 1),
+        "baja_comparables": len(bajas),
+        "plazo_mediano": _mediana_redondeada(plazos),
+        "plazo_expedientes": len(plazos),
+    }
+
+
+def _vencen(anuncios, meses: int = MESES_RENOVACION_FICHA) -> list[dict]:
+    """Contratos adjudicados que terminan en los próximos `meses`, uno por expediente."""
+    hoy = date.today()
+    tope = date(hoy.year + (hoy.month - 1 + meses) // 12, (hoy.month - 1 + meses) % 12 + 1,
+                min(hoy.day, 28))
+    elegidos: dict = {}
+    for f in anuncios:
+        fin = _a_fecha(f["fecha_fin_prevista"])
+        if not f["adjudicatario"] or fin is None or not (hoy <= fin < tope):
+            continue
+        previo = elegidos.get(f["g"])
+        if previo is None or (f["fecha_fin_prevista"] or "") > (previo["fecha_fin_prevista"] or ""):
+            elegidos[f["g"]] = f
+    return sorted(
+        ({"id": f["id"], "objeto": f["objeto"], "organo": f["organo"],
+          "adjudicatario": f["adjudicatario"], "importe": _importe(f),
+          "fecha_fin_prevista": f["fecha_fin_prevista"],
+          "dias_para_vencer": (_a_fecha(f["fecha_fin_prevista"]) - hoy).days}
+         for f in elegidos.values()),
+        key=lambda v: (v["fecha_fin_prevista"], v["id"]),
+    )
+
+
+def _tarjetas(con, expedientes: list[dict]) -> list[dict]:
+    """Los expedientes con el formato de la bandeja, para pintarlos con la misma tarjeta.
+
+    Se enseña el anuncio más reciente de cada uno, como en la bandeja.
+    """
+    if not expedientes:
+        return []
+    por_id = {e["id"]: e for e in expedientes}
+    filas = []
+    for tanda in db._por_tandas(list(por_id)):
+        marcas = ", ".join("?" * len(tanda))
+        filas += con.execute(
+            f"""SELECT l.*, COALESCE(r.estado, 'nuevo') AS estado_revision,
+                       r.asignado_a, r.notas, r.motivo_descarte,
+                       (SELECT group_concat(DISTINCT m.perfil) FROM matches m
+                         WHERE m.licitacion_id = l.id) AS perfil
+                  FROM licitaciones l LEFT JOIN revisiones r ON r.licitacion_id = l.id
+                 WHERE l.id IN ({marcas})""", tanda).fetchall()
+    items = []
+    for f in filas:
+        d = dict(f)
+        e = por_id[d["id"]]
+        d["anuncios"] = e["anuncios"]
+        d["primera_publicacion"] = e["primera_publicacion"]
+        items.append(_preparar_item(d))
+    orden = {e["id"]: i for i, e in enumerate(expedientes)}
+    return sorted(items, key=lambda d: orden[d["id"]])
+
+
+def _por_mes_del_anio(expedientes: list[dict]) -> list[dict]:
+    """En qué meses del año publica: los doce, sumando los años que haya."""
+    cuenta = [0] * 12
+    for e in expedientes:
+        if e["mes"]:
+            cuenta[int(e["mes"][5:7]) - 1] += 1
+    return [{"mes": i + 1, "expedientes": n} for i, n in enumerate(cuenta)]
+
+
+def _normalizar_busqueda(texto: str | None) -> str:
+    import unicodedata
+
+    t = unicodedata.normalize("NFD", (texto or "").lower())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").strip()
+
+
+def organismos(con: sqlite3.Connection, *, ambito: Ambito | None = None,
+               q: str | None = None, limite: int = 200) -> dict:
+    """Los órganos que compran en este ámbito, de más a menos expedientes.
+
+    La identidad es el nombre exacto, como en «Quién compra» de la Analítica, y por lo
+    mismo que allí (ver `_bloque_organos`): sin NIF en 947 expedientes, juntar por NIF
+    perdería más de lo que junta.
+    """
+    ambito = ambito or Ambito()
+
+    def calcular():
+        cuenta: dict = {}
+        for e in _por_expediente(_anuncios_del_ambito(con, ambito)):
+            nombre = (e["anuncios_filas"][0]["organo"] or "").strip()
+            if not nombre:
+                continue
+            o = cuenta.setdefault(nombre, {"organo": nombre, "expedientes": 0,
+                                           "abiertos": 0, "adjudicados": 0, "ultimo": None})
+            o["expedientes"] += 1
+            o["abiertos"] += 1 if e["viva"] else 0
+            o["adjudicados"] += 1 if e["adjudicados"] else 0
+            if e["primera_publicacion"] and (o["ultimo"] or "") < e["primera_publicacion"]:
+                o["ultimo"] = e["primera_publicacion"]
+        return sorted(cuenta.values(), key=lambda o: (-o["expedientes"], o["organo"]))
+
+    todos = _memo_fichas(con, ("organismos", ambito), calcular)
+    buscado = _normalizar_busqueda(q)
+    elegidos = [o for o in todos
+                if not buscado or buscado in _normalizar_busqueda(o["organo"])]
+    return {"total": len(elegidos), "distintos": len(todos), "items": elegidos[:limite],
+            "ambito": ambito.etiqueta}
+
+
+def ficha_organismo(con: sqlite3.Connection, nombre: str, *,
+                    ambito: Ambito | None = None) -> dict | None:
+    """Todo lo que se sabe de un órgano en este ámbito. None si no tiene expedientes."""
+    ambito = ambito or Ambito()
+
+    def calcular():
+        anuncios = _anuncios_del_ambito(con, ambito, " AND l.organo = ?", (nombre,))
+        expedientes = _por_expediente(anuncios)
+        if not expedientes:
+            return None
+        recientes = sorted(expedientes, key=lambda e: (e["primera_publicacion"] or "", e["g"]),
+                           reverse=True)
+        ranking, distintas = _ranking_empresas(
+            [{"g": f["g"], "adjudicatario": f["adjudicatario"], "importe": _importe(f),
+              "organo": f["organo"]} for f in anuncios if f["adjudicatario"]],
+            TOP_FICHA)
+        anios = sorted({e["mes"][:4] for e in expedientes if e["mes"]})
+        return {
+            "organo": nombre,
+            "ambito": ambito.etiqueta,
+            "nifs": sorted({f["nif_organo"] for f in anuncios if f["nif_organo"]}),
+            "comunidades": sorted({f["ccaa"] for f in anuncios if f["ccaa"]}),
+            "cifras": _cifras_de(expedientes),
+            "meses": _por_mes_del_anio(expedientes),
+            "desde": anios[0] if anios else None,
+            "hasta": anios[-1] if anios else None,
+            "adjudicatarios": {"empresas": ranking, "distintas": distintas},
+            "vencen": _vencen(anuncios),
+            "meses_vencen": MESES_RENOVACION_FICHA,
+            "abiertos": _tarjetas(con, [e for e in recientes if e["viva"]]),
+            "anteriores": _tarjetas(
+                con, [e for e in recientes if not e["viva"]][:LIMITE_EXPEDIENTES_FICHA]),
+            "anteriores_total": sum(1 for e in expedientes if not e["viva"]),
+        }
+
+    return _memo_fichas(con, ("organismo", nombre, ambito), calcular)
+
+
+def ficha_competidor(con: sqlite3.Connection, empresa: str, *,
+                     ambito: Ambito | None = None) -> dict | None:
+    """Lo que ha ganado una empresa en este ámbito, juntando sus razones sociales.
+
+    La identidad es `normalizar_empresa`, la del ranking de Adjudicatarios: «S2 Grupo»
+    tiene que salir aquí con los mismos contratos que allí.
+    """
+    clave = normalizar_empresa(empresa)
+    if not clave:
+        return None
+    ambito = ambito or Ambito()
+
+    def calcular():
+        # Memorizado por nombre, como en `_ranking_empresas`: en toda la IT son decenas de
+        # miles de anuncios adjudicados y unos pocos miles de nombres distintos.
+        claves: dict = {}
+
+        def es_ella(nombre):
+            if nombre not in claves:
+                claves[nombre] = normalizar_empresa(nombre) == clave
+            return claves[nombre]
+
+        anuncios = [f for f in _anuncios_del_ambito(con, ambito, " AND l.adjudicatario IS NOT NULL")
+                    if es_ella(f["adjudicatario"])]
+        if not anuncios:
+            return None
+        expedientes = _por_expediente(anuncios)
+        variantes = sorted({f["adjudicatario"] for f in anuncios})
+
+        por_anio: dict = {}
+        por_ccaa: dict = {}
+        por_organo: dict = {}
+        contratos = []
+        for e in expedientes:
+            filas = e["anuncios_filas"]
+            ultima = max(filas, key=lambda f: (f["fecha_adjudicacion"] or "", f["id"]))
+            anio = (ultima["fecha_adjudicacion"] or e["primera_publicacion"] or "")[:4] or None
+            imp = e["imp"] or 0
+            for destino, llave in ((por_anio, anio), (por_ccaa, ultima["ccaa"]),
+                                   (por_organo, ultima["organo"])):
+                if not llave:
+                    continue
+                d = destino.setdefault(llave, {"expedientes": 0, "importe": 0.0})
+                d["expedientes"] += 1
+                d["importe"] += imp
+            contratos.append({
+                "id": ultima["id"], "objeto": ultima["objeto"], "organo": ultima["organo"],
+                "ccaa": ultima["ccaa"], "fecha_adjudicacion": ultima["fecha_adjudicacion"],
+                "fecha_fin_prevista": ultima["fecha_fin_prevista"], "importe": e["imp"],
+            })
+        contratos.sort(key=lambda c: (c["fecha_adjudicacion"] or "", c["id"]), reverse=True)
+        bajas = _clasificar_bajas(e["baja"] for e in expedientes if e["baja"])[0]
+
+        def lista(d, nombre):
+            return sorted(({nombre: k, **v} for k, v in d.items()),
+                          key=lambda x: (-x["expedientes"], -x["importe"], x[nombre]))
+
+        return {
+            "empresa": max(variantes, key=len),
+            "variantes": variantes,
+            "ambito": ambito.etiqueta,
+            "cifras": {
+                "ganados": len(expedientes),
+                "importe": sum(e["imp"] or 0 for e in expedientes),
+                "baja_mediana": _mediana_redondeada(bajas, 1),
+                "baja_comparables": len(bajas),
+                "organismos": len(por_organo),
+                "comunidades": len(por_ccaa),
+            },
+            "por_anio": sorted(({"anio": k, **v} for k, v in por_anio.items()),
+                               key=lambda x: x["anio"]),
+            "comunidades": lista(por_ccaa, "ccaa"),
+            "organismos": lista(por_organo, "organo")[:TOP_FICHA],
+            "vencen": _vencen(anuncios),
+            "meses_vencen": MESES_RENOVACION_FICHA,
+            "contratos": contratos[:LIMITE_EXPEDIENTES_FICHA],
+            "contratos_total": len(contratos),
+        }
+
+    return _memo_fichas(con, ("competidor", clave, ambito), calcular)

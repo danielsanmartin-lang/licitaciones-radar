@@ -2118,9 +2118,14 @@ async function cargarVencimientos() {
         <div class="dias ${it.dias_para_vencer <= 90 ? 'pronto' : ''}">${it.dias_para_vencer}<small>días</small></div>
       </div>`;
     el.querySelector('h3').textContent = it.objeto || '(sin objeto)';
-    el.querySelector('.organo').textContent = it.organo || '';
-    el.querySelector('.incumbente').textContent =
-      'incumbente: ' + (it.adjudicatario || 'no publicado');
+    if (it.organo) el.querySelector('.organo').appendChild(enlaceFicha(it.organo, 'organismo', it.organo));
+    const incumbente = el.querySelector('.incumbente');
+    incumbente.textContent = 'incumbente: ';
+    if (it.adjudicatario) {
+      incumbente.appendChild(enlaceFicha(it.adjudicatario, 'competidor', it.adjudicatario));
+    } else {
+      incumbente.appendChild(document.createTextNode('no publicado'));
+    }
     el.addEventListener('click', () => abrirPanel(it.id));
     cont.appendChild(el);
   }
@@ -2159,7 +2164,8 @@ async function cargarTemas() {
 // Los dos desplegables de ámbito, con dos grupos. Se construyen con `Option` y no con
 // cadenas: el nombre de un perfil lo escribe quien usa la herramienta.
 function llenarAmbitos() {
-  for (const sel of [$('analitica-perfil'), $('adjudicatarios-ambito')]) {
+  for (const sel of [$('analitica-perfil'), $('adjudicatarios-ambito'), $('organismos-ambito'),
+                     $('organismo-ambito'), $('competidor-ambito')]) {
     const firma = JSON.stringify([ultimosPerfiles, TEMAS.categorias]);
     if (sel.dataset.firma === firma) continue;
     sel.dataset.firma = firma;
@@ -2239,34 +2245,301 @@ async function cargarAdjudicatarios() {
         <span><b>${fmtImporte(e.importe)}</b></span>
       </div>`;
     el.querySelector('h3').textContent = e.empresa;
-    el.addEventListener('click', () => alternarContratos(el, e.empresa));
+    // Con el mismo ámbito que el ranking: si no, la ficha de una empresa de cloud
+    // enseñaría solo lo que casa con los perfiles y no cuadraría con su cifra.
+    el.addEventListener('click', () => abrirFicha('competidor', e.empresa, ambitoAdjudicatarios));
     cont.appendChild(el);
   }
 }
 
-async function alternarContratos(el, empresa) {
-  const previo = el.querySelector('.contratos-empresa');
-  if (previo) { previo.remove(); return; }
-  // Con el mismo ámbito que el ranking: si no, el desglose de una empresa de cloud
-  // enseñaría solo lo que casa con los perfiles y no cuadraría con su cifra.
-  const p = ponerAmbito(new URLSearchParams({ empresa }), ambitoAdjudicatarios);
-  const r = await fetch('/api/contratos-empresa?' + p);
-  const d = await r.json();
-  const ul = document.createElement('ul');
-  ul.className = 'contratos-empresa';
-  for (const c of d.items) {
-    const li = document.createElement('li');
-    const fecha = c.fecha_adjudicacion ? fmtFecha(c.fecha_adjudicacion) : 's/f';
-    li.textContent = `${fecha} · ${fmtImporte(c.importe)} · ${c.organo || ''} — `;
-    const a = document.createElement('a');
-    a.href = c.url_detalle || '#';
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.textContent = (c.objeto || '(sin objeto)').slice(0, 90);
-    li.appendChild(a);
-    ul.appendChild(li);
+// --- Organismos -------------------------------------------------------------------
+
+let ambitoOrganismos = '';
+
+async function cargarOrganismos() {
+  const carga = empezarCarga('lista-organismos', esMercado(ambitoOrganismos)
+    ? 'Cargando… con una temática, la primera vez tarda unos segundos' : 'Cargando…');
+  const cont = $('lista-organismos');
+  $('organismos-contador').textContent = '';
+  let d;
+  try {
+    const p = ponerAmbito(new URLSearchParams(), ambitoOrganismos);
+    const q = $('organismos-q').value.trim();
+    if (q) p.set('q', q);
+    d = await pedirJSON('/api/organismos?' + p);
+  } catch {
+    if (carga.terminar()) cont.appendChild(crear('p', 'vacio', 'No se pudieron cargar.'));
+    return;
   }
-  el.appendChild(ul);
+  if (!carga.terminar()) return;
+  if (d.error) {
+    cont.appendChild(crear('p', 'vacio', d.error));
+    return;
+  }
+  $('organismos-contador').textContent = d.total === d.distintos
+    ? `${d.total.toLocaleString('es-ES')} organismos`
+    : `${d.total.toLocaleString('es-ES')} de ${d.distintos.toLocaleString('es-ES')} organismos`;
+  if (!d.items.length) {
+    cont.appendChild(crear('p', 'vacio', 'Ningún organismo con ese nombre en este ámbito.'));
+    return;
+  }
+  for (const o of d.items) {
+    const el = crear('article', 'tarjeta fila-organismo');
+    const izq = crear('div');
+    izq.appendChild(crear('h3', '', o.organo));
+    izq.appendChild(crear('div', 'organo', o.ultimo
+      ? `último expediente: ${fmtFecha(o.ultimo)}` : ''));
+    el.appendChild(izq);
+    const cifras = crear('div', 'cifras');
+    for (const [n, t] of [[o.expedientes, 'expedientes'], [o.abiertos, 'abiertos'],
+                          [o.adjudicados, 'adjudicados']]) {
+      const span = crear('span');
+      span.appendChild(crear('b', '', n.toLocaleString('es-ES')));
+      span.appendChild(document.createTextNode(' ' + t));
+      cifras.appendChild(span);
+    }
+    el.appendChild(cifras);
+    el.addEventListener('click', () => abrirFicha('organismo', o.organo, ambitoOrganismos));
+    cont.appendChild(el);
+  }
+}
+
+// --- Fichas de organismo y de competidor ---------------------------------------------
+//
+// Las mismas piezas que la Analítica, sobre un solo órgano o una sola empresa: las cifras
+// en fila, columnas para lo que tiene orden y barras para los rankings. Todo nombre de
+// órgano o de empresa lleva a su propia ficha, y «Volver» deshace el camino.
+
+let pasadaFicha = 0;
+
+async function cargarFicha() {
+  const f = fichaActual;
+  if (!f) return;
+  const pasada = ++pasadaFicha;
+  const id = `ficha-${f.tipo}`;
+  $(`${f.tipo}-ambito`).value = f.ambito;
+  $('vista-titulo').textContent = f.nombre;
+  $('vista-sub').textContent = '';
+  const carga = empezarCarga(id, esMercado(f.ambito)
+    ? 'Calculando… con una temática, la primera vez tarda unos segundos' : 'Calculando…');
+  let d;
+  try {
+    const p = ponerAmbito(new URLSearchParams(
+      f.tipo === 'organismo' ? { nombre: f.nombre } : { empresa: f.nombre }), f.ambito);
+    d = await pedirJSON(`/api/${f.tipo}?` + p);
+  } catch {
+    if (carga.terminar()) $(id).appendChild(crear('p', 'vacio', 'No se ha podido cargar la ficha.'));
+    return;
+  }
+  if (pasada !== pasadaFicha || !carga.terminar()) return;
+  tooltip().hidden = true;
+  const cont = $(id);
+  if (d.error) {
+    cont.appendChild(crear('p', 'vacio', `${d.error} Prueba con otro ámbito en el desplegable.`));
+    return;
+  }
+  if (f.tipo === 'organismo') pintarFichaOrganismo(cont, d, f.ambito);
+  else pintarFichaCompetidor(cont, d, f.ambito);
+}
+
+function filaCifras(cifras) {
+  const fila = crear('div', 'cifras-clave');
+  for (const [etiqueta, valor, pie] of cifras.filter(Boolean)) {
+    const c = crear('div', 'cifra-clave fija');
+    c.appendChild(crear('span', 't', etiqueta));
+    c.appendChild(crear('span', 'n', valor));
+    if (pie) c.appendChild(crear('span', 's', pie));
+    fila.appendChild(c);
+  }
+  return fila;
+}
+
+// Una mediana de dos casos no es una mediana: por debajo de tres no se enseña.
+const MINIMO_MEDIANA_FICHA = 3;
+
+function parejas(cont, filas) {
+  for (const fila of filas) {
+    const caja = crear('div', 'pareja');
+    fila.filter(Boolean).forEach((b) => caja.appendChild(b));
+    cont.appendChild(caja);
+  }
+}
+
+// Los contratos que vencen: con el incumbente enlazado, que es la llamada que se hace.
+// `conOrgano` en la del competidor: allí cada contrato es de un organismo distinto.
+function bloqueVencen(d, ambito, pregunta, conOrgano = false) {
+  const el = bloqueAnalitica('Qué vence', pregunta);
+  if (!d.vencen.length) {
+    nota(el, `Nada con fecha de fin en los próximos ${d.meses_vencen} meses.`);
+    return el;
+  }
+  titular(el, d.vencen.length.toLocaleString('es-ES'), `en ${d.meses_vencen} meses`);
+  const lista = crear('div', 'lista-ficha');
+  for (const v of d.vencen.slice(0, 20)) {
+    const fila = crear('div', 'fila-ficha');
+    fila.appendChild(enlaceTexto(v.objeto || '(sin objeto)', v.id));
+    fila.appendChild(crear('span', 'cifra', `vence ${fmtFecha(v.fecha_fin_prevista)}`));
+    const det = crear('span', 'detalle');
+    det.appendChild(document.createTextNode(`${fmtImporte(v.importe)} · `));
+    det.appendChild(enlaceFicha(v.adjudicatario, 'competidor', v.adjudicatario, ambito));
+    if (conOrgano && v.organo) {
+      det.appendChild(document.createTextNode(' · '));
+      det.appendChild(enlaceFicha(v.organo, 'organismo', v.organo, ambito));
+    }
+    fila.appendChild(det);
+    lista.appendChild(fila);
+  }
+  el.appendChild(lista);
+  if (d.vencen.length > 20) nota(el, `Y ${d.vencen.length - 20} más.`);
+  return el;
+}
+
+// El objeto de un contrato, que abre la ficha de la licitación.
+function enlaceTexto(texto, id) {
+  const b = crear('button', 'enlace-ficha objeto', texto);
+  b.addEventListener('click', () => abrirPanel(id));
+  return b;
+}
+
+function bloqueTarjetas(titulo, pregunta, items, vacio, resto = 0) {
+  const el = bloqueAnalitica(titulo, pregunta);
+  if (!items.length) {
+    nota(el, vacio);
+    return el;
+  }
+  const lista = crear('div', 'lista');
+  for (const it of items) lista.appendChild(tarjeta(it));
+  el.appendChild(lista);
+  if (resto > 0) nota(el, `Y ${resto.toLocaleString('es-ES')} más, los más antiguos.`);
+  return el;
+}
+
+function pintarFichaOrganismo(cont, d, ambito) {
+  $('vista-sub').textContent = [
+    d.nifs.length ? `NIF ${d.nifs.join(', ')}` : '',
+    d.comunidades.join(', '),
+    `ámbito: ${d.ambito}`,
+  ].filter(Boolean).join(' · ');
+  const c = d.cifras;
+  cont.appendChild(filaCifras([
+    ['Expedientes', fmtEntero(c.expedientes),
+     `${fmtEntero(c.abiertos)} ${c.abiertos === 1 ? 'abierto' : 'abiertos'} ahora`],
+    ['Importe mediano', fmtImporteCorto(c.importe_mediano), 'el mayor publicado de cada uno'],
+    c.baja_comparables >= MINIMO_MEDIANA_FICHA &&
+      ['Baja mediana', `${fmtDecimal(c.baja_mediana)} %`,
+       `de ${fmtEntero(c.baja_comparables)} adjudicaciones comparables`],
+    c.plazo_expedientes >= MINIMO_MEDIANA_FICHA &&
+      ['Plazo para presentar', `${c.plazo_mediano} días`, 'de mediana'],
+    ['Adjudicados', fmtEntero(c.adjudicados), 'con empresa publicada'],
+  ]));
+
+  const meses = bloqueAnalitica('Cuándo publica',
+    `¿En qué meses saca sus expedientes? Por mes de primera publicación` +
+    (d.desde ? `, ${d.desde === d.hasta ? d.desde : `de ${d.desde} a ${d.hasta}`}.` : '.'));
+  meses.appendChild(columnas(d.meses.map((m) => ({
+    etiqueta: MESES_CORTOS[m.mes - 1], valor: m.expedientes,
+  })), { serie: 'expedientes', etiquetarTodo: true }));
+
+  const gana = bloqueAnalitica('Quién gana aquí', '¿A quién le adjudica, y cuántas veces?');
+  const empresas = d.adjudicatarios.empresas;
+  if (!empresas.length) {
+    nota(gana, 'Ningún expediente adjudicado con empresa publicada.');
+  } else {
+    const tope = Math.max(1, ...empresas.map((e) => e.contratos));
+    for (const e of empresas) {
+      gana.appendChild(filaBarra(e.empresa, 100 * e.contratos / tope,
+        `${fmtEntero(e.contratos)} · ${fmtImporteCorto(e.importe)}`,
+        { apilada: true, alPulsar: () => abrirFicha('competidor', e.empresa, ambito) }));
+    }
+    if (d.adjudicatarios.distintas > empresas.length) {
+      nota(gana, `${fmtEntero(d.adjudicatarios.distintas)} empresas distintas en total.`);
+    }
+  }
+  const m = metodo(gana);
+  nota(m, 'El órgano es el que firma, tal como lo publica la fuente: una misma agencia ' +
+          'puede tener varias fichas, una por firmante.');
+
+  parejas(cont, [
+    [meses, gana],
+    [bloqueVencen(d, ambito, '¿Qué contratos suyos se acaban y quién los tiene ahora?')],
+  ]);
+  cont.appendChild(bloqueTarjetas('Qué tiene abierto', '¿Qué se le puede presentar hoy?',
+    d.abiertos, 'Nada abierto ahora mismo.'));
+  cont.appendChild(bloqueTarjetas('Sus expedientes', 'Lo que ya no está en plazo, de lo más reciente a lo más antiguo.',
+    d.anteriores, 'Todavía no hay expedientes cerrados.',
+    d.anteriores_total - d.anteriores.length));
+}
+
+function pintarFichaCompetidor(cont, d, ambito) {
+  $('vista-titulo').textContent = d.empresa;
+  $('vista-sub').textContent = `ámbito: ${d.ambito}`;
+  const c = d.cifras;
+  cont.appendChild(filaCifras([
+    ['Expedientes ganados', fmtEntero(c.ganados), `en ${fmtEntero(c.organismos)} organismos`],
+    ['Importe adjudicado', fmtImporteCorto(c.importe), 'el mayor publicado de cada uno'],
+    c.baja_comparables >= MINIMO_MEDIANA_FICHA &&
+      ['Baja mediana', `${fmtDecimal(c.baja_mediana)} %`,
+       `de ${fmtEntero(c.baja_comparables)} adjudicaciones comparables`],
+    ['Comunidades', fmtEntero(c.comunidades), 'donde ha ganado algo'],
+  ]));
+
+  const anios = bloqueAnalitica('Año a año', '¿Gana más o menos que antes?');
+  anios.appendChild(columnas(d.por_anio.map((a) => ({
+    etiqueta: a.anio, valor: a.expedientes,
+    titulo: `${a.anio} · ${fmtImporteCorto(a.importe)}`,
+  })), { serie: 'expedientes ganados', etiquetarTodo: true }));
+  nota(anios, 'Por el año de adjudicación; si no se publicó, el de la primera publicación.');
+
+  const donde = bloqueAnalitica('Dónde gana', '¿En qué comunidades se lleva los contratos?');
+  if (!d.comunidades.length) {
+    nota(donde, 'Ninguna adjudicación con comunidad publicada (TED no la publica).');
+  } else {
+    const tope = Math.max(1, ...d.comunidades.map((x) => x.expedientes));
+    for (const x of d.comunidades) {
+      donde.appendChild(filaBarra(x.ccaa, 100 * x.expedientes / tope,
+        `${fmtEntero(x.expedientes)} · ${fmtImporteCorto(x.importe)}`, { apilada: true }));
+    }
+  }
+
+  const clientes = bloqueAnalitica('A quién le vende', '¿Qué organismos le adjudican más?');
+  const tope = Math.max(1, ...d.organismos.map((x) => x.expedientes));
+  for (const x of d.organismos) {
+    clientes.appendChild(filaBarra(x.organo, 100 * x.expedientes / tope,
+      `${fmtEntero(x.expedientes)} · ${fmtImporteCorto(x.importe)}`,
+      { apilada: true, alPulsar: () => abrirFicha('organismo', x.organo, ambito) }));
+  }
+  if (c.organismos > d.organismos.length) {
+    nota(clientes, `${fmtEntero(c.organismos)} organismos distintos en total.`);
+  }
+
+  const contratos = bloqueAnalitica('Sus adjudicaciones', 'De la más reciente a la más antigua.');
+  const lista = crear('div', 'lista-ficha');
+  for (const x of d.contratos) {
+    const fila = crear('div', 'fila-ficha');
+    fila.appendChild(enlaceTexto(x.objeto || '(sin objeto)', x.id));
+    fila.appendChild(crear('span', 'cifra', fmtImporte(x.importe)));
+    const det = crear('span', 'detalle');
+    det.appendChild(document.createTextNode(
+      (x.fecha_adjudicacion ? fmtFecha(x.fecha_adjudicacion) : 'sin fecha') + ' · '));
+    det.appendChild(enlaceFicha(x.organo || '(sin órgano)', 'organismo', x.organo, ambito));
+    fila.appendChild(det);
+    lista.appendChild(fila);
+  }
+  contratos.appendChild(lista);
+  if (d.contratos_total > d.contratos.length) {
+    nota(contratos, `Y ${fmtEntero(d.contratos_total - d.contratos.length)} más, las más antiguas.`);
+  }
+  if (d.variantes.length > 1) {
+    const m = metodo(contratos, 'Razones sociales juntadas');
+    nota(m, d.variantes.join(' · '));
+  }
+
+  parejas(cont, [
+    [anios, donde],
+    [clientes, bloqueVencen(d, ambito,
+      '¿Qué contratos suyos se acaban? Es la ocasión de quitárselos.', true)],
+    [contratos],
+  ]);
 }
 
 // --- Términos de búsqueda --------------------------------------------------
@@ -2507,9 +2780,50 @@ function cerrarCajon() {
 
 let vistaActual = 'bandeja';
 
-// El orden de la barra lateral, que es también el de los atajos ⌘1…⌘8.
+// El orden de la barra lateral, que es también el de los atajos ⌘1…⌘9.
 const VISTAS = ['bandeja', 'resumen', 'otras', 'siguiendo', 'vencimientos', 'adjudicatarios',
-                'analitica', 'ajustes'];
+                'organismos', 'analitica', 'ajustes'];
+// Las fichas: vistas sin entrada en la barra lateral, a las que se llega desde un nombre.
+// Mientras se mira una, la barra lateral resalta la lista de la que es.
+const VISTAS_DETALLE = { organismo: 'organismos', competidor: 'adjudicatarios' };
+
+// Lo que hay que deshacer al pulsar «Volver»: de dónde se vino y por dónde se iba. Se
+// vacía al elegir una vista en la barra lateral, que es empezar de nuevo.
+let pilaVolver = [];
+// La ficha que se está mirando: `{ tipo, nombre, ambito }`.
+let fichaActual = null;
+
+function abrirFicha(tipo, nombre, ambito = '') {
+  if (!nombre) return;
+  pilaVolver.push({ vista: vistaActual, ficha: fichaActual, scroll: $('cuerpo').scrollTop });
+  fichaActual = { tipo, nombre, ambito };
+  mostrarVista(tipo, { conservarPila: true });
+}
+
+async function volver() {
+  const v = pilaVolver.pop();
+  if (!v) {
+    mostrarVista(VISTAS_DETALLE[vistaActual] || 'bandeja');
+    return;
+  }
+  fichaActual = v.ficha;
+  // Se espera a que la vista se pinte para devolver el scroll: hasta entonces no hay
+  // por dónde bajar.
+  await mostrarVista(v.vista, { conservarPila: true });
+  $('cuerpo').scrollTop = v.scroll;
+}
+
+// Un nombre que lleva a su ficha. Para dentro de una tarjeta, que ya abre la licitación
+// al pulsarla: el clic en el nombre se queda en el nombre.
+function enlaceFicha(texto, tipo, nombre, ambito = '') {
+  const b = crear('button', 'enlace-ficha', texto);
+  b.title = tipo === 'organismo' ? 'Ver la ficha del organismo' : 'Ver la ficha de la empresa';
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    abrirFicha(tipo, nombre, ambito);
+  });
+  return b;
+}
 
 // La cabecera de la vista sale de su propia sección: `data-titulo`, `data-icono`,
 // `data-tono` y el párrafo `.intro`. Es marcado estático de `index.html`, nunca texto de un
@@ -2525,9 +2839,14 @@ function pintarCabecera(vista) {
     : `${sec.dataset.titulo} · Radar de Licitaciones`;
 }
 
-function mostrarVista(vista) {
+// Devuelve la carga de la vista, para quien necesite esperarla (`volver()`).
+function mostrarVista(vista, { conservarPila = false } = {}) {
+  if (!conservarPila) {
+    pilaVolver = [];
+    fichaActual = null;
+  }
   vistaActual = vista;
-  for (const v of VISTAS) {
+  for (const v of [...VISTAS, ...Object.keys(VISTAS_DETALLE)]) {
     $('vista-' + v).hidden = v !== vista;
   }
   $('filtros').hidden = vista !== 'bandeja';
@@ -2535,20 +2854,27 @@ function mostrarVista(vista) {
   // Cada vista empieza arriba: el scroll vive en `.cuerpo`, que es el mismo para todas, y
   // sin esto se heredaba la posición de la anterior.
   $('cuerpo').scrollTop = 0;
+  const resaltada = VISTAS_DETALLE[vista] || vista;
   for (const b of document.querySelectorAll('.tab[data-vista]')) {
-    const activa = b.dataset.vista === vista;
+    const activa = b.dataset.vista === resaltada;
     b.classList.toggle('activo', activa);
     // La clase es para el ojo; `aria-selected` para quien no lo usa. Alternar solo la
     // primera dejaba a un lector de pantalla seis pestañas sin ninguna seleccionada.
     b.setAttribute('aria-selected', activa ? 'true' : 'false');
   }
-  if (vista === 'resumen') cargarResumenVista();
-  if (vista === 'otras') cargarOtras();
-  if (vista === 'siguiendo') cargarSiguiendo();
-  if (vista === 'vencimientos') cargarVencimientos();
-  if (vista === 'adjudicatarios') cargarAdjudicatarios();
-  if (vista === 'analitica') cargarAnalitica();
-  if (vista === 'ajustes') cargarAjustes();
+  const cargas = {
+    resumen: cargarResumenVista,
+    otras: cargarOtras,
+    siguiendo: cargarSiguiendo,
+    vencimientos: cargarVencimientos,
+    adjudicatarios: cargarAdjudicatarios,
+    organismos: cargarOrganismos,
+    organismo: cargarFicha,
+    competidor: cargarFicha,
+    analitica: cargarAnalitica,
+    ajustes: cargarAjustes,
+  };
+  return cargas[vista] ? cargas[vista]() : Promise.resolve();
 }
 
 // --- Panel de detalle ------------------------------------------------------
@@ -2626,8 +2952,15 @@ async function abrirPanel(id) {
     <ul class="hist" id="p-hist"></ul>`;
 
   cont.querySelector('h2').textContent = d.objeto || '(sin objeto)';
+  const ambitoFicha = d.perfil || !TEMAS.toda_la_it ? '' : 'categoria:' + TEMAS.toda_la_it.clave;
   for (const [k, v] of campos) {
-    cont.querySelector(`dd[data-c="${k}"]`).textContent = v;
+    const dd = cont.querySelector(`dd[data-c="${k}"]`);
+    // El órgano y el adjudicatario llevan a su ficha. Con tus perfiles si la licitación
+    // casa con alguno; si no —viene de «Otras»—, con toda la IT, que es donde la ficha
+    // tiene algo que contar. Desde la ficha se puede cambiar.
+    if (k === 'Órgano') dd.appendChild(enlaceFicha(v, 'organismo', v, ambitoFicha));
+    else if (k === 'Adjudicatario') dd.appendChild(enlaceFicha(v, 'competidor', v, ambitoFicha));
+    else dd.textContent = v;
   }
   const temas = (d.categorias || []).filter((c) => !TEMAS.resto || c !== TEMAS.resto.clave);
   $('p-motivo').textContent = d.motivo
@@ -2774,6 +3107,25 @@ $('adjudicatarios-ambito').addEventListener('change', () => {
   ambitoAdjudicatarios = $('adjudicatarios-ambito').value;
   cargarAdjudicatarios();
 });
+$('organismos-ambito').addEventListener('change', () => {
+  ambitoOrganismos = $('organismos-ambito').value;
+  cargarOrganismos();
+});
+let debounceOrganismos;
+$('organismos-q').addEventListener('input', () => {
+  clearTimeout(debounceOrganismos);
+  debounceOrganismos = setTimeout(() => cargarOrganismos(), 250);
+});
+// Cambiar el ámbito de una ficha es mirar la misma con otros ojos, no ir a otra: no se
+// apila en «Volver».
+for (const tipo of Object.keys(VISTAS_DETALLE)) {
+  $(`${tipo}-ambito`).addEventListener('change', () => {
+    if (!fichaActual) return;
+    fichaActual = { ...fichaActual, ambito: $(`${tipo}-ambito`).value };
+    cargarFicha();
+  });
+}
+for (const b of document.querySelectorAll('[data-volver]')) b.addEventListener('click', volver);
 let debounceOtras;
 $('otras-q').addEventListener('input', () => {
   clearTimeout(debounceOtras);
@@ -2809,9 +3161,9 @@ $('tab-novedades').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') cerrarCajon();
-  // ⌘1…⌘8 cambian de vista en el orden de la barra lateral, como en Zepo Desk. Con la
+  // ⌘1…⌘9 cambian de vista en el orden de la barra lateral, como en Zepo Desk. Con la
   // pantalla de arranque delante no: todavía no hay nada a lo que ir.
-  if ((e.metaKey || e.ctrlKey) && /^[1-8]$/.test(e.key) && !enArranque) {
+  if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key) && !enArranque) {
     e.preventDefault();
     mostrarVista(VISTAS[Number(e.key) - 1]);
   }
@@ -3092,6 +3444,19 @@ function filaBarra(etiqueta, pct, texto, opciones = {}) {
   fila.appendChild(carril);
   fila.appendChild(crear('span', 'valor', texto));
   conTooltip(fila, etiqueta, [{ valor: texto }]);
+  // Las de órganos y empresas llevan a su ficha.
+  if (opciones.alPulsar) {
+    fila.classList.add('pulsable');
+    fila.tabIndex = 0;
+    fila.setAttribute('role', 'button');
+    fila.addEventListener('click', opciones.alPulsar);
+    fila.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        opciones.alPulsar();
+      }
+    });
+  }
   return fila;
 }
 
@@ -3504,7 +3869,9 @@ function pintarOrganos(d, mercado) {
   const tope = Math.max(1, ...d.organos.map((x) => x.expedientes));
   for (const x of d.organos) {
     el.appendChild(filaBarra(x.organo, 100 * x.expedientes / tope,
-                             x.expedientes.toLocaleString('es-ES'), { apilada: true }));
+                             x.expedientes.toLocaleString('es-ES'),
+                             { apilada: true,
+                               alPulsar: () => abrirFicha('organismo', x.organo, ambitoAnalitica) }));
   }
   const m = metodo(el);
   nota(m, `${d.distintos.toLocaleString('es-ES')} órganos distintos han publicado algo ` +
@@ -3530,7 +3897,8 @@ function pintarAdjudicatarios(d) {
     el.appendChild(filaBarra(x.empresa, 100 * x.expedientes / tope,
                              `${x.expedientes.toLocaleString('es-ES')} · ` +
                              fmtImporteCorto(x.importe),
-                             { apilada: true }));
+                             { apilada: true,
+                               alPulsar: () => abrirFicha('competidor', x.empresa, ambitoAnalitica) }));
   }
   const boton = crear('button', 'boton-sec', 'Ver el ranking completo');
   boton.addEventListener('click', () => {
