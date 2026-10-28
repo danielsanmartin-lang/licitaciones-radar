@@ -77,9 +77,11 @@
        después, se vería el parpadeo. La quita `cerrarArranque()`, que se llama desde
        todos los finales posibles —búsqueda terminada, fallo, carga inicial en marcha—.
 
-       No se puede saltar. `#arranque-colgado` es la única salida manual y nace oculto:
-       solo aparece cuando lo que se está esperando deja de dar señales de vida (ver
-       `vigilarCuelgue()` en app.js). Mientras avance, se espera.
+       Hay dos salidas manuales y las dos nacen ocultas: `#arranque-lenta`, cuando la
+       búsqueda pasa de un par de minutos (avanza, pero va despacio), y
+       `#arranque-colgado`, cuando deja de dar señales de vida (ver `vigilarCuelgue()`
+       en app.js). Antes solo existía la segunda, y una búsqueda lenta pero viva dejaba
+       la pantalla puesta durante horas.
 
        No hay barra de etapas como en `#carga`: una búsqueda normal no las tiene, y la
        carga inicial (la de horas) ni siquiera espera aquí. -->
@@ -99,12 +101,26 @@
       <p id="arranque-frase" class="arranque-frase"></p>
       <progress id="arranque-barra" max="100"></progress>
       <p id="arranque-tiempo" class="pista"></p>
-      <!-- Cuando han terminado las dos cosas. Solo tras una actualización: sin ella, la
-           pantalla se va sola como siempre, porque no hay nada que leer. -->
-      <div id="arranque-listo" class="arranque-listo" hidden>
-        <p id="arranque-listo-txt"></p>
-        <button id="arranque-continuar" class="boton-pri">Continuar</button>
+      <!-- Cuando la búsqueda se alarga. No es una avería —la que lo motivó tardó 1h45
+           bajando de PLACSP a 0,05 MB/s y avanzaba todo el rato—, así que no se dice
+           «colgado»: se dice por qué tarda y se deja entrar, recomendando esperar,
+           porque el resumen de lo nuevo solo sale al terminar. Lo enseña
+           `pintarLentitud()`; la explicación la redacta `busqueda.explicar_lentitud()`. -->
+      <div id="arranque-lenta" class="arranque-lenta" hidden>
+        <p><strong>La búsqueda sigue en marcha.</strong> Es mejor esperar a que termine:
+           al acabar verás el resumen de lo nuevo.</p>
+        <p id="arranque-lenta-porque" class="pista"></p>
+        <button id="arranque-sin-esperar" class="boton-sec">Entrar sin esperar</button>
+        <p class="pista">Si entras, seguirá buscando por detrás y te avisará arriba al
+           terminar.</p>
       </div>
+      <!-- Al terminar: qué ha traído la búsqueda y en qué versión estás, y no se entra
+           hasta pulsar «Continuar». Lo rellena `mostrarResumenArranque()`. -->
+      <section id="arranque-resumen" class="arranque-resumen" hidden>
+        <div id="arranque-resumen-cuerpo"></div>
+        <p id="arranque-version" class="arranque-version"></p>
+        <button id="arranque-continuar" class="boton-pri">Continuar</button>
+      </section>
       <div id="arranque-colgado" class="arranque-colgado" hidden>
         <p id="arranque-colgado-txt" class="pista"></p>
         <button id="arranque-entrar" class="boton-sec">Entrar sin esperar</button>
@@ -149,6 +165,20 @@
     </div>
   </div>
 
+  <!-- Una búsqueda que ha terminado mientras se trabajaba —la que siguió por detrás
+       tras «Entrar sin esperar», o la de «Buscar ahora»—. Se queda hasta cerrarlo:
+       es la única forma de enterarse de lo que ha traído sin ir a buscarlo. -->
+  <div id="busqueda-terminada" class="carga terminada" hidden>
+    <div class="carga-texto">
+      <strong id="terminada-titulo"></strong>
+      <span id="terminada-detalle" class="pista"></span>
+    </div>
+    <div class="terminada-botones">
+      <button id="terminada-ver" class="boton-sec">Ver resumen</button>
+      <button id="terminada-cerrar" class="boton-sec">Cerrar</button>
+    </div>
+  </div>
+
   <div id="avisos" class="avisos" hidden></div>
 
   <!-- Aviso de que la versión nueva NO se ha podido instalar al abrir. Ya no lleva
@@ -169,6 +199,8 @@
   <nav class="vistas" role="tablist" aria-label="Vistas del radar">
     <button class="tab activo" role="tab" aria-selected="true" aria-controls="vista-bandeja"
             data-vista="bandeja"><svg class="ico" aria-hidden="true"><use href="#ico-bandeja"/></svg>Bandeja</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-resumen"
+            data-vista="resumen"><svg class="ico" aria-hidden="true"><use href="#ico-destello"/></svg>Resumen</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="vista-otras"
             data-vista="otras"><svg class="ico" aria-hidden="true"><use href="#ico-capas"/></svg>Otras licitaciones</button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="vista-vencimientos"
@@ -218,6 +250,19 @@
       <div id="lista" class="lista"></div>
       <p id="vacio" class="vacio" hidden></p>
       <button id="mas" class="boton-sec mas" hidden>Cargar más</button>
+    </section>
+
+    <!-- Lo nuevo de un vistazo: el mismo resumen que sale al abrir, para cualquier
+         periodo. Los dos primeros cuentan lo que ha ENTRADO en el radar; los tres de
+         calendario, lo PUBLICADO en ese plazo (ver `consultas.resumen_novedades`). -->
+    <section id="vista-resumen" role="tabpanel" hidden>
+      <p class="contador">
+        Qué hay nuevo que encaje con tus perfiles y en «Otras licitaciones», por periodo.
+      </p>
+      <div class="ventanas" id="resumen-periodos"></div>
+      <div id="resumen-cuerpo"></div>
+      <div id="resumen-lista" class="lista"></div>
+      <p id="resumen-version" class="pista resumen-version-pie"></p>
     </section>
 
     <!-- Lo que el radar descarga y no casa con ningún perfil, por temáticas. Lleva su

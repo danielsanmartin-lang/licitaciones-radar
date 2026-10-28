@@ -193,3 +193,97 @@ def ultimas_lineas(n: int = 12) -> list[str]:
         if l.strip() and "(buyer-country" not in l
     ]
     return utiles[-n:]
+
+
+# A partir de cuánto sin moverse nada se deja de decir «va lenta» y se dice «parece
+# atascada». Tres minutos, como el aviso que ya tenía la pantalla de arranque: un intento
+# de conexión puede pasarse dos minutos callado y eso todavía es lentitud.
+SIN_AVANCE_SOSPECHOSO = 180
+
+
+def _dias_desde(iso: str | None) -> int | None:
+    if not iso:
+        return None
+    try:
+        cuando = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    if cuando.tzinfo is None:
+        cuando = cuando.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - cuando).days
+
+
+def _ritmo_legible(bytes_por_s: float) -> str:
+    """Como `progreso._ritmo`, pero sin el «0,0 MB/s» que no dice nada en una frase.
+
+    El corte es el mismo redondeo de `_ritmo`: así, cuando la línea de progreso dice
+    «0,1 MB/s», la explicación de debajo no dice «menos de 0,1».
+    """
+    if round(bytes_por_s / (1024 * 1024), 1) == 0:
+        return "menos de 0,1 MB/s"
+    return progreso._ritmo(bytes_por_s)
+
+
+def _minutos(segundos: float) -> str:
+    n = max(1, round(segundos / 60))
+    return "1 minuto" if n == 1 else f"{n} minutos"
+
+
+def explicar_lentitud(det: dict | None, ultima_busqueda: str | None = None) -> str | None:
+    """Por qué está tardando la búsqueda, en dos o tres frases. None si no hay nada que contar.
+
+    Se compone aquí y no en el JavaScript por lo mismo que `progreso._frase()`: se puede
+    probar, y la pantalla solo tiene que pintarlo. La enseña la pantalla de arranque
+    cuando la búsqueda pasa de un par de minutos, que es cuando alguien empieza a pensar
+    que se ha colgado. La búsqueda que lo motivó tardó 1h45 avanzando todo el rato: no
+    estaba colgada, pero nada en la pantalla lo decía.
+    """
+    if not det:
+        return None
+    from . import vigilante
+
+    callado = det.get("sin_avance") or 0
+    if callado >= SIN_AVANCE_SOSPECHOSO:
+        return (
+            f"Lleva {progreso._dur(callado)} sin avanzar nada, así que puede haberse "
+            f"atascado. Si sigue así, a los {_minutos(vigilante.SIN_AVANCE_MAX)} se "
+            "corta sola y sigue con las demás fuentes. Lo que ya ha llegado queda guardado."
+        )
+
+    fuente = det.get("fuente") or ""
+    if fuente in ("evaluando perfiles", "clasificando por temática"):
+        return ("Ya ha descargado todo: ahora está comparando lo nuevo con tus términos de "
+                "búsqueda, que es lo último que queda.")
+
+    fase = det.get("fase") or ""
+    velocidad = det.get("bytes_por_s") or 0
+    partes = []
+    if fuente.startswith("placsp"):
+        frase = ("La Plataforma de Contratación del Estado publica las novedades en páginas "
+                 "de varios megas")
+        if velocidad:
+            frase += f", y ahora su servidor responde a {_ritmo_legible(velocidad)}"
+            if velocidad < 512 * 1024:
+                frase += ", así que cada página tarda varios minutos"
+        partes.append(frase + ".")
+    elif velocidad:
+        quien = det.get("titulo") or fuente or "La fuente"
+        partes.append(f"{quien[:1].upper()}{quien[1:]} está respondiendo a "
+                      f"{_ritmo_legible(velocidad)}.")
+
+    if fase.startswith(("falló el intento", "reconectando")):
+        partes.append("Cuando el servidor no contesta se esperan hasta 2 minutos antes de "
+                      "reintentar, y la página se vuelve a pedir entera.")
+
+    dias = _dias_desde(ultima_busqueda)
+    paginas = det.get("paginas") or 0
+    if dias is not None and dias >= 2:
+        partes.append(f"Han pasado {dias} días desde la última búsqueda, así que hay más "
+                      "páginas que traer" + (f" (van {paginas})." if paginas else "."))
+    elif paginas > 1:
+        partes.append(f"Van {paginas} páginas.")
+
+    if not partes:
+        return None
+    partes.append("Lo que ya ha llegado queda guardado.")
+    return " ".join(partes)

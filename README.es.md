@@ -235,8 +235,48 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 ## Cómo se usa
 
-Hay seis pestañas arriba: Bandeja, Otras licitaciones, Vencimientos, Adjudicatarios,
-Analítica y Términos de búsqueda.
+Hay siete pestañas arriba: Bandeja, Resumen, Otras licitaciones, Vencimientos,
+Adjudicatarios, Analítica y Términos de búsqueda.
+
+### Al abrir: la búsqueda y el resumen
+
+Cada vez que se abre, la aplicación instala la versión nueva si la hay y trae lo
+publicado desde la última vez. Al terminar **no entra sola**: enseña un resumen y espera
+a que pulses **Continuar**.
+
+- **Cuántas licitaciones nuevas** ha traído la búsqueda, por perfil («Concienciación y
+  phishing 2 · Protección del correo 1»), y debajo las temáticas IT de «Otras
+  licitaciones» (Ciberseguridad, Cloud…). Cuenta expedientes, no anuncios: el anuncio de
+  TED que se suma a un expediente que ya tenías no es una licitación nueva.
+- **La versión**, y si es la última publicada en GitHub.
+- Si alguna fuente ha fallado o se ha cortado, también lo dice.
+
+**Si la búsqueda tarda.** A veces la Plataforma de Contratación del Estado responde muy
+despacio —se han visto 0,05 MB/s, con páginas de unos 13 MB—, y entonces una búsqueda
+normal puede pasar de una hora sin estar colgada. A partir de dos minutos la pantalla
+explica por qué está tardando (la velocidad, los reintentos, cuántos días hay que
+recuperar) y ofrece **«Entrar sin esperar»**. Es mejor esperar, porque el resumen sale
+al terminar; pero si entras, la búsqueda sigue por detrás, la cabecera lo va contando y,
+al acabar, avisa con **«Búsqueda terminada: N nuevas · Ver resumen»**.
+
+**Si se atasca de verdad.** Un vigilante mira que la búsqueda avance: bytes, fichas,
+páginas o reintentos. Si pasan **15 minutos sin moverse nada**, corta esa fuente, guarda
+lo que ya había llegado y sigue con las demás; la siguiente búsqueda retoma la que se
+cortó. Ir lenta no es estar atascada: mientras lleguen datos, no se corta.
+
+### Resumen
+
+Lo mismo que se ve al abrir, para cualquier periodo:
+
+| Periodo | Qué cuenta |
+|---|---|
+| Última búsqueda | lo que trajo la última búsqueda terminada |
+| Desde la última vez | lo que ha entrado desde que abriste la aplicación la vez anterior |
+| Última semana · Último mes · Último trimestre | lo **publicado** en ese plazo, por la fecha del primer anuncio del expediente |
+
+Los dos primeros cuentan lo que ha entrado en el radar; los de calendario, lo publicado,
+para que tras la carga inicial «el último trimestre» no sea el histórico de tres años.
+Debajo salen los expedientes, con la misma tarjeta que la Bandeja.
 
 ### Los números de la cabecera
 

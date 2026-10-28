@@ -190,6 +190,21 @@ CREATE TABLE IF NOT EXISTS ingest_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingest_fuente ON ingest_log (fuente, iniciado_en DESC);
+
+-- Una fila por búsqueda (una ejecución de `radar.py ingest`), con el tramo de ids que
+-- ha añadido. Es lo que permite decir «esta búsqueda ha traído 12 nuevas» sin
+-- adivinarlo por fechas: los ids son monotónicos, así que lo que trajo es justo lo que
+-- cae entre `id_desde` (exclusivo) e `id_hasta`. `ingest_log` no sirve para esto: va
+-- por fuente, y no dice qué fichas son de qué ejecución.
+CREATE TABLE IF NOT EXISTS busquedas (
+    id            INTEGER PRIMARY KEY,
+    iniciada      TEXT NOT NULL,
+    terminada     TEXT,
+    id_desde      INTEGER NOT NULL,
+    id_hasta      INTEGER,
+    primera_carga INTEGER NOT NULL DEFAULT 0,
+    motivo        TEXT   -- completa | con_errores | atascada
+);
 """
 
 ESTADOS_REVISION = ("nuevo", "siguiendo", "descartado", "presentada")
@@ -655,6 +670,74 @@ def cerrar_ingest(con, log_id: int, *, vistos=0, nuevos=0, actualizados=0, error
                   actualizados = ?, ok = ?, error = ? WHERE id = ?""",
         (ahora(), vistos, nuevos, actualizados, 0 if error else 1, error, log_id),
     )
+
+
+def _max_id(con) -> int:
+    return con.execute("SELECT COALESCE(MAX(id), 0) FROM licitaciones").fetchone()[0]
+
+
+def abrir_busqueda(con, *, primera_carga: bool = False) -> int:
+    """Apunta que empieza una búsqueda y desde qué id cuenta lo que traiga."""
+    cur = con.execute(
+        "INSERT INTO busquedas (iniciada, id_desde, primera_carga) VALUES (?, ?, ?)",
+        (ahora(), _max_id(con), 1 if primera_carga else 0),
+    )
+    con.commit()
+    return cur.lastrowid
+
+
+def cerrar_busqueda(con, busqueda_id: int, motivo: str) -> None:
+    """Cierra la fila con el último id que hay ahora: lo de en medio es lo traído.
+
+    Se llama DESPUÉS de evaluar los perfiles, para que cuando alguien pregunte qué trajo
+    esta búsqueda las coincidencias ya estén escritas.
+    """
+    con.execute(
+        "UPDATE busquedas SET terminada = ?, id_hasta = ?, motivo = ? WHERE id = ?",
+        (ahora(), _max_id(con), motivo, busqueda_id),
+    )
+    con.commit()
+
+
+# Las dos marcas de «desde la última vez». Van en `preferencias` como el resto de lo
+# que es de quien usa la herramienta.
+APERTURA_ACTUAL = "apertura_actual_id"
+APERTURA_PREVIA = "apertura_previa_id"
+# Cuándo fue esa vez anterior, para poder decir «desde el martes a las 9:30».
+APERTURA_PREVIA_EN = "apertura_previa_en"
+
+
+def rotar_apertura(con) -> int | None:
+    """Se entra en la aplicación: lo que había hasta ahora pasa a ser «lo de antes».
+
+    Se guarda el último id que había al entrar la vez anterior (`APERTURA_PREVIA`), y
+    «desde la última vez» es todo lo posterior: lo que ha traído la búsqueda al abrir y
+    lo que entró mientras la aplicación estaba abierta la vez pasada.
+
+    Solo rota si ha entrado algo desde la última vez. Si no, recargar la página —o abrir
+    y cerrar la ventana dos veces seguidas— dejaría «desde la última vez» vacío justo
+    cuando no ha cambiado nada que justifique olvidarlo. Devuelve la marca previa.
+    """
+    actual = _max_id(con)
+    guardada = leer_preferencia(con, APERTURA_ACTUAL)
+    try:
+        guardada_id = int(guardada) if guardada is not None else None
+    except ValueError:
+        guardada_id = None
+    if guardada_id is None or actual > guardada_id:
+        if guardada_id is not None:
+            cuando = con.execute(
+                "SELECT actualizado_en FROM preferencias WHERE clave = ?", (APERTURA_ACTUAL,)
+            ).fetchone()
+            escribir_preferencia(con, APERTURA_PREVIA, str(guardada_id))
+            escribir_preferencia(con, APERTURA_PREVIA_EN, cuando[0] if cuando else None)
+        escribir_preferencia(con, APERTURA_ACTUAL, str(actual))
+        con.commit()
+    previa = leer_preferencia(con, APERTURA_PREVIA)
+    try:
+        return int(previa) if previa is not None else None
+    except ValueError:
+        return None
 
 
 def salud_fuentes(con) -> list[dict]:

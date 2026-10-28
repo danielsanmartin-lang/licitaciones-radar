@@ -252,9 +252,50 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 ## How to use it
 
-There are six tabs along the top: Bandeja (Inbox), Otras licitaciones (Other tenders),
-Vencimientos (Expiring contracts), Adjudicatarios (Winning bidders), Analítica
-(Analytics) and Términos de búsqueda (Search terms).
+There are seven tabs along the top: Bandeja (Inbox), Resumen (Summary), Otras
+licitaciones (Other tenders), Vencimientos (Expiring contracts), Adjudicatarios (Winning
+bidders), Analítica (Analytics) and Términos de búsqueda (Search terms).
+
+### On opening: the search and the summary
+
+Every time it opens, the app installs the new version if there is one and fetches what
+has been published since last time. When it finishes it **does not go straight in**: it
+shows a summary and waits for you to press **Continuar** (Continue).
+
+- **How many new tenders** the search brought in, per profile, and below that the IT
+  themes of «Otras licitaciones» (Cybersecurity, Cloud…). It counts case files, not
+  notices: a TED notice that joins a case file you already had is not a new tender.
+- **The version**, and whether it is the latest one published on GitHub.
+- If a source failed or was cut off, it says so too.
+
+**If the search is slow.** The State Procurement Platform sometimes answers very slowly
+—0.05 MB/s has been seen, with pages of about 13 MB—, and then an ordinary search can run
+for over an hour without being stuck. After two minutes the screen explains why it is
+taking so long (speed, retries, how many days have to be caught up) and offers **«Entrar
+sin esperar»** (Go in without waiting). Waiting is better, because the summary comes at
+the end; but if you go in, the search carries on in the background, the header keeps
+reporting it and, when it finishes, says **«Búsqueda terminada: N nuevas · Ver
+resumen»**.
+
+**If it really gets stuck.** A watchdog checks that the search keeps moving: bytes,
+records, pages or retries. If **15 minutes go by with nothing moving**, it cuts that
+source, keeps what had already arrived and carries on with the rest; the next search
+picks up the one that was cut. Slow is not stuck: as long as data keeps arriving, nothing
+is cut.
+
+### Resumen (Summary)
+
+The same as on opening, for any period:
+
+| Period | What it counts |
+|---|---|
+| Última búsqueda (last search) | what the last finished search brought in |
+| Desde la última vez (since last time) | what has come in since you previously opened the app |
+| Última semana · Último mes · Último trimestre (week · month · quarter) | what was **published** in that span, by the date of the case file's first notice |
+
+The first two count what entered the radar; the calendar ones, what was published, so
+that after the initial load «last quarter» is not three years of history. The case files
+are listed below, with the same card as the Inbox.
 
 ### The numbers in the header
 

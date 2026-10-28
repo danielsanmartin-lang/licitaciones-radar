@@ -30,7 +30,7 @@ import webbrowser
 from datetime import date
 from pathlib import Path
 
-from radar import categorias, consultas, db, pipeline, progreso, rutas
+from radar import categorias, consultas, db, pipeline, progreso, rutas, vigilante
 from radar.matching import cargar_perfiles, reevaluar
 
 RAIZ = Path(__file__).resolve().parent
@@ -58,11 +58,60 @@ def cmd_ingest(args) -> int:
               "No se lanza otra.", file=sys.stderr)
         return 1
     progreso.iniciar()
+    # Después del indicador, que es de donde saca si la ingesta avanza.
+    vigilante.iniciar()
+    # Conexión propia para el registro de la búsqueda: `_ingest` abre la suya, y así
+    # este apunte no depende de por dónde salga.
+    con_registro = db.conectar(args.bd)
+    registro = db.abrir_busqueda(con_registro, primera_carga=args.primera_carga)
+    codigo = 1
     try:
-        return _ingest(args)
+        codigo = _ingest(args)
+        return codigo
+    except vigilante.Atascada as exc:
+        # Lo normal es que la recoja `pipeline.ingerir` y siga con la fuente siguiente.
+        # Llega aquí si el atasco está fuera de las fuentes: evaluando perfiles, por
+        # ejemplo. Se sale con lo que haya, que ya está guardado.
+        progreso.imprimir(f"\nBúsqueda cortada por el vigilante: {exc}")
+        codigo = vigilante.CODIGO_SALIDA
+        return codigo
     finally:
-        progreso.parar()
-        busqueda.liberar()
+        # Después de evaluar los perfiles: quien pregunte qué ha traído esta búsqueda
+        # tiene que encontrar ya sus coincidencias.
+        motivo = {0: "completa", vigilante.CODIGO_SALIDA: "atascada"}.get(codigo, "con_errores")
+        try:
+            db.cerrar_busqueda(con_registro, registro, motivo)
+            if not args.primera_carga:
+                try:
+                    _imprimir_resumen(con_registro)
+                except Exception as exc:  # noqa: BLE001 - es un adorno del final
+                    logging.getLogger(__name__).debug("Sin resumen: %s", exc)
+        finally:
+            con_registro.close()
+            vigilante.parar()
+            progreso.parar()
+            busqueda.liberar()
+
+
+def _imprimir_resumen(con) -> None:
+    """Lo mismo que enseña la aplicación al terminar, para la terminal y el registro.
+
+    La tarea de cada mañana y start.command cuentan así lo mismo que la pantalla de
+    arranque, con la misma consulta.
+    """
+    from radar.server import _perfiles_activos
+
+    r = consultas.resumen_novedades(con, "busqueda", perfiles_activos=_perfiles_activos())
+    n = r["total"]
+    progreso.imprimir(
+        f"\nResumen: {n} licitación nueva" if n == 1 else f"\nResumen: {n} licitaciones nuevas"
+    )
+    for p in r["por_perfil"]:
+        progreso.imprimir(f"    {p['perfil']}: {p['total']}")
+    temas = [t for t in r["por_tematica"] if t["total"]]
+    if temas:
+        progreso.imprimir("  En «Otras licitaciones»: "
+                          + " · ".join(f"{t['nombre']} {t['total']}" for t in temas))
 
 
 def _evaluar_perfiles(con, perfiles, *, incremental: bool = False) -> None:
