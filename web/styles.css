@@ -67,6 +67,25 @@
   --serie-1: #2a78d6;
   --serie-2: #eb6834;
   --serie-3: #1baf7a;
+  /* La 4 y la 5 solo las usa la cuota de mercado (cinco empresas y «Otros»). Validadas
+     con las tres primeras con `validate_palette.js`: pasan en claro y en oscuro; en
+     claro, la 3, la 4 y la 5 no llegan a 3:1 sobre el blanco, así que la cuota lleva sus
+     cifras escritas en la leyenda. */
+  --serie-4: #eda100;
+  --serie-5: #e87ba4;
+  /* La rampa secuencial azul del mapa y del mapa de calor, de menos a más: pasos 100,
+     250, 400, 550 y 700. En oscuro el ancla se invierte (lo poco se funde con el fondo
+     oscuro), con su propia tinta dentro: la de más contraste APCA en cada paso. */
+  --sec-1: #cde2fb;
+  --sec-2: #86b6ef;
+  --sec-3: #3987e5;
+  --sec-4: #1c5cab;
+  --sec-5: #0d366b;
+  --tinta-sec-1: #0b1030;
+  --tinta-sec-2: #0b1030;
+  --tinta-sec-3: #ffffff;
+  --tinta-sec-4: #ffffff;
+  --tinta-sec-5: #ffffff;
   /* El gris de lo que no se trabaja (lo cerrado de la cartera) y uno más claro para lo
      que ni siquiera tiene estado. De-énfasis: no son series, son el fondo de la historia. */
   --serie-gris: #b4b8ca;
@@ -145,6 +164,18 @@
     --serie-1: #3987e5;
     --serie-2: #d95926;
     --serie-3: #199e70;
+    --serie-4: #c98500;
+    --serie-5: #d55181;
+    --sec-1: #104281;
+    --sec-2: #1c5cab;
+    --sec-3: #3987e5;
+    --sec-4: #86b6ef;
+    --sec-5: #cde2fb;
+    --tinta-sec-1: #ffffff;
+    --tinta-sec-2: #ffffff;
+    --tinta-sec-3: #ffffff;
+    --tinta-sec-4: #0b1030;
+    --tinta-sec-5: #0b1030;
     --serie-gris: #4a5078;
     --serie-gris-2: #33385c;
 
@@ -498,8 +529,8 @@ section > .intro { display: none; }
  */
 .kpis {
   display: grid;
-  /* auto-fit y un mínimo bajo: son cinco, y con la ficha abierta al lado tienen que
-     seguir cabiendo en una fila en lugar de dejar la quinta sola debajo. */
+  /* auto-fit y un mínimo bajo: con la ficha abierta al lado tienen que seguir cabiendo
+     en una fila en lugar de dejar la última sola debajo. */
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: var(--e-2);
   margin-bottom: var(--e-4);
@@ -655,6 +686,66 @@ textarea {
   margin-bottom: var(--e-4);
 }
 .filtros-otras { margin-top: var(--e-3); }
+
+/* «Limpiar sin revisar…»: se abre debajo de los filtros, con las tres opciones como fichas
+   de cifra. Es un paso intermedio, no un aviso: el fondo es el de un control. */
+.limpiar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--e-2);
+  margin: 0 0 var(--e-4);
+  padding: var(--e-3) var(--e-4);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-lg);
+  background: var(--panel);
+  font-size: var(--txt-md);
+}
+.limpiar .ventanas { margin: var(--e-1) 0; }
+.limpiar .ventana:disabled { opacity: .45; }
+.limpiar .ventana:disabled:hover { background: var(--relleno); }
+
+/* El aviso de lo que se acaba de limpiar, con «Deshacer». */
+.lote-aviso {
+  position: fixed;
+  left: 50%;
+  bottom: var(--e-5);
+  z-index: 65;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--e-3);
+  max-width: calc(100% - 2 * var(--e-5));
+  padding: var(--e-2) var(--e-2) var(--e-2) var(--e-4);
+  background: var(--panel);
+  border: 1px solid var(--borde-fuerte);
+  border-radius: var(--radio-lg);
+  box-shadow: var(--sombra-2);
+  font-size: var(--txt-md);
+}
+.lote-cerrar {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radio);
+  background: none;
+  color: var(--texto-ter);
+  font-size: 18px;
+  line-height: 1;
+}
+.lote-cerrar:hover { background: var(--relleno); color: var(--texto); }
+
+/* Los dos grupos de «Siguiendo». */
+.grupo-titulo {
+  display: flex;
+  align-items: baseline;
+  gap: var(--e-2);
+  margin: var(--e-4) 0 var(--e-2);
+  font: 600 var(--txt-base)/1.3 var(--letra-titulo);
+}
+.grupo-titulo:first-of-type { margin-top: 0; }
+.grupo-n { font-size: var(--txt-sm); font-weight: 500; color: var(--texto-ter); font-variant-numeric: tabular-nums; }
+.lista + .grupo-titulo { margin-top: var(--e-5); }
 
 .contador { color: var(--texto-sec); font-size: var(--txt-sm); margin: 0 0 var(--e-2); }
 .vacio { color: var(--texto-sec); text-align: center; padding: 56px 0; }
@@ -960,9 +1051,49 @@ progress:not([value]) { opacity: .7; }
 
 .fila-empresa .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
 .fila-empresa .cifras b { font-weight: 600; color: var(--texto); }
-.contratos-empresa { grid-column: 1 / -1; margin-top: var(--e-3); font-size: var(--txt-md); }
-.contratos-empresa li { margin-bottom: var(--e-1); color: var(--texto-sec); }
-.contratos-empresa a { color: var(--acento-texto); }
+/* --- Fichas de organismo y competidor -------------------------------------------- */
+
+.detalle-barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--e-2);
+  margin-bottom: var(--e-4);
+}
+/* Una fila del listado de organismos: el nombre y sus cifras, como las de empresa. */
+.fila-organismo .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
+.fila-organismo .cifras b { font-weight: 600; color: var(--texto); }
+/* Lo que lleva a una ficha desde otro sitio: un nombre que se puede pulsar, sin pintarse
+   de enlace hasta pasar por encima, para no convertir cada tarjeta en un subrayado. */
+.enlace-ficha {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+.enlace-ficha:hover, .enlace-ficha:focus-visible { color: var(--acento-texto); text-decoration: underline; }
+.fila-barra.pulsable { cursor: default; }
+.fila-barra.pulsable:hover .etiqueta,
+.fila-barra.pulsable:focus-visible .etiqueta { color: var(--acento-texto); text-decoration: underline; }
+/* Las listas de una ficha (contratos, vencimientos) van dentro de su tarjeta. */
+.bloque .lista { margin-top: var(--e-2); }
+.lista-ficha { display: flex; flex-direction: column; }
+.fila-ficha {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--e-1) var(--e-3);
+  padding: var(--e-2) 0;
+  border-top: 1px solid var(--borde);
+  font-size: var(--txt-md);
+}
+.fila-ficha:first-child { border-top: 0; }
+.fila-ficha .objeto { color: var(--texto); }
+.fila-ficha .detalle { grid-column: 1; font-size: var(--txt-sm); color: var(--texto-sec); }
+.fila-ficha .cifra { grid-row: 1; grid-column: 2; font-variant-numeric: tabular-nums; color: var(--texto-sec); white-space: nowrap; }
 
 /* --- Ficha (panel de detalle) ------------------------------------------------
  *
@@ -1404,6 +1535,8 @@ progress:not([value]) { opacity: .7; }
   transition: box-shadow var(--transicion), border-color var(--transicion);
 }
 .cifra-clave:hover { border-color: var(--acento-borde); }
+/* Las de las fichas no llevan a ningún sitio: sin el aviso de que se pueden pulsar. */
+.cifra-clave.fija:hover { border-color: var(--borde); }
 .cifra-clave .t { font-size: var(--txt-xs); color: var(--texto-ter); }
 /* Cifras proporcionales y no tabulares: a este tamaño, con `tabular-nums` un «121» se ve
    desencajado. Las tabulares se quedan para lo que va en columna. */
@@ -1587,6 +1720,9 @@ progress:not([value]) { opacity: .7; }
 .muestra.linea { width: 14px; height: 2px; border-radius: 1px; }
 .muestra.serie-1, .apilada-seg.serie-1 { background: var(--serie-1); }
 .muestra.serie-2, .apilada-seg.serie-2 { background: var(--serie-2); }
+.muestra.serie-3, .apilada-seg.serie-3 { background: var(--serie-3); }
+.muestra.serie-4, .apilada-seg.serie-4 { background: var(--serie-4); }
+.muestra.serie-5, .apilada-seg.serie-5 { background: var(--serie-5); }
 .muestra.serie-gris, .apilada-seg.serie-gris { background: var(--serie-gris); }
 .muestra.serie-gris-2, .apilada-seg.serie-gris-2 { background: var(--serie-gris-2); }
 
@@ -1708,3 +1844,103 @@ progress:not([value]) { opacity: .7; }
   .vista-cabecera { padding-left: var(--e-5); padding-right: var(--e-5); }
   .cuerpo-ancho { padding-left: var(--e-5); padding-right: var(--e-5); }
 }
+
+/* --- Mapa de baldosas, mapa de calor y cuota ------------------------------------- *
+ * Los pasos de la rampa secuencial: el relleno y su tinta van juntos. «Sin dato» no es
+ * el primer paso: es el relleno neutro, para que un cero no se confunda con «poco». */
+.paso-0 { background: var(--relleno); color: var(--texto-ter); }
+.paso-1 { background: var(--sec-1); color: var(--tinta-sec-1); }
+.paso-2 { background: var(--sec-2); color: var(--tinta-sec-2); }
+.paso-3 { background: var(--sec-3); color: var(--tinta-sec-3); }
+.paso-4 { background: var(--sec-4); color: var(--tinta-sec-4); }
+.paso-5 { background: var(--sec-5); color: var(--tinta-sec-5); }
+
+.mapa { margin-top: var(--e-2); }
+/* Las comunidades, colocadas más o menos en su sitio en una rejilla de seis columnas, y
+   Canarias, Ceuta y Melilla aparte, debajo. Gap de 2 px: el fondo separa las baldosas. */
+.baldosas {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 2px;
+  max-width: 420px;
+  margin: var(--e-3) auto var(--e-2);
+}
+.baldosa {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 4px;
+  font-size: var(--txt-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  transition: filter var(--transicion);
+}
+.baldosa b { font-weight: 600; letter-spacing: .02em; }
+.baldosa:hover, .baldosa:focus-visible { filter: brightness(1.12); outline: none; }
+.baldosas-aparte { margin-top: var(--e-2); }
+.escala {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: var(--txt-xs);
+  color: var(--texto-sec);
+}
+.escala .tramo { width: 28px; height: 8px; }
+.escala .tramo:first-of-type { border-radius: 4px 0 0 4px; }
+.escala .tramo:last-of-type { border-radius: 0 4px 4px 0; }
+.escala span:first-child { margin-right: var(--e-2); }
+.escala span:last-child { margin-left: var(--e-2); }
+
+/* El mapa de calor: un órgano por fila, doce meses. */
+.calor {
+  display: grid;
+  grid-template-columns: minmax(120px, 2.2fr) repeat(12, minmax(18px, 1fr));
+  gap: 2px;
+  align-items: center;
+  margin-top: var(--e-3);
+  font-size: var(--txt-xs);
+}
+.calor-organo {
+  padding-right: var(--e-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--texto-sec);
+}
+.calor-mes { text-align: center; color: var(--texto-ter); }
+.calor-celda {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.calor-celda:hover, .calor-celda:focus-visible { filter: brightness(1.12); outline: none; }
+
+/* La cuota: una barra al 100 % por año y la leyenda con la cifra del último. */
+.cuota { display: grid; gap: var(--e-2); margin-top: var(--e-3); }
+.cuota-fila { display: grid; grid-template-columns: 3.5em 1fr; gap: var(--e-2); align-items: center; font-size: var(--txt-sm); }
+.cuota-fila .anio { color: var(--texto-sec); font-variant-numeric: tabular-nums; }
+.cuota .apilada-barra { height: 18px; }
+.cuota-leyenda { display: grid; gap: 6px; margin-top: var(--e-3); font-size: var(--txt-sm); }
+.cuota-leyenda li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 4.5em 6em;
+  gap: var(--e-2);
+  align-items: center;
+}
+.cuota-leyenda strong { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.variacion { color: var(--texto-sec); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* La comparación con el año anterior, debajo de la cifra: en color de texto, porque
+   «sube» no siempre es bueno (una baja que sube es margen que se pierde). */
+.cifra-clave .comparado { font-size: var(--txt-xs); color: var(--texto-sec); }
+
+/* El calendario de renovaciones de Vencimientos va en su propia tarjeta. */
+#calendario-vencimientos:empty { display: none; }
+#calendario-vencimientos { margin-bottom: var(--e-4); }

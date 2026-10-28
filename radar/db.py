@@ -207,7 +207,10 @@ CREATE TABLE IF NOT EXISTS busquedas (
 );
 """
 
-ESTADOS_REVISION = ("nuevo", "siguiendo", "descartado", "presentada")
+# «vista» es lo que deja «Limpiar sin revisar»: ya no cuenta como pendiente, pero sigue en
+# la Bandeja y en la Analítica, porque nadie ha decidido que no interese. Es la diferencia
+# con «descartado», que sí quita de en medio.
+ESTADOS_REVISION = ("nuevo", "vista", "siguiendo", "descartado", "presentada")
 
 
 def ahora() -> str:
@@ -276,6 +279,33 @@ INDICES_NUEVOS = (
     "CREATE INDEX IF NOT EXISTS idx_lic_pendientes ON licitaciones (id) "
     "WHERE huella_evaluada IS NOT huella",
 )
+
+# Índices que NO se crean al abrir la base sino en la búsqueda, que corre por detrás.
+# Sobre una base real de 4 GB este tarda unos 18 s, y al abrir se crean ANTES de que el
+# servidor conteste: la app de macOS espera como mucho 90 s y, si se pasa, se cierra
+# matando la creación a medias, que vuelve a empezar en la siguiente apertura. En la
+# búsqueda no tapa nada.
+INDICE_CONSULTAS = "idx_lic_nif_exp"
+INDICES_DIFERIDOS = (
+    # Para enlazar una consulta previa con la licitación que sale de ella: mismo NIF de
+    # órgano y mismo número de expediente, sin mayúsculas ni espacios. Es un índice de
+    # EXPRESIÓN y la consulta tiene que escribir la expresión igual (ver
+    # `consultas.EXPEDIENTE_NORMALIZADO`). Sin él, el cruce de las 2.297 consultas con
+    # la base entera tardaba minutos.
+    f"CREATE INDEX IF NOT EXISTS {INDICE_CONSULTAS} ON licitaciones "
+    "(nif_organo, lower(replace(expediente, ' ', '')))",
+)
+
+
+def crear_indices_diferidos(con) -> None:
+    for sql in INDICES_DIFERIDOS:
+        con.execute(sql)
+    con.commit()
+
+
+def hay_indice(con, nombre: str) -> bool:
+    return con.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                       (nombre,)).fetchone() is not None
 
 
 # Se sube cuando cambia la forma de calcular `clave_grupo`. Al detectar un valor
@@ -903,6 +933,64 @@ def propagar_revisiones_en_grupos(con) -> int:
            VALUES (?, ?, ?, ?, ?, ?)""",
         [(f["id"], *(f[c] for c in CAMPOS_REVISION), momento) for f in faltantes],
     )
+    con.commit()
+    return con.total_changes - antes
+
+
+def _por_tandas(ids, tamano: int = 500):
+    """SQLite admite un número limitado de `?` por consulta; se va de 500 en 500."""
+    ids = list(ids)
+    for i in range(0, len(ids), tamano):
+        yield ids[i:i + tamano]
+
+
+def marcar_vistas(con, ids) -> list[int]:
+    """Pasa a «vista» los anuncios de `ids` que sigan sin revisar. Devuelve los cambiados.
+
+    Solo toca lo que está en «nuevo» (o sin fila en `revisiones`, que es lo mismo): lo
+    que sigues, lo presentado o lo descartado no se mueve aunque venga en la lista. Las
+    notas y el asignado se conservan. Lo que devuelve es lo que hay que pasar a
+    `desmarcar_vistas` para deshacerlo.
+    """
+    cambiados: list[int] = []
+    for tanda in _por_tandas(ids):
+        marcas = ", ".join("?" * len(tanda))
+        cambiados += [
+            f["id"] for f in con.execute(
+                f"""SELECT l.id FROM licitaciones l
+                      LEFT JOIN revisiones r ON r.licitacion_id = l.id
+                     WHERE l.id IN ({marcas}) AND COALESCE(r.estado, 'nuevo') = 'nuevo'""",
+                tanda,
+            )
+        ]
+    momento = ahora()
+    con.executemany(
+        """INSERT INTO revisiones (licitacion_id, estado, actualizado_en)
+           VALUES (?, 'vista', ?)
+           ON CONFLICT(licitacion_id) DO UPDATE SET
+             estado = 'vista', actualizado_en = excluded.actualizado_en
+           WHERE revisiones.estado = 'nuevo'""",
+        [(i, momento) for i in cambiados],
+    )
+    con.commit()
+    return sorted(cambiados)
+
+
+def desmarcar_vistas(con, ids) -> int:
+    """Deshace `marcar_vistas`: vuelve a «nuevo» lo que siga en «vista». Devuelve cuántos.
+
+    Lo que se haya movido entre tanto —lo que pasaste a seguir después de limpiar— se
+    queda como lo dejaste: deshacer la limpieza no puede deshacer otra decisión.
+    """
+    antes = con.total_changes
+    momento = ahora()
+    for tanda in _por_tandas(ids):
+        marcas = ", ".join("?" * len(tanda))
+        con.execute(
+            f"""UPDATE revisiones SET estado = 'nuevo', actualizado_en = ?
+                 WHERE estado = 'vista' AND licitacion_id IN ({marcas})""",
+            [momento, *tanda],
+        )
     con.commit()
     return con.total_changes - antes
 

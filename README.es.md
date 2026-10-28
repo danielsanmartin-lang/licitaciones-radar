@@ -246,9 +246,9 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 ## Cómo se usa
 
 Las vistas están en la **barra lateral**, como en Zepo Desk: Bandeja, Resumen y Otras
-licitaciones arriba; Vencimientos, Adjudicatarios y Analítica en «Mercado»; y Términos de
-búsqueda al pie, junto al estado del radar (la última búsqueda, cómo van las fuentes y la
-versión). **⌘1…⌘7** cambian de vista en ese mismo orden.
+licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios, Organismos y Analítica en
+«Mercado»; y Términos de búsqueda al pie, junto al estado del radar (la última búsqueda,
+cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
 
 Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
 dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
@@ -292,7 +292,9 @@ Lo mismo que se ve al abrir, para cualquier periodo:
 
 Los dos primeros cuentan lo que ha entrado en el radar; los de calendario, lo publicado,
 para que tras la carga inicial «el último trimestre» no sea el histórico de tres años.
-Debajo salen los expedientes, con la misma tarjeta que la Bandeja.
+En los de calendario se dice también cuántos hubo **en las mismas fechas un año antes**,
+para saber si 12 en una semana es mucho o poco. Debajo salen los expedientes, con la
+misma tarjeta que la Bandeja.
 
 ### Los números de la Bandeja
 
@@ -303,13 +305,34 @@ Todas cuentan **expedientes**, no anuncios, igual que la lista.
 |---|---|
 | abiertas | han pasado el filtro, siguen vivas y el plazo no ha vencido |
 | cierran ≤7d | de las anteriores, las que se acaban esta semana |
-| sin revisar | no les has dado ni Seguir ni Descartar |
-| siguiendo | las que has marcado para trabajar |
-| coincidencias | todas las que han pasado el filtro, sin filtrar por plazo ni triaje |
+| coincidencias | todas las que han pasado el filtro menos las de plazo vencido: lo que todavía se puede mirar |
+| sin revisar | no les has dado ni Seguir, ni Descartar, ni las has marcado como vistas |
+
+Lo que sigues ya no tiene contador aquí: tiene su propia vista, **Siguiendo** (más abajo).
 
 Debajo de la lista pone «110 de 2.716 coincidencias» y qué filtros están puestos, porque
 el desplegable de triaje y la casilla **«Solo abiertas» se combinan**: elegir «todo
-menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas.
+menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas. «Ver
+todas» quita los filtros, y entonces sí sale también lo vencido.
+
+**«Ocultar sin plazo»** quita de la lista lo que no publica fecha límite. Se suma a
+cualquier contador y se recuerda la próxima vez.
+
+**«Limpiar sin revisar…»** es para cuando se acumulan cientos de «sin revisar» que nadie
+va a mirar una a una. Ofrece tres opciones, cada una con su cifra: las de **plazo
+vencido**, las que **no tienen fecha** o **todas**. Las elegidas pasan a **«vista»**:
+dejan de contar como sin revisar, pero siguen en la Bandeja y en la Analítica, que es la
+diferencia con descartar. Lo que sigues, has presentado o descartado no se toca. Se
+decide por expediente, con la fecha límite mayor de sus anuncios, y al terminar sale un
+aviso con **«Deshacer»**.
+
+### Siguiendo
+
+Lo que has marcado para seguir y lo que has presentado, aunque ya no case con ningún
+perfil, en dos grupos: **en plazo**, por lo que cierra antes, y **plazo vencido o
+cerradas**, de lo más reciente a lo más antiguo. En las cerradas sale **quién ganó y por
+cuánto** —mirando todos los anuncios del expediente, no solo el último— o «adjudicación
+pendiente» si todavía no se sabe. La cifra de la barra lateral es lo que sigue en plazo.
 
 ### Bandeja
 
@@ -436,22 +459,54 @@ Contratos **ya adjudicados** cuyo plazo termina pronto, con el incumbente y el
 importe. Los botones de ventana (3, 6, 12, 24 meses) muestran cuántos vencen en cada
 plazo y por cuánto importe, para poder comparar de un vistazo. Es la lista para llamar *antes* de que salga el pliego, cuando todavía se
 puede influir. Solo aparecen los que publican fecha de fin o duración: si la fuente
-no la da, la licitación no se lista en lugar de estimarla a ojo.
+no la da, la licitación no se lista en lugar de estimarla a ojo. El órgano y el
+incumbente de cada tarjeta llevan a su ficha. Encima va el **calendario de
+renovaciones**: cuántos contratos acaban cada uno de los doce meses que vienen, por
+expediente, con sus incumbentes al pasar el ratón.
 
 ### Adjudicatarios
 
 Quién se está llevando estos contratos, agrupando las variantes de razón social
 («S2 GRUPO …, S.L.U.» y «S2 Grupo … S.L.» son la misma empresa). Al pulsar una
-empresa se despliegan sus contratos.
+empresa se abre su **ficha de competidor** (más abajo).
 
 Por defecto mira lo que casa con tus perfiles. El desplegable de arriba cambia el
 **ámbito**: un perfil concreto, o una temática entera del mercado —ciberseguridad, cloud,
 toda la IT…—, case o no con tus perfiles. Es el mismo selector que el de la Analítica.
 
+### Organismos
+
+Quién compra en tu ámbito, de más a menos expedientes, con un buscador que no distingue
+acentos ni mayúsculas. Cada fila dice cuántos expedientes tiene, cuántos siguen abiertos
+y cuántos están adjudicados, y lleva a su ficha. El órgano es el que firma, tal como lo
+publica la fuente: una misma agencia puede salir varias veces, una por firmante, igual
+que en la Analítica.
+
+### Las fichas de organismo y de competidor
+
+Lo que la Analítica cuenta del mercado entero, contado de **un solo órgano** o de **una
+sola empresa**, con las mismas reglas —por expediente, sin lo descartado, la baja de un
+solo anuncio y el plazo del primero— y con el mismo selector de ámbito.
+
+- **Organismo**: sus cifras (expedientes, importe mediano, baja y plazo cuando hay al
+  menos tres casos, adjudicados), en qué meses publica, a quién adjudica, qué contratos
+  suyos vencen en los próximos 24 meses y con quién, lo que tiene abierto hoy y sus
+  expedientes anteriores con la tarjeta de siempre.
+- **Competidor**: lo que ha ganado y por cuánto, año a año, en qué comunidades, a qué
+  organismos les vende, qué contratos suyos vencen —la ocasión de quitárselos— y sus
+  adjudicaciones, juntando sus razones sociales como el ranking de Adjudicatarios.
+
+Se llega a ellas desde las filas de Organismos y Adjudicatarios, desde «Quién compra» y
+«Quién gana» de la Analítica, desde el órgano y el incumbente de Vencimientos y desde el
+órgano y el adjudicatario de la ficha de cualquier licitación. Todo nombre de una ficha
+lleva a la suya, y **«Volver»** deshace el camino hasta donde estabas, con su posición en
+la página. Desde una licitación que no casa con tus perfiles, la ficha se abre con toda
+la IT.
+
 ### Analítica
 
-Las preguntas que no son «qué hay hoy». Quince bloques, cada uno con una pregunta de
-venta delante, en el orden en que se leen:
+Las preguntas que no son «qué hay hoy». Arriba, una fila de cifras clave; debajo, veinte
+bloques, cada uno con una pregunta de venta delante, en el orden en que se leen:
 
 | Bloque | Contesta a |
 |---|---|
@@ -459,21 +514,41 @@ venta delante, en el orden en que se leen:
 | Tamaño de los contratos | de qué tamaño son estas operaciones de verdad |
 | Importe al que se están cerrando los contratos | cuánto por debajo del presupuesto se están cerrando |
 | Cuánto tiempo tengo para presentar | cuántos días hay del anuncio al cierre del plazo: si lo veo hoy, si da tiempo a escribir la oferta |
+| Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
+| Mapa del dinero adjudicado · en juego | lo mismo que las barras de comunidades, en un mapa de baldosas: cada comunidad en su sitio y un tono por quinta parte, de menos a más |
 | Top comunidades por adjudicaciones | dónde se ha repartido el dinero que ya está adjudicado |
 | Top comunidades por número total de adjudicaciones | dónde se cierran más operaciones, cuesten lo que cuesten |
 | Top comunidades por licitaciones activas | dónde queda dinero en juego, con el plazo todavía abierto |
 | Top comunidades por número de licitaciones activas | dónde hay más pliegos abiertos ahora mismo |
 | Quién compra | qué órganos de contratación repiten, y a quién merece la pena ir a ver |
 | Quién gana | qué empresas se llevan más expedientes, contra quién vas a competir |
+| Cuándo publica cada uno | un mapa de calor de los diez órganos que más compran por los doce meses: cuándo llamar a cada uno |
+| Cuota de mercado | las cinco empresas que más ganan desde 2024 y el resto, año a año, con la diferencia en puntos entre los dos últimos: quién crece y quién se cae |
 | Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
 | Cómo se compra | por qué puerta se entra: abierto, simplificado, restringido o por invitación |
-| Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
-| A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido |
+| De consulta previa a pliego | cuánto tarda una consulta preliminar de mercado en convertirse en licitación (en todo el mercado: unos 130 días de mediana), y qué consultas de tu ámbito siguen abiertas sin pliego. Es el aviso más temprano que hay |
+| A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido, y el calendario de los doce meses que vienen |
 | Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico |
 
 Se filtra por **ámbito** y por uno de tres rangos (este año, últimos 24 meses, todo desde
-2024). Los dos bloques que hablan de *ahora* —renovaciones y cartera— ignoran el rango a
-propósito y lo dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+2024). Los bloques que hablan de *ahora* —renovaciones y cartera—, la cuota (desde 2024
+siempre) y las consultas previas (todo el histórico) ignoran el rango a propósito y lo
+dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+
+Con **este año**, cada cifra clave se compara con **las mismas fechas del año anterior**
+(del 1 de enero al día de hoy de hace un año, no el año entero): «↓ 21 % frente a 2025» en
+los expedientes, y la mediana de entonces en el resto. En color de texto y no en verde o
+rojo, porque subir no siempre es bueno: una baja que sube es margen que se pierde.
+
+El enlace de consulta a licitación solo junta lo **seguro**: mismo NIF de órgano y mismo
+número de expediente, sin mayúsculas ni espacios, con la licitación publicada después.
+Muchas consultas cambian de número al licitarse, así que lo enlazado es un mínimo, y el
+bloque lo dice. Para hacerlo rápido hay un índice nuevo, que crea la primera búsqueda
+después de actualizar —unos 20 segundos en una base de 4 GB, una sola vez, por detrás— y
+no la apertura, para no retrasarla; hasta entonces el bloque dice que se está preparando.
+
+Los nombres de órgano y de empresa de «Quién compra», «Quién gana», el mapa de calor y la
+cuota llevan a sus fichas.
 
 El ámbito puede ser tus perfiles —todos o uno— o una **temática del mercado** de las de
 «Otras licitaciones», o toda la IT junta. Con una temática se mira el mercado entero, case

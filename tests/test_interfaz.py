@@ -88,7 +88,7 @@ class TestVistas(unittest.TestCase):
                 self.assertIn(tono.group(1), tonos, "el tono no tiene clase en styles.css")
 
     def test_el_orden_de_los_atajos_es_el_de_la_barra_lateral(self):
-        """⌘1…⌘7 van por `VISTAS`; si no coincide con la barra lateral, ⌘3 abriría
+        """⌘1…⌘8 van por `VISTAS`; si no coincide con la barra lateral, ⌘3 abriría
         una vista distinta de la tercera que se ve."""
         m = re.search(r"const VISTAS = \[([^\]]+)\]", JS)
         self.assertIsNotNone(m)

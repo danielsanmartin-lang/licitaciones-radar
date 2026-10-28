@@ -142,6 +142,8 @@ class Manejador(BaseHTTPRequestHandler):
                     ),
                     busqueda=params.get("q") or None,
                     solo_novedades=params.get("novedades") == "1",
+                    con_plazo=params.get("con_plazo") == "1",
+                    sin_vencidas=params.get("sin_vencidas") == "1",
                     orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
                     limite=min(int(params.get("limite", 200)), 1000),
                     offset=int(params.get("offset", 0)),
@@ -151,6 +153,9 @@ class Manejador(BaseHTTPRequestHandler):
                 self._error(f"Búsqueda no válida: {exc}")
             except ValueError as exc:
                 self._error(str(exc))
+
+        elif partes.path == "/api/siguiendo":
+            self._json(consultas.siguiendo(self.con))
 
         elif partes.path == "/api/otras":
             elegidas = [c for c in (params.get("categorias") or "").split(",") if c]
@@ -215,6 +220,31 @@ class Manejador(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._error(str(exc))
             self._json({"items": consultas.contratos_de(self.con, empresa, ambito=ambito)})
+
+        elif partes.path in ("/api/organismos", "/api/organismo", "/api/competidor"):
+            try:
+                ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
+            except ValueError as exc:
+                return self._error(str(exc))
+            if partes.path == "/api/organismos":
+                return self._json(consultas.organismos(
+                    self.con, ambito=ambito, q=params.get("q") or None))
+            if partes.path == "/api/organismo":
+                nombre = params.get("nombre")
+                if not nombre:
+                    return self._error("falta nombre")
+                ficha = consultas.ficha_organismo(self.con, nombre, ambito=ambito)
+                quien = "ese órgano"
+            else:
+                empresa = params.get("empresa")
+                if not empresa:
+                    return self._error("falta empresa")
+                ficha = consultas.ficha_competidor(self.con, empresa, ambito=ambito)
+                quien = "esa empresa"
+            if ficha is None:
+                # 404 y no una ficha vacía: la pantalla lo dice, y sugiere cambiar el ámbito.
+                return self._error(f"No hay expedientes de {quien} en «{ambito.etiqueta}».", 404)
+            self._json(ficha)
 
         elif partes.path == "/api/motivos-descarte":
             self._json({"items": consultas.motivos_descarte(self.con)})
@@ -355,6 +385,8 @@ class Manejador(BaseHTTPRequestHandler):
                 estado_revision=params.get("estado") or None,
                 solo_vivas=params.get("vivas", "1") == "1",
                 busqueda=params.get("q") or None,
+                con_plazo=params.get("con_plazo") == "1",
+                sin_vencidas=params.get("sin_vencidas") == "1",
             )
             buffer = io.StringIO()
             escritor = csv.writer(buffer)
@@ -432,6 +464,25 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._error(str(exc))
             self.con.commit()
             self._json({"ok": True})
+
+        elif partes.path == "/api/revision/lote":
+            # «Limpiar sin revisar…»: pasa a «vista» un criterio entero de una vez. Devuelve
+            # los ids, que son lo que la pantalla manda de vuelta si se pulsa «Deshacer».
+            try:
+                hecho = consultas.limpiar_sin_revisar(self.con, cuerpo.get("criterio") or "")
+            except ValueError as exc:
+                return self._error(str(exc))
+            self._json({"ok": True, **hecho})
+
+        elif partes.path == "/api/revision/lote/deshacer":
+            ids = cuerpo.get("ids")
+            if not isinstance(ids, list):
+                return self._error("ids debe ser una lista de números")
+            try:
+                ids = [int(i) for i in ids]
+            except (TypeError, ValueError):
+                return self._error("ids debe ser una lista de números")
+            self._json({"ok": True, "deshechas": db.desmarcar_vistas(self.con, ids)})
 
         elif partes.path == "/api/perfiles":
             from .matching import guardar_perfiles, previsualizar, reevaluar, validar_perfiles
