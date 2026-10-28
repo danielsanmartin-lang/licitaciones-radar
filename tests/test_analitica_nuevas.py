@@ -144,6 +144,10 @@ class TestRenovacionesPorMes(Base):
 
 
 class TestConsultas(Base):
+    def setUp(self):
+        super().setUp()
+        db.crear_indices_diferidos(self.con)
+
     def consulta(self, ide, **campos):
         return self.alta(ide, fuente="placsp:consultas_previas", estado="previo", **campos)
 
@@ -175,6 +179,15 @@ class TestConsultas(Base):
         c = consultas._bloque_consultas(self.con, consultas.Ambito())
         self.assertEqual([it["id"] for it in c["abiertas"]], [abierta])
         self.assertEqual(c["del_ambito"], 2)
+
+    def test_sin_el_indice_no_se_intenta_y_lo_dice(self):
+        """Lo crea la búsqueda; abrir la base no puede tardar 18 s (ver INDICES_DIFERIDOS)."""
+        self.con.execute(f"DROP INDEX {db.INDICE_CONSULTAS}")
+        self.assertEqual(consultas._bloque_consultas(self.con, consultas.Ambito()),
+                         {"preparando": True})
+        otra = db.conectar(Path(self.dir.name) / "t.db")
+        self.addCleanup(otra.close)
+        self.assertFalse(db.hay_indice(otra, db.INDICE_CONSULTAS), "conectar no lo crea")
 
     def test_el_indice_esta_y_se_usa(self):
         indices = {f[0] for f in self.con.execute(

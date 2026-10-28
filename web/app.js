@@ -4145,6 +4145,11 @@ function pintarConsultas(d) {
   const el = bloqueAnalitica('De consulta previa a pliego',
     '¿Cuánto margen da una consulta preliminar de mercado antes de que salga la licitación?',
     'consultas');
+  if (d.preparando) {
+    nota(el, 'Se está preparando: hace falta un índice nuevo en la base, que se crea en la ' +
+             'próxima búsqueda. En cuanto termine, aquí estará.');
+    return el;
+  }
   if (d.mediana_dias !== null) {
     titular(el, `${d.mediana_dias} días`,
             `de mediana · la mitad entre ${d.p25} y ${d.p75}`);

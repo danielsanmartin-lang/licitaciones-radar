@@ -278,14 +278,34 @@ INDICES_NUEVOS = (
     # con EXPLAIN QUERY PLAN, escrito como `IS NULL OR <>` el índice no se usa.
     "CREATE INDEX IF NOT EXISTS idx_lic_pendientes ON licitaciones (id) "
     "WHERE huella_evaluada IS NOT huella",
+)
+
+# Índices que NO se crean al abrir la base sino en la búsqueda, que corre por detrás.
+# Sobre una base real de 4 GB este tarda unos 18 s, y al abrir se crean ANTES de que el
+# servidor conteste: la app de macOS espera como mucho 90 s y, si se pasa, se cierra
+# matando la creación a medias, que vuelve a empezar en la siguiente apertura. En la
+# búsqueda no tapa nada.
+INDICE_CONSULTAS = "idx_lic_nif_exp"
+INDICES_DIFERIDOS = (
     # Para enlazar una consulta previa con la licitación que sale de ella: mismo NIF de
     # órgano y mismo número de expediente, sin mayúsculas ni espacios. Es un índice de
     # EXPRESIÓN y la consulta tiene que escribir la expresión igual (ver
     # `consultas.EXPEDIENTE_NORMALIZADO`). Sin él, el cruce de las 2.297 consultas con
     # la base entera tardaba minutos.
-    "CREATE INDEX IF NOT EXISTS idx_lic_nif_exp ON licitaciones "
+    f"CREATE INDEX IF NOT EXISTS {INDICE_CONSULTAS} ON licitaciones "
     "(nif_organo, lower(replace(expediente, ' ', '')))",
 )
+
+
+def crear_indices_diferidos(con) -> None:
+    for sql in INDICES_DIFERIDOS:
+        con.execute(sql)
+    con.commit()
+
+
+def hay_indice(con, nombre: str) -> bool:
+    return con.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+                       (nombre,)).fetchone() is not None
 
 
 # Se sube cuando cambia la forma de calcular `clave_grupo`. Al detectar un valor

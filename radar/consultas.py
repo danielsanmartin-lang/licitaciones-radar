@@ -2705,7 +2705,12 @@ def _bloque_consultas(con, ambito) -> dict:
     El tiempo se mide sobre TODO el mercado y todo el histórico: en un nicho apenas hay
     casos, y lo que se quiere saber es cuánto margen da una consulta en general. Lo que sí
     es del ámbito es la lista de consultas abiertas que todavía no tienen pliego.
+
+    Sin su índice el cruce tarda minutos, así que no se intenta: el índice lo crea la
+    próxima búsqueda (ver `db.INDICES_DIFERIDOS`) y hasta entonces el bloque lo dice.
     """
+    if not db.hay_indice(con, db.INDICE_CONSULTAS):
+        return {"preparando": True}
     expediente_c = EXPEDIENTE_NORMALIZADO.format(t="c")
     expediente_l = EXPEDIENTE_NORMALIZADO.format(t="l")
     filas = con.execute(

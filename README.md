@@ -580,8 +580,9 @@ green or red, because going up is not always good: a discount that rises is marg
 The consultation-to-tender link only joins what is **certain**: same contracting body
 tax ID and same file number, ignoring case and spaces, with the tender published later.
 Many consultations change number when tendered, so what is linked is a minimum, and the
-block says so. To make it fast there is a new index, built automatically the first time
-this version opens: on a 4 GB database that is about 20 seconds, once.
+block says so. To make it fast there is a new index, built by the first search after
+updating — about 20 seconds on a 4 GB database, once, in the background — rather than on
+opening, so as not to delay it; until then the block says it is being prepared.
 
 The body and company names in «Quién compra», «Quién gana», the heatmap and market share
 lead to their profiles.

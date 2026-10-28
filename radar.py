@@ -63,6 +63,11 @@ def cmd_ingest(args) -> int:
     # Conexión propia para el registro de la búsqueda: `_ingest` abre la suya, y así
     # este apunte no depende de por dónde salga.
     con_registro = db.conectar(args.bd)
+    # Lo que no conviene hacer al abrir la aplicación (ver `db.INDICES_DIFERIDOS`). Sobre
+    # una base que ya los tiene no cuesta nada.
+    if not db.hay_indice(con_registro, db.INDICE_CONSULTAS):
+        progreso.imprimir("Preparando un índice nuevo de la base (una sola vez, unos segundos)…")
+        db.crear_indices_diferidos(con_registro)
     registro = db.abrir_busqueda(con_registro, primera_carga=args.primera_carga)
     codigo = 1
     try:

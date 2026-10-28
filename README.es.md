@@ -543,8 +543,9 @@ rojo, porque subir no siempre es bueno: una baja que sube es margen que se pierd
 El enlace de consulta a licitación solo junta lo **seguro**: mismo NIF de órgano y mismo
 número de expediente, sin mayúsculas ni espacios, con la licitación publicada después.
 Muchas consultas cambian de número al licitarse, así que lo enlazado es un mínimo, y el
-bloque lo dice. Para hacerlo rápido hay un índice nuevo, que se crea solo la primera vez
-que se abre esta versión: en una base de 4 GB son unos 20 segundos, una vez.
+bloque lo dice. Para hacerlo rápido hay un índice nuevo, que crea la primera búsqueda
+después de actualizar —unos 20 segundos en una base de 4 GB, una sola vez, por detrás— y
+no la apertura, para no retrasarla; hasta entonces el bloque dice que se está preparando.
 
 Los nombres de órgano y de empresa de «Quién compra», «Quién gana», el mapa de calor y la
 cuota llevan a sus fichas.
