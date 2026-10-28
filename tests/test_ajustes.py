@@ -222,6 +222,57 @@ class TestPrevisualizacion(unittest.TestCase):
         self.assertEqual(vista["entran"], 0)
         self.assertEqual(vista["despues"], vista["antes"])
 
+    def test_sin_tocar_ningun_termino_no_entra_ni_sale_nada(self):
+        """Pulsar «Ver qué cambiaría» sin haber cambiado nada tiene que decir 0 y 0.
+
+        Sobre un clon de la base real decía «Pasarías de 537 a 664 coincidencias (130
+        entran, 3 salen)» con los perfiles recién leídos del fichero. La base estaba al
+        día; lo que fallaba es que `previsualizar` leía `texto_norm`, que lleva el
+        nombre del órgano, mientras que `reevaluar` lee `texto_reglas_norm`, que no. Así
+        que el órgano volvía a contar solo en la previsualización, en los dos sentidos:
+        regalaba el contexto a lo que no lo tenía y excluía lo que sí casaba. Aquí van
+        las dos trampas, cada una junto al caso de la base que reproduce.
+        """
+        trampas = [
+            # Entraba: el término ambiguo está en el objeto y el contexto solo en el
+            # órgano. Como las obras del «Departament d'Educació i Formació
+            # Professional», que se llevaban «formacio» del nombre del departamento.
+            ("Campaña de concienciación sobre el reciclaje",
+             "Instituto Nacional de Ciberseguridad (INCIBE)"),
+            # Salía: casa por el objeto, y la exclusión solo está en el órgano. Como la
+            # herramienta DMARC de «Correos y Telégrafos».
+            ("Plataforma de simulación de phishing",
+             "Observatorio Nacional de Seguridad Vial"),
+        ]
+        for i, (objeto, organo) in enumerate(trampas):
+            db.guardar(self.con, Licitacion(
+                fuente="p", id_externo=f"t{i}", objeto=objeto, organo=organo,
+                valor_estimado=50000,
+            ))
+
+        # Lo que manda la pantalla sin tocar nada es lo mismo que devuelve
+        # GET /api/perfiles, desactivados incluidos, y se valida en cada petición.
+        def del_fichero():
+            return matching.validar_perfiles([
+                perfil(),
+                perfil(nombre="Amplio", terminos_fuertes=["mobiliario"], activo=False),
+            ])
+
+        matching.reevaluar(self.con, del_fichero())
+        en_la_bandeja = {
+            f["objeto"] for f in self.con.execute(
+                "SELECT l.objeto FROM licitaciones l"
+                " JOIN matches m ON m.licitacion_id = l.id")
+        }
+        # Las trampas están armadas: si `reevaluar` volviera a leer el órgano, esto
+        # fallaría antes que la previsualización y diría dónde mirar.
+        self.assertNotIn(trampas[0][0], en_la_bandeja)
+        self.assertIn(trampas[1][0], en_la_bandeja)
+
+        vista = matching.previsualizar(self.con, del_fichero())
+        self.assertEqual((vista["entran"], vista["salen"]), (0, 0), vista)
+        self.assertEqual(vista["despues"], vista["antes"])
+
     def test_muestra_ejemplos_de_lo_que_entra(self):
         p = matching.validar_perfiles([
             perfil(terminos_fuertes=["phishing", "mobiliario"], contexto_requerido=["ciberseguridad"])
