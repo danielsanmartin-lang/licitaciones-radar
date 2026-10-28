@@ -183,6 +183,11 @@ def _primera_carga(args) -> int:
     anios = pipeline.anios_primera_carga(date.today())
     fallidas = []
 
+    # Lo que falta se apunta ANTES de empezar, sumado a lo que ya faltaba: lanzar solo la
+    # etapa 1 en una base nueva no puede dar por hechas la 2, la 3 y la 4.
+    pendientes = set(db.etapas_pendientes(con, len(etapas))) | set(pedidas)
+    db.apuntar_etapas_pendientes(con, pendientes)
+
     for numero in pedidas:
         etapa = etapas[numero - 1]
         # El coste y el detalle no son solo para esta línea impresa: la aplicación los
@@ -201,7 +206,8 @@ def _primera_carga(args) -> int:
         resumen = pipeline.ingerir(
             con, fuentes, anios=anios if etapa["historico"] else None
         )
-        fallidas += [f for f, r in resumen.items() if r["error"]]
+        fallidas_etapa = [f for f, r in resumen.items() if r["error"]]
+        fallidas += fallidas_etapa
 
         # Se reevalúa al final de CADA etapa, no una sola vez al terminar todo: es lo
         # que hace que los contadores de la bandeja suban a la vista mientras el resto
@@ -212,14 +218,20 @@ def _primera_carga(args) -> int:
         # cuarta etapa recorría por cuarta vez la base entera para no cambiar nada.
         _evaluar_perfiles(con, perfiles, incremental=True)
 
-    pendientes = [n for n in range(1, len(etapas) + 1) if n not in pedidas]
+        # Con una fuente caída la etapa sigue pendiente: el histórico de un ZIP que no
+        # bajó no lo va a traer ninguna búsqueda diaria, así que se repite la etapa
+        # entera la próxima vez que se abra la aplicación.
+        if not fallidas_etapa:
+            pendientes.discard(numero)
+            db.apuntar_etapas_pendientes(con, pendientes)
+
     if pendientes:
         progreso.imprimir("\nEtapas que no se han hecho:")
-        for n in pendientes:
+        for n in sorted(pendientes):
             progreso.imprimir(f"  [{n}] {etapas[n - 1]['etiqueta']} — {etapas[n - 1]['coste']}")
         progreso.imprimir(
             "  Para traerlas: python3 radar.py ingest --primera-carga --etapas "
-            + " ".join(str(n) for n in pendientes)
+            + " ".join(str(n) for n in sorted(pendientes))
         )
 
     return _aviso_fallidas(fallidas)

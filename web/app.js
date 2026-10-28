@@ -791,7 +791,7 @@ function fmtDuracion(segundos) {
 //     de arranque está delante no se pinta: lo cuenta ella.
 function pintarCarga(det, explicacion) {
   const caja = $('carga');
-  if (!det || (!det.etapas && enArranque)) {
+  if (!det || enArranque) {
     caja.hidden = true;
     return;
   }
@@ -946,14 +946,19 @@ function vigilarBusqueda() {
         : 'Buscando…');
       pintarCarga(det, d.explicacion);
       pintarProgresoBusqueda(det);
-      // La carga inicial son horas: esa no se espera con la aplicación tapada. Se entra
-      // y la cuenta el aviso de la cabecera, que para eso está y dice «puedes trabajar
-      // mientras».
-      if (enArranque) {
-        if (det && det.etapas) cerrarArranque();
-        else {
+      // De la carga inicial solo se espera aquí la etapa 1, la de unos minutos: sin ella
+      // la bandeja de una instalación nueva está vacía. De la 2 en adelante son horas, y
+      // esas no se esperan con la aplicación tapada: se entra y las cuenta el aviso de
+      // la cabecera, que dice «puedes trabajar mientras». Si ya está a la vista el
+      // resumen con «Continuar», no se toca nada: es quien ha lanzado esas etapas.
+      if (enArranque && $('arranque-resumen').hidden) {
+        const deHoras = Boolean(det && det.etapas && det.etapa > 1);
+        if (cumplirEtapa1 && det && det.etapas) cumplirEtapa1(det);
+        if (!deHoras) {
           pintarArranque(det);
           pintarLentitud(det, d.explicacion);
+        } else if (!cumplirEtapa1) {
+          cerrarArranque();
         }
       }
       // Durante la carga inicial toda la narración vive en el bloque de abajo. Aquí
@@ -992,6 +997,9 @@ function vigilarBusqueda() {
     // con lo que se acaba de traer, no con lo de ayer rellenándose a la vista.
     vigilancia = null;
     cumplir();
+    // Se entró sin esperar a la etapa 1 de la carga inicial: nadie más va a lanzar las
+    // que faltan. Con la pantalla de arranque delante lo hace ella, después del resumen.
+    if (!enArranque) seguirCargaInicial();
   }, 1500);
   return vigilancia;
 }
@@ -1014,8 +1022,9 @@ function vigilarBusqueda() {
 // ver `pintarLentitud()`— y cuando algo deja de dar señales de vida, ver
 // `vigilarCuelgue()`. Hay además dos casos en los que no se espera, porque no son
 // saltarse nada:
-//   - la carga inicial (la de horas, con etapas) no se espera aquí: se entra y la
-//     narra el aviso de la cabecera, que dice «puedes trabajar mientras»;
+//   - la carga inicial de horas (de la etapa 2 en adelante) no se espera aquí: se entra
+//     y la narra el aviso de la cabecera, que dice «puedes trabajar mientras». La etapa
+//     1, la de unos minutos, sí: es la que llena una instalación nueva;
 //   - si ya se buscó hace menos de diez minutos no se vuelve a buscar: la búsqueda ya
 //     está hecha, y abrir y cerrar la ventana no debería costar un minuto cada vez.
 //     La versión, en cambio, se comprueba siempre: es una sola pregunta a GitHub.
@@ -1107,6 +1116,14 @@ function pasoArranque(texto) {
 }
 
 function pintarArranque(det) {
+  // En la primera vez, qué trae la etapa y lo que cuesta, con el texto de
+  // `pipeline.ETAPAS_PRIMERA_CARGA`: es lo que convierte unos minutos de espera en algo
+  // que se entiende.
+  if (det && det.etapas && det.etiqueta && !$('arranque-explica').hidden) {
+    $('arranque-explica-etapa').textContent =
+      `Ahora: ${det.etiqueta.charAt(0).toLowerCase()}${det.etiqueta.slice(1)}, ` +
+      `${det.coste || 'unos minutos'}.`;
+  }
   $('arranque-frase').textContent = fraseProgreso(det);
   barraProgreso($('arranque-barra'), det);
   $('arranque-tiempo').textContent =
@@ -1348,15 +1365,23 @@ function enlaceExterno(url, texto) {
 }
 
 function subtituloNovedades(n, buscando) {
+  if (n.bienvenida) {
+    return 'Esto es lo que trae la versión con la que empiezas' +
+      (buscando ? '; mientras lo lees, el radar prepara tu primera carga debajo.' : '.');
+  }
   return (n.desde ? `Tenías la ${n.desde}. Esto es lo nuevo desde entonces` :
                     'Esto es lo nuevo de esta versión') +
     (buscando ? '; mientras lo lees, el radar sigue buscando licitaciones debajo.' : '.');
 }
 
+// Tras una actualización, o la primera vez que se abre (`bienvenida`): en las dos se
+// cuenta qué trae la versión, y en las dos «Continuar» la da por vista.
 function pintarNovedades(n) {
   $('arranque-caja').classList.add('con-novedades');
   $('arranque-novedades').hidden = false;
-  $('novedades-titulo').textContent = `Actualizado a la versión ${n.hasta}`;
+  $('novedades-titulo').textContent = n.bienvenida
+    ? `Te damos la bienvenida al Radar · versión ${n.hasta}`
+    : `Actualizado a la versión ${n.hasta}`;
   $('novedades-sub').textContent = subtituloNovedades(n, true);
 
   const lista = $('novedades-lista');
@@ -1420,9 +1445,9 @@ function pintarNovedades(n) {
 async function mostrarResumenArranque(n, conLicitaciones) {
   pasoArranque('Paso 1 y paso 2 terminados');
   if (n && n.actualizada) $('novedades-sub').textContent = subtituloNovedades(n, false);
-  $('arranque-titulo').textContent = 'Todo listo';
+  $('arranque-titulo').textContent = primeraVez ? 'Tu radar ya tiene su primera carga' : 'Todo listo';
   // Fuera lo que era del progreso: dejarlo vacío seguiría ocupando su hueco.
-  for (const id of ['arranque-frase', 'arranque-barra', 'arranque-tiempo']) {
+  for (const id of ['arranque-frase', 'arranque-barra', 'arranque-tiempo', 'arranque-explica']) {
     $(id).hidden = true;
   }
   $('arranque-colgado').hidden = true;
@@ -1437,6 +1462,17 @@ async function mostrarResumenArranque(n, conLicitaciones) {
     } catch { /* sin resumen se entra igual: la bandeja ya está al día */ }
     if (r && !r.error) cuerpo.appendChild(bloqueResumen(r, { compacto: true }));
   }
+  if (primeraVez) {
+    // Lo lanza `seguirCargaInicial()` en cuanto esta pantalla está a la vista: se dice
+    // ya, para que al entrar el aviso de la cabecera no pille por sorpresa.
+    const p = document.createElement('p');
+    p.className = 'pista';
+    p.textContent = 'Ahora sigue por detrás con el resto del histórico: la Plataforma del ' +
+      'Estado, unos 5 GB, y lo publicado desde entonces. Según tu conexión puede ir de ' +
+      'unos minutos a un par de horas. Puedes trabajar mientras: las licitaciones van ' +
+      'apareciendo solas y arriba verás cómo va.';
+    cuerpo.appendChild(p);
+  }
   if (!enArranque) return;  // se ha entrado mientras se pedía el resumen
   $('arranque-version').textContent = textoVersion(n);
   $('arranque-resumen').hidden = false;
@@ -1447,16 +1483,54 @@ async function mostrarResumenArranque(n, conLicitaciones) {
 // antes vuelve a ver las novedades la próxima vez.
 async function continuarArranque() {
   $('arranque-continuar').disabled = true;
+  // Sin esperar la respuesta. Apuntarlo es una escritura, y la primera vez se pulsa con
+  // la etapa 2 de la carga inicial ya escribiendo por detrás: medido, «Continuar» se
+  // quedaba varios segundos sin hacer nada esperando su turno. Si no llega a apuntarse,
+  // las novedades se vuelven a enseñar la próxima vez: no pasa nada.
   if (novedadesArranque && novedadesArranque.actualizada) {
-    try {
-      await fetch('/api/novedades/vistas', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    } catch { /* si no se apunta, se vuelven a enseñar la próxima vez: no pasa nada */ }
+    fetch('/api/novedades/vistas', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
   }
   cerrarArranque();
 }
 
 // --- Paso 2: las licitaciones ------------------------------------------------
+//
+// En una instalación nueva el paso 2 es la carga inicial, la misma que hace
+// `start.command`: la etapa 1 aquí delante, y la 2, la 3 y la 4 por detrás al entrar.
+// Antes la aplicación hacía una búsqueda normal, que en una base vacía trae una página
+// de PLACSP y los últimos 30 días de TED y Cataluña, y en cuanto escribe el cursor ya no
+// mira atrás: quien la descargaba de GitHub se quedaba con unas decenas de licitaciones
+// para siempre. Qué falta lo dice `etapas_pendientes`, que apunta la propia carga.
+
+// Que esta apertura está haciendo la carga inicial: cambia los títulos y el resumen.
+let primeraVez = false;
+// Las etapas que esta sesión ya ha lanzado. Una que falla sigue pendiente, y sin esto se
+// relanzaría en bucle; así se reintenta la próxima vez que se abra la aplicación.
+const etapasLanzadas = new Set();
+// Se lo pasa el vigilante a cada tic de la carga inicial, para ver cuándo pasa de la
+// etapa 1 a la 2 en el mismo proceso: es lo que hace `--primera-carga` lanzado a mano
+// sin `--etapas`. Solo cuenta si antes se ha visto la 1, para que la instantánea que
+// dejó una carga anterior no dé la etapa por terminada antes de empezar.
+let cumplirEtapa1 = null;
+
+function esperarEtapa1() {
+  let vista = false;
+  const pasa = new Promise((r) => {
+    cumplirEtapa1 = (det) => {
+      if (det.etapa === 1) vista = true;
+      else if (vista) r();
+    };
+  });
+  return Promise.race([vigilarBusqueda(), pasa]).finally(() => { cumplirEtapa1 = null; });
+}
+
+function pintarPrimeraVez() {
+  primeraVez = true;
+  pasoArranque('Paso 2 de 2 · tu primera carga');
+  $('arranque-titulo').textContent = 'Primera vez: preparando tu radar';
+  $('arranque-explica').hidden = false;
+}
 
 // Devuelve true si hay una búsqueda que resumir al terminar: la que se acaba de hacer,
 // la que ya estaba en marcha, o una de hace menos de diez minutos que se reutiliza.
@@ -1466,7 +1540,13 @@ async function buscarLoNuevo() {
   let d = await estadoBusqueda();
   if (!d) return false;  // sin servidor no hay nada que esperar; que lo cuente la bandeja
 
-  if (d.en_marcha && d.detalle && d.detalle.etapas) return false;  // la carga inicial
+  if (d.en_marcha && d.detalle && d.detalle.etapas) {
+    if (d.detalle.etapa > 1) return false;  // la carga inicial de horas: no se espera
+    pintarPrimeraVez();
+    etapasLanzadas.add(1);
+    await esperarEtapa1();
+    return true;
+  }
 
   // Ya hay una corriendo: la tarea programada de la mañana, un `start.command`, u otra
   // ventana. Se espera a esa en lugar de pedir otra, que el cerrojo rechazaría.
@@ -1475,7 +1555,22 @@ async function buscarLoNuevo() {
     await vigilarBusqueda();
     return true;
   }
+
+  const pendientes = d.etapas_pendientes || [];
+  if (pendientes.includes(1) && !etapasLanzadas.has(1)) {
+    pintarPrimeraVez();
+    pintarArranque(null);
+    etapasLanzadas.add(1);
+    if (!(await lanzarBusqueda({ primera_carga: true, etapas: [1] }))) return false;
+    await esperarEtapa1();
+    return true;
+  }
   if (buscadoHaceMenosDe(d.ultima_busqueda, MINUTOS_FRESCO)) return true;
+  // Quedaron etapas de una vez anterior (se cerró la aplicación a medias): se terminan
+  // por detrás al entrar, con `seguirCargaInicial()`, en lugar de una búsqueda normal.
+  // La etapa 4 ya es una búsqueda de todas las fuentes, y una normal escribiría el
+  // cursor de PLACSP dejando un hueco entre el último ZIP y hoy.
+  if (pendientes.length) return false;
 
   $('arranque-titulo').textContent = 'Buscando licitaciones nuevas';
   pintarArranque(null);
@@ -1509,13 +1604,14 @@ async function arrancar() {
     cerrarArranque();
     return;
   }
-  const cargaInicial = d.en_marcha && d.detalle && d.detalle.etapas;
+  // La etapa 1 sí se espera, en el paso 2: es la que llena una instalación nueva.
+  const cargaInicial = d.en_marcha && d.detalle && d.detalle.etapas && d.detalle.etapa > 1;
   if (cargaInicial) {
     vigilarBusqueda();
     cerrarArranque();
     return;
   }
-  if (d.en_marcha) {
+  if (d.en_marcha && !(d.detalle && d.detalle.etapas)) {
     pasoArranque('Antes de nada');
     $('arranque-titulo').textContent = 'Terminando la búsqueda que ya estaba en marcha';
     await vigilarBusqueda();
@@ -1529,11 +1625,21 @@ async function arrancar() {
   if (!enArranque) return;
   // No se cierra sola: se enseña qué ha traído la búsqueda y la versión, y se espera a
   // «Continuar». Sin búsqueda que resumir, solo si hay novedades de versión que leer.
-  if (hayBusqueda || (n && n.actualizada)) {
-    await mostrarResumenArranque(n, hayBusqueda);
-    return;
-  }
-  cerrarArranque();
+  if (hayBusqueda || (n && n.actualizada)) await mostrarResumenArranque(n, hayBusqueda);
+  else cerrarArranque();
+  await seguirCargaInicial();
+}
+
+// Lanza por detrás las etapas de la carga inicial que falten, si no hay nada en marcha.
+// Se llama al terminar el arranque —con el resumen ya a la vista, para que el vigilante
+// no lo cierre— y al terminar una búsqueda que corría por detrás.
+async function seguirCargaInicial() {
+  const d = await estadoBusqueda();
+  if (!d || d.en_marcha) return;
+  const resto = (d.etapas_pendientes || []).filter((e) => !etapasLanzadas.has(e));
+  if (!resto.length) return;
+  resto.forEach((e) => etapasLanzadas.add(e));
+  await lanzarBusqueda({ primera_carga: true, etapas: resto });
 }
 
 // --- Resumen de lo nuevo ------------------------------------------------------

@@ -1,7 +1,7 @@
 """Las novedades que enseña la pantalla de arranque después de actualizarse.
 
-Lo que se protege: que se sepa cuándo la aplicación acaba de cambiar de versión —y solo
-entonces—, que las notas sean las de las versiones que de verdad se han saltado, y que
+Lo que se protege: que se sepa cuándo la aplicación acaba de cambiar de versión o se
+estrena en una instalación nueva —y solo entonces—, que las notas sean las de las versiones que de verdad se han saltado, y que
 lo que llega de GitHub se convierta en bloques de texto y no en HTML.
 """
 
@@ -140,7 +140,16 @@ class TestRecienActualizada(unittest.TestCase):
         novedades.marcar_vista(self.con)  # si intentara escribir, «database is locked»
         self.assertIsNone(novedades.recien_actualizada(self.con))
 
-    def test_una_instalacion_nueva_no_tiene_novedades(self):
+    def test_una_instalacion_nueva_recibe_la_bienvenida_con_su_version(self):
+        """Quien la descarga de cero ve las notas de la versión con la que empieza."""
+        self.assertEqual(novedades.recien_actualizada(self.con),
+                         {"desde": None, "hasta": "1.8.0", "bienvenida": True})
+
+    def test_la_bienvenida_sale_hasta_que_se_pulsa_continuar(self):
+        """Quien cierra antes de leerla la vuelve a ver; una vez vista, ya no."""
+        self.assertTrue(novedades.recien_actualizada(self.con)["bienvenida"])
+        self.assertTrue(novedades.recien_actualizada(self.con)["bienvenida"])
+        novedades.marcar_vista(self.con)
         self.assertIsNone(novedades.recien_actualizada(self.con))
 
     def test_la_primera_actualizacion_se_reconoce_por_el_registro(self):
@@ -161,14 +170,17 @@ class TestRecienActualizada(unittest.TestCase):
                                return_value=resultado):
             self.assertEqual(novedades.recien_actualizada(self.con)["desde"], "1.6.0")
 
-    def test_un_registro_de_otra_version_o_fallido_no_cuenta(self):
+    def test_un_registro_de_otra_version_o_fallido_no_es_una_actualizacion(self):
+        """Sin versión vista, lo que no es una actualización a esta es la bienvenida. El
+        «sin cambios» es justo lo que deja la primera apertura de una instalación nueva,
+        que también pregunta a GitHub."""
         for resultado in ({"ok": True, "version_nueva": "1.7.0"},
                           {"ok": False, "version_nueva": "1.8.0"},
                           {"ok": True, "sin_cambios": True, "version_nueva": "1.8.0"}):
             with self.subTest(resultado=resultado), \
                  mock.patch.object(novedades.actualizacion, "_resultado",
                                    return_value=resultado):
-                self.assertIsNone(novedades.recien_actualizada(self.con))
+                self.assertTrue(novedades.recien_actualizada(self.con).get("bienvenida"))
 
 
 if __name__ == "__main__":

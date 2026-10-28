@@ -194,8 +194,8 @@ cuanto anota por dónde va, lo que hay más atrás ya no lo vuelve a mirar. Con 
 `ingest` a secas te quedarías con unas **50 coincidencias** y ninguna forma de
 recuperar el resto.
 
-Por eso `start.command` detecta que la base está vacía y construye el histórico en
-cuatro etapas, de la más barata a la más cara:
+Por eso, cuando la base está vacía, ni la app ni `start.command` hacen una búsqueda
+normal: construyen el histórico en cuatro etapas, de la más barata a la más cara:
 
 | | qué trae | cuánto cuesta |
 |---|---|---|
@@ -210,9 +210,19 @@ hasta casi dos horas. Lo que sí es predecible es el proceso —abrir los ZIP y 
 millón y pico de fichas en la base—, porque solo depende de tu máquina.
 
 **La aplicación se abre en cuanto termina la etapa 1**, ya con unos mil expedientes que
-encajan. Las demás siguen descargando por detrás mientras trabajas: arriba aparece
-un aviso con la etapa, los megas que van llegando y una barra, y los contadores de la
-cabecera van subiendo solos sin recargar la página.
+encajan. En la app, la pantalla de arranque lo cuenta mientras tanto —«Primera vez:
+preparando tu radar», con lo que trae la etapa y lo que cuesta—, te da la bienvenida con
+las notas de la versión con la que empiezas y, al terminar, el resumen de lo que ha
+llegado y **Continuar**. Las demás siguen descargando por detrás mientras trabajas:
+arriba aparece un aviso con la etapa, los megas que van llegando y una barra, y los
+contadores de la cabecera van subiendo solos sin recargar la página.
+
+**Si se corta, se retoma sola.** La carga apunta en la base qué etapas le faltan
+(`etapas_pendientes` en `preferencias`): las pedidas al empezar, y cada una se quita al
+acabar sin errores. Si cierras la app a mitad, se cae la red o una fuente falla, la
+próxima vez que la abras lanza por detrás las que falten, en lugar de la búsqueda normal
+del arranque. Una base que ya tenía historia antes de este registro no tiene nada
+apuntado, y a esa no se le pide nada.
 
 Las etapas 2 y 3 son las que llenan **Vencimientos** y **Adjudicatarios**, que
 necesitan histórico de adjudicaciones. Y la 3 es la que trae las diez comunidades que
@@ -571,7 +581,9 @@ Al reabrirse con la versión nueva, la pantalla de arranque lo confirma y enseñ
 de cada versión intermedia (hasta seis; el resto, enlazadas). Se leen mientras sigue la
 búsqueda de licitaciones, y al acabar las dos cosas la pantalla espera a **Continuar**.
 Si la cierras antes de pulsarlo, las vuelves a ver la próxima vez. Sin actualización de
-por medio, el arranque es como siempre y se quita solo.
+por medio, el arranque es como siempre y se quita solo. En una instalación nueva, sin
+ninguna versión apuntada, la pantalla da la bienvenida y enseña las notas de la versión
+con la que empiezas.
 
 Para saber desde qué versión vienes se apunta en la base la versión con la que se abrió
 la aplicación la última vez (`version_vista` en `preferencias`). La primera vez que se

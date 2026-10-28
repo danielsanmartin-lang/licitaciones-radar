@@ -740,6 +740,37 @@ def rotar_apertura(con) -> int | None:
         return None
 
 
+# Las etapas de la carga inicial que faltan por terminar, como lista JSON. La escribe
+# `radar.py ingest --primera-carga`: al empezar apunta las que se le piden y quita cada
+# una al acabarla sin errores. Así una carga que se corta —se cierra la aplicación, se
+# cae la red, se cancela— sigue sabiendo lo que le falta la próxima vez.
+ETAPAS_PENDIENTES = "etapas_pendientes"
+
+
+def etapas_pendientes(con, total: int) -> list[int]:
+    """Las etapas de la carga inicial (de 1 a `total`) que quedan por hacer.
+
+    Sin nada apuntado, una base que nunca ha buscado —ni una fila en `ingest_log`— las
+    tiene todas pendientes: es la instalación recién descargada. Una base con historia y
+    sin nada apuntado es de antes de este registro y ya hizo su carga como fuese; a esa
+    no se le pide nada.
+    """
+    guardada = leer_preferencia(con, ETAPAS_PENDIENTES)
+    if guardada is None:
+        if con.execute("SELECT 1 FROM ingest_log LIMIT 1").fetchone():
+            return []
+        return list(range(1, total + 1))
+    try:
+        return sorted({int(e) for e in json.loads(guardada)} & set(range(1, total + 1)))
+    except (TypeError, ValueError):
+        return []
+
+
+def apuntar_etapas_pendientes(con, etapas) -> None:
+    escribir_preferencia(con, ETAPAS_PENDIENTES, json.dumps(sorted(set(etapas))))
+    con.commit()
+
+
 def salud_fuentes(con) -> list[dict]:
     filas = con.execute(
         """SELECT l.fuente, l.iniciado_en, l.terminado_en, l.vistos, l.nuevos,

@@ -267,6 +267,10 @@ class Manejador(BaseHTTPRequestHandler):
                 # cuando la búsqueda se alarga.
                 "explicacion": busqueda.explicar_lentitud(detalle, ultima) if activa else None,
                 "ultima_busqueda": ultima,
+                # Lo que le falta a la carga inicial. Con la 1 pendiente la pantalla de
+                # arranque la hace antes de entrar; el resto va por detrás.
+                "etapas_pendientes": db.etapas_pendientes(
+                    self.con, len(pipeline.ETAPAS_PRIMERA_CARGA)),
             })
 
         elif partes.path == "/api/resumen-novedades":

@@ -1208,6 +1208,17 @@ progress:not([value]) { opacity: .7; }
   color: var(--texto-ter);
 }
 .arranque-paso:empty { display: none; }
+/* La primera vez: qué se está haciendo y por qué tarda unos minutos. */
+.arranque-explica {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e-1);
+  max-width: 44ch;
+  font-size: var(--txt-md);
+  color: var(--texto-sec);
+  line-height: 1.5;
+}
+.arranque-explica .pista:empty { display: none; }
 /* La salida para cuando algo se ha colgado. Solo existe entonces. */
 .arranque-colgado {
   display: flex;
@@ -1298,6 +1309,7 @@ progress:not([value]) { opacity: .7; }
 }
 #arranque-resumen-cuerpo { width: 100%; }
 #arranque-resumen-cuerpo:empty { display: none; }
+#arranque-resumen-cuerpo > .pista { margin-top: var(--e-3); line-height: 1.5; }
 .arranque-version { font-size: var(--txt-md); color: var(--texto-sec); }
 .arranque-resumen .boton-pri { min-width: 160px; height: 34px; padding: 0 var(--e-5); font-size: var(--txt-base); }
 
