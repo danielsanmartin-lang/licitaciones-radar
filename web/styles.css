@@ -1,63 +1,84 @@
 /* Radar de Licitaciones — hoja de estilo única, sin compilar y sin dependencias.
  *
- * Está escrita para vivir dentro de la ventana de la app de macOS, donde no hay barra
- * de direcciones ni pestañas de navegador alrededor: lo que se vea aquí es todo lo que
- * hay, así que el cromo tiene que parecer cromo de aplicación y no de página web. Sigue
- * funcionando igual abierta en un navegador.
+ * El aspecto es el de Zepo Desk, la otra app de escritorio de Zepo, para que las dos se
+ * lean como de la misma casa: su paleta (azul eléctrico #142CD1, navy, turquesa), su
+ * barra lateral, sus cabeceras de vista, sus chips y sus tarjetas. Los valores salen de
+ * su `src/styles.css` y de su tema «zepo» en `shared/themes.js`, no de tantear; si allí
+ * cambian, aquí hay que cambiarlos a mano, porque esta hoja no puede importar aquella.
+ *
+ * Está escrita para vivir dentro de la ventana de la app de macOS, donde no hay barra de
+ * direcciones ni pestañas de navegador alrededor: lo que se vea aquí es todo lo que hay.
+ * Sigue funcionando igual abierta en un navegador.
  *
  * Dos reglas de la casa que conviene no romper:
  *
  *   - Los nombres de clase son una API. `app.js` los genera por `innerHTML` en las
- *     tarjetas, las píldoras y los catorce bloques de la Analítica, así que renombrar
- *     una clase aquí y no allí no da error: deja de aplicar en silencio.
+ *     tarjetas, las píldoras y los bloques de la Analítica, así que renombrar una clase
+ *     aquí y no allí no da error: deja de aplicar en silencio. `tests/test_interfaz.py`
+ *     comprueba que las que genera `app.js` tengan su regla aquí.
  *   - Toda cifra va en texto al lado de su barra. Las barras son `div` y no SVG a
  *     propósito (ver «Analítica» al final del fichero).
  */
 
 /* --- Tokens ---------------------------------------------------------------
  *
- * Oscuro primero, que es como nació el proyecto, y el tema claro redefine solo lo que
- * cambia. La diferencia con antes es que el claro ahora también redefine los cuatro
- * colores de estado: heredaba del oscuro el acento, el verde, el ámbar y el rojo, y
- * sobre fondo blanco los cuatro se quedaban flojos de contraste.
+ * Claro primero, como Zepo Desk, y el oscuro navy redefine lo que cambia. Los nombres
+ * son los de siempre (`--fondo`, `--panel`, `--texto`…): `app.js` escribe alguno en
+ * línea, y renombrarlos los dejaría sin color sin avisar.
+ *
+ * Correspondencia con Zepo Desk: fondo=bg, lateral=sidebar, panel=raised (lo que se
+ * apoya encima del fondo), ficha=panel (la columna de detalle), borde=line,
+ * borde-fuerte=line-strong, relleno=hover, activo=active.
  */
 :root {
-  /* Que las barras de scroll, los `progress` y las casillas nativas salgan en el tema
-     que toca. Dentro de un WKWebView sin cromo alrededor, una barra de scroll clara
-     sobre fondo oscuro es lo que delata que esto es una página. */
   color-scheme: light dark;
 
-  --fondo: #0d0f14;
-  --panel: #14181f;
-  --panel-2: #1b2029;
-  --borde: #262c38;
-  /* Para lo que tiene que separarse de verdad: cabecera, pie, cantos de la ficha. */
-  --borde-fuerte: #333b4a;
-  --texto: #e8eaef;
-  --texto-sec: #9aa3b2;
-  /* Tercer nivel, para lo descriptivo que no se lee sino que se reconoce: la fuente de
-     datos, el procedimiento, la comunidad. Antes competían con el importe y el plazo. */
-  --texto-ter: #6f7889;
-  --acento: #5b93ff;
-  --acento-tenue: rgba(91, 147, 255, .14);
-  --acento-borde: rgba(91, 147, 255, .42);
-  --verde: #3ecf7f;
-  --verde-tenue: rgba(62, 207, 127, .13);
-  --ambar: #e8ae3c;
-  --ambar-tenue: rgba(232, 174, 60, .13);
-  --rojo: #ef5f56;
-  --rojo-tenue: rgba(239, 95, 86, .13);
+  --fondo: #ffffff;
+  --lateral: #f3f4f9;
+  --panel: #ffffff;
+  --ficha: #fbfbfd;
+  /* `--panel-2` es el nombre viejo del relleno suave; se queda como alias. */
+  --relleno: rgb(11 16 48 / .045);
+  --panel-2: var(--relleno);
+  --activo: rgb(20 44 209 / .09);
+  --borde: rgb(11 16 48 / .08);
+  --borde-fuerte: rgb(11 16 48 / .14);
+  --texto: #0b1030;
+  --texto-sec: #565c7a;
+  --texto-ter: #9399b2;
 
-  /* Escala tipográfica. Antes había doce tamaños sueltos entre 10 y 26 px, elegidos uno
-     a uno; estos siete cubren lo mismo y hacen que dos cosas del mismo rango se vean
-     del mismo tamaño sin tener que acordarse. */
+  --acento: #142cd1;
+  --acento-texto: #1428b8;
+  --acento-tenue: rgb(20 44 209 / .09);
+  --acento-borde: rgb(20 44 209 / .32);
+  --verde: #13865f;
+  --verde-tenue: rgb(29 158 117 / .12);
+  --ambar: #b8650e;
+  --ambar-tenue: rgb(239 159 39 / .16);
+  --rojo: #d62e4b;
+  --rojo-tenue: rgb(255 59 92 / .12);
+  --turquesa: #0b8f99;
+  --turquesa-tenue: rgb(123 233 228 / .28);
+  /* El violeta de las PoCs en la barra lateral de Zepo Desk. */
+  --violeta: #6b62d6;
+  --violeta-tenue: rgb(127 119 221 / .14);
+
+  /* Series de gráficas: la paleta categórica validada que usa Zepo Desk. */
+  --serie-1: #2a78d6;
+  --serie-2: #eb6834;
+  --serie-3: #1baf7a;
+
+  --letra: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", sans-serif;
+  --letra-titulo: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
+
+  /* Escala tipográfica. La de Zepo Desk: cuerpo de 13,5 px y títulos de vista de 26. */
   --txt-xs: 11px;
   --txt-sm: 12px;
   --txt-md: 13px;
-  --txt-base: 15px;
-  --txt-lg: 17px;
-  --txt-xl: 21px;
-  --txt-2xl: 28px;
+  --txt-base: 13.5px;
+  --txt-lg: 15px;
+  --txt-xl: 20px;
+  --txt-2xl: 26px;
 
   /* Espaciado. Todo múltiplo de 4 para que los bordes caigan en la misma rejilla. */
   --e-1: 4px;
@@ -66,74 +87,103 @@
   --e-4: 16px;
   --e-5: 24px;
   --e-6: 32px;
+  --e-7: 40px;
 
-  /* Radios. `--radio` se queda con su nombre y su valor: está escrito en medio fichero
-     y en algún sitio de `app.js`. Los otros dos son los que faltaban. */
+  /* Radios: los de Zepo Desk (md, lg, xl, 2xl). `--radio` está escrito en medio fichero. */
   --radio-sm: 6px;
-  --radio: 10px;
-  --radio-lg: 14px;
+  --radio: 8px;
+  --radio-lg: 12px;
+  --radio-xl: 16px;
   --radio-pill: 999px;
 
-  /* Dos niveles de elevación y ninguno más. El primero para lo que descansa sobre el
-     fondo, el segundo para lo que se pone por encima de todo. */
-  --sombra-1: 0 1px 2px rgba(0, 0, 0, .28);
-  --sombra-2: 0 16px 48px rgba(0, 0, 0, .46);
+  --sombra-1: 0 1px 2px rgb(7 14 52 / .06), 0 8px 24px rgb(7 14 52 / .08);
+  --sombra-2: 0 2px 6px rgb(7 14 52 / .08), 0 24px 60px rgb(7 14 52 / .18);
 
-  --transicion: 120ms ease;
+  --ancho-lateral: 232px;
+  --ancho-ficha: 420px;
+  /* La franja de arriba que ocupa la barra de título integrada en la app de macOS: los
+     botones de cerrar y minimizar y la zona por donde se arrastra la ventana. Fuera de la
+     app no existe (ver `html.nativa`). */
+  --franja: 0px;
+
+  --transicion: 140ms ease;
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
-    --fondo: #f6f7f9;
-    --panel: #ffffff;
-    --panel-2: #f1f3f6;
-    --borde: #e3e7ed;
-    --borde-fuerte: #cbd2dc;
-    --texto: #171a20;
-    --texto-sec: #5b6371;
-    --texto-ter: #868e9c;
-    /* Los cuatro de estado, oscurecidos. El #4f8cff de antes sobre blanco daba 3,0:1 y
-       el texto de una píldora azul no se leía; estos pasan de 4,5:1. */
-    --acento: #2563eb;
-    --acento-tenue: rgba(37, 99, 235, .09);
-    --acento-borde: rgba(37, 99, 235, .34);
-    --verde: #15803d;
-    --verde-tenue: rgba(21, 128, 61, .10);
-    --ambar: #a35a08;
-    --ambar-tenue: rgba(163, 90, 8, .10);
-    --rojo: #d32f2b;
-    --rojo-tenue: rgba(211, 47, 43, .10);
-    --sombra-1: 0 1px 2px rgba(16, 24, 40, .06);
-    --sombra-2: 0 16px 48px rgba(16, 24, 40, .18);
+    --fondo: #12152b;
+    --lateral: #0d1024;
+    --panel: #1c2040;
+    --ficha: #161a33;
+    --relleno: rgb(232 234 250 / .05);
+    --activo: rgb(110 128 255 / .16);
+    --borde: rgb(232 234 250 / .08);
+    --borde-fuerte: rgb(232 234 250 / .15);
+    --texto: #e8eafa;
+    --texto-sec: #a3a8c6;
+    --texto-ter: #6b7090;
+
+    --acento: #4f63ff;
+    --acento-texto: #a6b1ff;
+    --acento-tenue: rgb(91 109 255 / .18);
+    --acento-borde: rgb(110 128 255 / .45);
+    --verde: #4fd1a1;
+    --verde-tenue: rgb(79 209 161 / .14);
+    --ambar: #f2b45a;
+    --ambar-tenue: rgb(242 180 90 / .15);
+    --rojo: #ff6b85;
+    --rojo-tenue: rgb(255 107 133 / .15);
+    --turquesa: #7be9e4;
+    --turquesa-tenue: rgb(123 233 228 / .14);
+    --violeta: #a39cf0;
+    --violeta-tenue: rgb(163 156 240 / .16);
+
+    --serie-1: #3987e5;
+    --serie-2: #d95926;
+    --serie-3: #199e70;
+
+    --sombra-1: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .3);
+    --sombra-2: 0 2px 6px rgb(0 0 0 / .4), 0 24px 60px rgb(0 0 0 / .5);
   }
 }
+
+/* En la app de macOS la barra de título va integrada, como en Zepo Desk: la barra lateral
+   y la cabecera suben hasta arriba y los botones de la ventana quedan encima. Esa franja
+   no puede tener nada que pulsar, porque la ventana la usa para arrastrarse (ver
+   `ZonaArrastre` en `macos/Radar.swift`). La clase la pone `app.js` al arrancar. */
+html.nativa { --franja: 52px; }
 
 * { box-sizing: border-box; }
 
 /* Las reglas del autor ganan siempre sobre el `[hidden] { display: none }` del
    navegador, así que cualquier clase que fije `display` deja el atributo `hidden`
    sin efecto. Pasó con el botón «Cargar más»: `.mas { display: block }` lo mantenía
-   visible después de haber cargado todo, y al pulsarlo se pedían filas más allá del
-   final y no ocurría nada. Esta regla lo arregla para todos los elementos que se
-   ocultan con el atributo, no solo para ese botón. */
+   visible después de haber cargado todo. Esta regla lo arregla para todos. */
 [hidden] { display: none !important; }
+
+html, body { height: 100%; }
 
 body {
   margin: 0;
-  padding: 0 var(--e-5) 60px;
   background: var(--fondo);
   color: var(--texto);
-  font: var(--txt-base)/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  /* Sin navegador alrededor, el rebote elástico de macOS deja ver el fondo de la
-     ventana por debajo de la página y se lee como si algo se hubiera despegado. */
+  font: var(--txt-base)/1.5 var(--letra);
+  -webkit-font-smoothing: antialiased;
+  /* El scroll vive dentro de `.cuerpo`, no aquí: la barra lateral y la cabecera de la
+     vista se quedan quietas. Sin esto, el rebote elástico de macOS movería la ventana
+     entera y se leería como si algo se hubiera despegado. */
+  overflow: hidden;
   overscroll-behavior: none;
 }
 
-/* El cromo no se selecciona. En una app, arrastrar el ratón sobre una pestaña y verla
-   quedarse azul de selección es de las cosas que más delatan que dentro hay una web.
-   El contenido —objetos de pliegos, nombres de órgano, notas— sí, que para eso está. */
-.cabecera,
-.vistas,
+p { margin: 0; }
+h1, h2, h3, h4 { margin: 0; }
+
+/* El cromo no se selecciona. En una app, arrastrar el ratón sobre la barra lateral y verla
+   quedarse azul de selección es de las cosas que más delatan que dentro hay una web. El
+   contenido —objetos de pliegos, nombres de órgano, notas— sí, que para eso está. */
+.lateral,
+.vista-cabecera,
 .filtros,
 .kpis,
 .ventanas,
@@ -148,89 +198,24 @@ body {
   user-select: none;
 }
 
-/* Foco visible en TODO lo que se puede enfocar, no solo en los campos de texto. Antes
-   solo `input` y `select` lo tenían; en una ventana sin barra de direcciones el teclado
-   es la única navegación alternativa que queda. */
+::selection { background: var(--acento-tenue); }
+
+/* Foco visible en todo lo que se puede enfocar. En una ventana sin barra de direcciones el
+   teclado es la única navegación alternativa que queda. */
 :focus-visible {
   outline: 2px solid var(--acento);
-  outline-offset: 2px;
+  outline-offset: 1px;
   border-radius: var(--radio-sm);
 }
 
-/* --- Cabecera -------------------------------------------------------------- */
+a { color: var(--acento-texto); }
 
-.cabecera {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--e-5);
-  align-items: flex-end;
-  justify-content: space-between;
-  padding: var(--e-5) 0 var(--e-4);
-  border-bottom: 1px solid var(--borde-fuerte);
-}
-
-h1 {
-  margin: 0;
-  font-size: var(--txt-xl);
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-.sub { margin: var(--e-1) 0 0; color: var(--texto-sec); font-size: var(--txt-md); }
-
-.busqueda-ahora {
-  display: flex;
-  align-items: center;
-  gap: var(--e-3);
-  margin-top: var(--e-3);
-  flex-wrap: wrap;
-}
 .pista { font-size: var(--txt-sm); color: var(--texto-sec); }
-
-/* --- Botones --------------------------------------------------------------- */
-
-.boton-pri,
-.boton-sec {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: var(--radio-sm);
-  padding: 7px var(--e-3);
-  font: inherit;
-  font-size: var(--txt-md);
-  cursor: pointer;
-  transition: background var(--transicion), border-color var(--transicion),
-              color var(--transicion);
-  white-space: nowrap;
-}
-
-.boton-pri {
-  background: var(--acento);
-  border: 1px solid var(--acento);
-  font-weight: 600;
-  color: #fff;
-}
-.boton-pri:hover { filter: brightness(1.08); }
-.boton-pri:active { filter: brightness(.94); }
-.boton-pri:disabled { opacity: .55; cursor: default; filter: none; }
-
-.boton-sec {
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  color: var(--texto);
-  text-decoration: none;
-  box-shadow: var(--sombra-1);
-}
-.boton-sec:hover { border-color: var(--borde-fuerte); background: var(--panel-2); }
-.boton-sec:active { background: var(--panel-2); filter: brightness(.97); }
-.mas { display: block; margin: var(--e-5) auto; }
 
 /* --- Iconos ---------------------------------------------------------------- */
 
-/* Se dibujan una sola vez en el sprite `<symbol>` de `index.html` y se usan con
-   `<use>`. Sin build step es la única manera de no repetir el path en cada una de las
-   cien tarjetas de la lista, y además `<use>` es un elemento que `app.js` puede generar
-   sin saltarse la regla de no meter texto de los pliegos en `innerHTML`.
-   `currentColor` hace que los dos temas salgan gratis. */
+/* Se dibujan una sola vez en el sprite `<symbol>` de `index.html` y se usan con `<use>`.
+   `currentColor` hace que los dos temas y los tonos salgan gratis. */
 .ico {
   width: 1em;
   height: 1em;
@@ -240,528 +225,440 @@ h1 {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  /* Los iconos acompañan texto: alinearlos por la línea base y no por la caja evita el
-     medio píxel de descuadre que se nota en una fila de píldoras. */
   vertical-align: -0.125em;
 }
 .ico-relleno { fill: currentColor; stroke: none; }
 
-/* --- Contadores de la cabecera --------------------------------------------- */
+/* Los tonos de los iconos, como los de Zepo Desk: cada vista con su color, que es lo que
+   permite encontrarla en la barra lateral sin leer. */
+.tono-acento { color: var(--acento); }
+.tono-ambar { color: var(--ambar); }
+.tono-violeta { color: var(--violeta); }
+.tono-rojo { color: var(--rojo); }
+.tono-verde { color: var(--verde); }
+.tono-turquesa { color: var(--turquesa); }
+.tono-gris { color: var(--texto-ter); }
 
-.kpis { display: flex; gap: var(--e-2); flex-wrap: wrap; }
+/* --- La aplicación ---------------------------------------------------------
+ *
+ * Tres columnas: barra lateral, contenido y ficha. La ficha es una columna más cuando
+ * cabe al lado de la lista, y la lista se estrecha para dejarle sitio, como en Zepo Desk.
+ * Cuando no cabe, flota encima (ver «Ficha» más abajo).
+ */
+.app {
+  display: grid;
+  grid-template-columns: var(--ancho-lateral) minmax(0, 1fr) auto;
+  height: 100vh;
+}
+
+/* --- Barra lateral --------------------------------------------------------- */
+
+.lateral {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--lateral);
+  border-right: 1px solid var(--borde);
+}
+.lateral-cabeza {
+  display: flex;
+  align-items: center;
+  gap: var(--e-2);
+  height: max(48px, var(--franja));
+  padding: 0 var(--e-4);
+  flex: none;
+}
+/* En la app, los botones de la ventana ocupan la esquina: el nombre se aparta a la
+   derecha, igual que en Zepo Desk. */
+html.nativa .lateral-cabeza { justify-content: flex-end; }
+html.nativa .lateral-nombre { display: none; }
+.logo { width: 20px; height: 20px; flex: none; }
+.lateral-nombre {
+  font: 600 var(--txt-md)/1.2 var(--letra-titulo);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lateral-lista {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--e-1) var(--e-3) var(--e-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+}
+.lateral-seccion {
+  padding: var(--e-4) var(--e-2) var(--e-1);
+  font-size: var(--txt-xs);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--texto-ter);
+}
+.lateral-seccion:first-child { padding-top: var(--e-2); }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--e-2);
+  width: 100%;
+  height: 30px;
+  padding: 0 var(--e-2);
+  background: none;
+  border: 0;
+  border-radius: var(--radio);
+  color: var(--texto-sec);
+  font: inherit;
+  font-size: var(--txt-md);
+  text-align: left;
+  cursor: default;
+  transition: background var(--transicion), color var(--transicion);
+}
+.tab:hover { background: var(--relleno); color: var(--texto); }
+.tab[aria-selected="true"],
+.tab.activo { background: var(--activo); color: var(--texto); font-weight: 500; }
+.tab-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  font-size: 15px;
+  flex: none;
+}
+.tab-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cuenta {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radio-pill);
+  background: var(--acento);
+  color: #fff;
+  font-size: var(--txt-xs);
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.cuenta:empty { display: none; }
+/* «N nuevas desde tu última visita»: un filtro de la Bandeja, así que va debajo de ella y
+   sangrado. El punto verde es lo que se ve sin leer. */
+.tab.novedades {
+  height: 26px;
+  padding-left: 32px;
+  color: var(--verde);
+  font-size: var(--txt-sm);
+  font-weight: 600;
+  position: relative;
+}
+.tab.novedades::before {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--verde);
+}
+.tab.novedades.activo { background: var(--verde-tenue); color: var(--verde); }
+
+.lateral-pie {
+  flex: none;
+  padding: var(--e-2) var(--e-3) var(--e-3);
+  border-top: 1px solid var(--borde);
+}
+.estado {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--e-2) var(--e-2) 0;
+  font-size: var(--txt-xs);
+  color: var(--texto-ter);
+  line-height: 1.4;
+}
+.estado span:empty { display: none; }
+#ultima-busqueda { color: var(--texto-sec); }
+
+/* --- Contenido -------------------------------------------------------------- */
+
+.contenido {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--fondo);
+}
+
+/* La cabecera de la vista, como el `ViewHeader` de Zepo Desk: icono en un cuadrado
+   tintado, título grande y una línea que explica para qué sirve la vista. */
+.vista-cabecera {
+  flex: none;
+  display: flex;
+  /* Arriba y no abajo, como hace Zepo Desk: aquí el subtítulo ocupa a veces dos líneas, y
+     alineado por abajo el icono se quedaba a la altura del subtítulo y no del título. */
+  align-items: flex-start;
+  gap: var(--e-3);
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: max(36px, calc(var(--franja) + 4px)) var(--e-7) var(--e-4);
+}
+.vista-icono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radio-lg);
+  font-size: 18px;
+  flex: none;
+  /* El tinte es el mismo color que el icono, rebajado: así sirve cualquier tono. */
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.vista-titulos { min-width: 0; flex: 1; }
+.vista-cabecera h1 {
+  font: 700 var(--txt-2xl)/32px var(--letra-titulo);
+  letter-spacing: -0.02em;
+  color: var(--texto);
+}
+.vista-sub { margin-top: 2px; font-size: var(--txt-sm); color: var(--texto-sec); max-width: 80ch; }
+.vista-sub strong { color: var(--texto); font-weight: 600; }
+
+.cuerpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--borde-fuerte) transparent;
+}
+.cuerpo-ancho {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 0 var(--e-7) 96px;
+}
+/* El párrafo que explica cada vista vive en su sección, junto a su marcado, pero se pinta
+   en la cabecera: lo copia allí `mostrarVista()`. */
+section > .intro { display: none; }
+
+/* --- Botones ----------------------------------------------------------------
+ *
+ * Los de Zepo Desk: primario relleno de acento, secundario elevado con un anillo de línea
+ * en vez de borde, y los dos con el mismo alto para poder ir en la misma fila.
+ */
+.boton-pri,
+.boton-sec {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--e-3);
+  border: 0;
+  border-radius: var(--radio);
+  font: inherit;
+  font-size: var(--txt-md);
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: default;
+  transition: background var(--transicion), box-shadow var(--transicion),
+              color var(--transicion), transform 80ms ease, filter var(--transicion);
+}
+.boton-pri:active,
+.boton-sec:active { transform: scale(.97); }
+.boton-pri {
+  background: var(--acento);
+  color: #fff;
+  box-shadow: 0 1px 2px rgb(7 14 52 / .12);
+}
+.boton-pri:hover { filter: brightness(1.1); }
+.boton-pri:disabled { opacity: .5; filter: none; transform: none; }
+.boton-sec {
+  background: var(--panel);
+  color: var(--texto);
+  box-shadow: 0 0 0 1px var(--borde-fuerte);
+}
+.boton-sec:hover { background: var(--relleno); }
+.boton-sec:disabled { opacity: .5; transform: none; }
+.mas { display: flex; margin: var(--e-5) auto 0; }
+
+/* --- Contadores de la Bandeja ----------------------------------------------
+ *
+ * Fichas de cifra como el `StatTile` de Zepo Desk. Son botones: cada una aplica su filtro.
+ */
+.kpis {
+  display: grid;
+  /* auto-fit y un mínimo bajo: son cinco, y con la ficha abierta al lado tienen que
+     seguir cabiendo en una fila en lugar de dejar la quinta sola debajo. */
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--e-2);
+  margin-bottom: var(--e-4);
+}
 .kpi {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: var(--e-2) var(--e-3);
-  min-width: 104px;
+  padding: var(--e-3) var(--e-4);
+  background: var(--relleno);
+  border: 0;
+  border-radius: var(--radio-lg);
   text-align: left;
   font: inherit;
   color: inherit;
-  box-shadow: var(--sombra-1);
-  transition: border-color var(--transicion), background var(--transicion);
+  transition: background var(--transicion), box-shadow var(--transicion);
 }
-button.kpi { cursor: pointer; }
-button.kpi:hover { border-color: var(--borde-fuerte); }
-/* El activo, relleno y con el canto marcado. El `inset` de 1 px de antes, sobre un
-   borde que ya era de 1 px, era literalmente imperceptible al lado del inactivo. */
-button.kpi.activo {
-  border-color: var(--acento);
-  background: var(--acento-tenue);
-}
+button.kpi { cursor: default; }
+button.kpi:hover { background: var(--activo); }
+button.kpi.activo { background: var(--acento-tenue); box-shadow: inset 0 0 0 1.5px var(--acento-borde); }
 .kpi .n {
-  font-size: var(--txt-xl);
-  font-weight: 650;
+  order: 2;
+  font: 600 22px/28px var(--letra-titulo);
   font-variant-numeric: tabular-nums;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
-.kpi .t {
-  font-size: var(--txt-xs);
-  color: var(--texto-sec);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  font-weight: 500;
-}
+.kpi .t { order: 1; font-size: var(--txt-xs); color: var(--texto-ter); }
 .kpi.urgente .n { color: var(--ambar); }
-button.kpi.activo .t { color: var(--acento); }
+button.kpi.activo .t { color: var(--acento-texto); }
 
-/* --- Selectores de ventana (Vencimientos y Analítica) ---------------------- */
+/* --- Selectores de ventana (Vencimientos, Analítica, Resumen) ---------------- */
 
-.ventanas { display: flex; gap: var(--e-2); flex-wrap: wrap; margin: var(--e-1) 0 var(--e-3); }
+.ventanas { display: flex; gap: var(--e-2); flex-wrap: wrap; margin: 0 0 var(--e-4); }
 .ventana {
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 120px;
   padding: var(--e-2) var(--e-3);
-  cursor: pointer;
+  background: var(--relleno);
+  border: 0;
+  border-radius: var(--radio-lg);
   font: inherit;
   color: var(--texto);
   text-align: left;
-  min-width: 118px;
-  box-shadow: var(--sombra-1);
-  transition: border-color var(--transicion), background var(--transicion);
+  cursor: default;
+  transition: background var(--transicion), box-shadow var(--transicion);
 }
-.ventana:hover { border-color: var(--borde-fuerte); }
-.ventana.activa { border-color: var(--acento); background: var(--acento-tenue); }
-.ventana .n {
-  font-size: var(--txt-lg);
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
+.ventana:hover { background: var(--activo); }
+.ventana.activa { background: var(--acento-tenue); box-shadow: inset 0 0 0 1.5px var(--acento-borde); }
+.ventana .n { font: 600 var(--txt-lg)/1.3 var(--letra-titulo); font-variant-numeric: tabular-nums; }
+.ventana .t { font-size: var(--txt-xs); color: var(--texto-sec); }
+.ventana.activa .t { color: var(--acento-texto); }
+.ventana .imp { font-size: var(--txt-xs); color: var(--texto-ter); font-variant-numeric: tabular-nums; }
+/* Las que solo llevan etiqueta (los rangos de la Analítica y los periodos del Resumen) son
+   un control segmentado, no una ficha de cifra: más bajas y con la etiqueta en normal. */
+.ventana:not(:has(.n)) {
+  min-width: 0;
+  padding: 6px var(--e-3);
+  border-radius: var(--radio);
 }
-.ventana .t {
-  font-size: var(--txt-xs);
-  color: var(--texto-sec);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
-.ventana .imp {
-  font-size: var(--txt-xs);
-  color: var(--texto-ter);
-  font-variant-numeric: tabular-nums;
-}
+.ventana:not(:has(.n)) .t { font-size: var(--txt-md); color: var(--texto-sec); }
+.ventana.activa:not(:has(.n)) .t { color: var(--acento-texto); font-weight: 600; }
 
-.total-ventana { margin: 0 0 var(--e-3); font-size: var(--txt-base); }
-.total-ventana strong { font-size: var(--txt-lg); font-weight: 650; }
+.total-ventana { margin: 0 0 var(--e-3); font-size: var(--txt-base); color: var(--texto-sec); }
+.total-ventana strong { font-size: var(--txt-lg); font-weight: 600; color: var(--texto); }
 
-.filtros-activos { margin: calc(var(--e-1) * -1) 0 var(--e-3); font-size: var(--txt-sm); color: var(--texto-sec); }
+.filtros-activos { margin: 0 0 var(--e-3); font-size: var(--txt-sm); color: var(--texto-sec); }
 .filtros-activos .quitar {
-  background: none; border: 0; color: var(--acento); cursor: pointer;
+  background: none; border: 0; color: var(--acento-texto); cursor: default;
   font: inherit; font-size: var(--txt-sm); padding: 0 0 0 var(--e-2); text-decoration: underline;
 }
-
-/* --- Temáticas de «Otras licitaciones» ------------------------------------- */
-
-/* Chips de selección múltiple. Son botones con `aria-pressed`, que es lo que dice a un
-   lector de pantalla que se encienden y se apagan, y el estilo cuelga de ahí y no de
-   una clase: así el aspecto y lo que se anuncia no pueden contradecirse. */
-.chips-tema { display: flex; gap: var(--e-2); flex-wrap: wrap; margin: var(--e-1) 0 0; }
-.chip-tema {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--e-2);
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio-pill);
-  padding: 5px var(--e-3);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--txt-md);
-  color: var(--texto-sec);
-  box-shadow: var(--sombra-1);
-  transition: border-color var(--transicion), background var(--transicion),
-              color var(--transicion);
-}
-.chip-tema:hover { border-color: var(--borde-fuerte); color: var(--texto); }
-.chip-tema[aria-pressed="true"] {
-  border-color: var(--acento);
-  background: var(--acento-tenue);
-  color: var(--acento);
-  font-weight: 600;
-}
-/* «Resto» se aparta un poco de las temáticas IT: es el cajón de todo lo demás. */
-.chip-tema.resto { border-style: dashed; }
-.chip-tema .n {
-  font-size: var(--txt-xs);
-  color: var(--texto-ter);
-  font-variant-numeric: tabular-nums;
-}
-.chip-tema .n:empty { display: none; }
-.chip-tema[aria-pressed="true"] .n { color: var(--acento); }
-
-.filtros-otras { padding-top: var(--e-3); }
 .selector-ambito optgroup { font-weight: 650; }
 
-/* --- Avisos ---------------------------------------------------------------- */
-
-.avisos {
-  margin: var(--e-3) 0 0;
-  padding: var(--e-3) var(--e-4);
+/* --- Campos -------------------------------------------------------------------
+ *
+ * Los de Zepo Desk: sin borde, con un relleno suave, y un anillo de acento al enfocar.
+ */
+input[type=search],
+input[type=text],
+input[type=number],
+select,
+textarea {
+  height: 32px;
+  padding: 0 10px;
+  background: var(--relleno);
+  color: var(--texto);
+  border: 0;
   border-radius: var(--radio);
-  background: var(--rojo-tenue);
-  border: 1px solid var(--rojo);
-  border-left-width: 3px;
+  font: inherit;
   font-size: var(--txt-md);
+  outline: none;
+  transition: background var(--transicion), box-shadow var(--transicion);
 }
-/* Cada aviso lleva su «x», así que el ancla del botón es el párrafo y no la caja: con
-   `position: relative` en `.avisos` los tres botones se apilarían en la misma esquina.
-   El aspecto se hereda de `.cerrar`, que ya existe para el panel lateral. */
-.avisos p { margin: 3px 0; position: relative; padding-right: 26px; }
-.avisos .cerrar { top: -3px; right: 0; font-size: 20px; }
-.avisos .cerrar:hover { color: var(--texto); }
-
-/* Cobertura: gris y no rojo, a propósito. No ha pasado nada malo —es la misma decisión
-   que documenta `.carga`—: son los límites de la herramienta, y saberlos es parte de
-   usarla bien. Toma prestado el aspecto de `.consejos`. */
-.cobertura {
-  margin: var(--e-3) 0 0;
-  padding: var(--e-2) var(--e-4);
-  background: var(--panel-2);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  font-size: var(--txt-sm);
-  color: var(--texto-sec);
+input[type=search]:hover,
+input[type=text]:hover,
+input[type=number]:hover,
+select:hover,
+textarea:hover { background: var(--activo); }
+input[type=search]:focus,
+input[type=text]:focus,
+input[type=number]:focus,
+select:focus,
+textarea:focus {
+  background: var(--panel);
+  box-shadow: 0 0 0 2px var(--acento-borde);
 }
-.cobertura summary { cursor: pointer; list-style: none; -webkit-user-select: none; user-select: none; }
-.cobertura summary::-webkit-details-marker { display: none; }
-/* El triángulo se dibuja aquí para que gire al abrir sin depender del que trae cada
-   navegador, que en Safari y en Firefox no se parecen. */
-.cobertura summary::before {
-  content: '▸';
-  display: inline-block;
-  width: 1em;
-  transition: transform .15s;
-}
-.cobertura[open] summary::before { transform: rotate(90deg); }
-.cobertura summary:hover { color: var(--texto); }
-.cobertura ul { margin: var(--e-2) 0 var(--e-1); padding-left: 1.9em; }
-.cobertura li { margin-bottom: 5px; line-height: 1.45; }
-.cobertura b { color: var(--texto); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) {
-  .cobertura summary::before { transition: none; }
-}
-
-/* Carga en segundo plano. En azul y no en rojo a propósito: no ha pasado nada malo,
-   solo está entrando el histórico y se puede trabajar mientras. */
-.carga {
-  margin: var(--e-3) 0 0;
-  padding: var(--e-3) var(--e-4);
-  border-radius: var(--radio);
-  background: var(--acento-tenue);
-  border: 1px solid var(--acento-borde);
-  border-left-width: 3px;
-  font-size: var(--txt-md);
-  display: flex;
-  gap: var(--e-5);
-  align-items: center;
-  flex-wrap: wrap;
-}
-.carga-texto { flex: 1 1 320px; }
-/* La búsqueda ha terminado: el mismo cartel, en verde, con lo que ha traído. */
-.carga.terminada {
-  background: var(--verde-tenue);
-  border-color: var(--verde);
-}
-.terminada-botones { display: flex; gap: var(--e-2); }
-.carga-texto strong { display: block; }
-.carga-barras {
+input::placeholder, textarea::placeholder { color: var(--texto-ter); }
+/* La lupa dentro de la caja de búsqueda, como en Zepo Desk. Gris medio para que valga en
+   los dos temas sin tener que pintarla dos veces. */
+input[type=search] {
   flex: 1 1 260px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--e-1);
+  min-width: 0;
+  padding-left: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239399b2' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+  background-size: 14px;
 }
-.carga-barras label {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px var(--e-3);
-  font-size: var(--txt-sm);
-  color: var(--texto-sec);
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239399b2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  cursor: default;
 }
-.carga-barras span { grid-column: 1 / -1; }
-.carga-barras progress {
-  grid-column: 1 / -1;
+textarea {
+  display: block;
   width: 100%;
-  height: 6px;
-  accent-color: var(--acento);
-}
-/* Sin `value` la barra es indeterminada: se usa cuando no se sabe el total, que es
-   preferible a inventarse un porcentaje. */
-.carga-barras progress:not([value]) { opacity: .7; }
-
-/* --- Pantalla de arranque --------------------------------------------------
-   Lo primero que se ve al abrir, mientras se traen las licitaciones nuevas. Del color
-   del fondo y no un velo translúcido: debajo hay una bandeja a medio pintar con los
-   datos de la sesión anterior, y dejarla entrever invita a leer números que están a
-   punto de cambiar. */
-.arranque {
-  position: fixed;
-  inset: 0;
-  /* Por encima del panel (20) y de su fondo (19): mientras esto está, no hay nada
-     más con lo que interactuar. */
-  z-index: 60;
-  background: var(--fondo);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--e-5);
-  /* Con las novedades de una actualización la caja puede ser más alta que la ventana.
-     El scroll va aquí, y la caja se centra con `margin: auto` y no solo con
-     `align-items`: centrado así, lo que sobresale por arriba quedaría cortado y fuera
-     del alcance del scroll. */
-  overflow-y: auto;
-}
-/* `display: flex` le gana al `hidden` del navegador, así que hay que decirlo a mano o
-   la pantalla no se va nunca. */
-.arranque[hidden] { display: none; }
-
-.arranque-caja {
-  margin: auto;
-  width: min(520px, 100%);
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--e-3);
-}
-.arranque-caja h2 {
-  font-size: var(--txt-xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-/* La frase la redacta `progreso._frase()` en Python, la misma que sale en la terminal.
-   Altura reservada para dos líneas: sin ella, cada cambio de fase mueve la barra y el
-   botón de sitio, y eso se lee como un parpadeo. */
-.arranque-frase {
-  font-size: var(--txt-md);
-  color: var(--texto-sec);
+  height: auto;
+  min-height: 74px;
+  padding: var(--e-2) 10px;
   line-height: 1.5;
-  min-height: 2.9em;
+  resize: vertical;
 }
-.arranque progress {
-  width: 100%;
-  height: 6px;
-  accent-color: var(--acento);
-}
-.arranque progress:not([value]) { opacity: .7; }
-/* «Paso 1 de 2»: instalar la versión y buscar son dos esperas seguidas, y sin esto la
-   segunda parece que la primera ha vuelto a empezar. */
-.arranque-paso {
-  font-size: var(--txt-sm);
-  color: var(--texto-sec);
-  letter-spacing: 0.02em;
-  min-height: 1.2em;
-}
-/* La salida para cuando algo se ha colgado. Solo existe entonces, así que no hace falta
-   esconderla con un estilo discreto: si se ve, es porque hace falta. */
-.arranque-colgado {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--e-2);
-  margin-top: var(--e-2);
-}
-.arranque-colgado[hidden] { display: none; }
-
-/* Tras una actualización la caja se ensancha para las novedades, que se leen alineadas
-   a la izquierda como cualquier texto largo; el progreso del paso 2 sigue debajo,
-   centrado como siempre. */
-.arranque-caja.con-novedades { width: min(680px, 100%); }
-.arranque-novedades {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--e-2);
-  padding-bottom: var(--e-4);
-  margin-bottom: var(--e-2);
-  border-bottom: 1px solid var(--borde);
-}
-.arranque-novedades[hidden] { display: none; }
-.arranque-ok {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--e-2);
-  font-size: var(--txt-lg);
-  font-weight: 650;
-  color: var(--verde);
-}
-.arranque-ok .ico { width: 1.2em; height: 1.2em; stroke-width: 2.4; }
-/* La lista hace scroll por su cuenta: con varias versiones encadenadas es larga, y si
-   empujara la caja, el progreso de la búsqueda y el botón se saldrían de la pantalla. */
-.novedades-lista {
-  text-align: left;
-  max-height: min(46vh, 420px);
-  overflow-y: auto;
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: var(--e-3) var(--e-4);
-  font-size: var(--txt-md);
-  line-height: 1.55;
-}
-.novedades-version + .novedades-version {
-  margin-top: var(--e-4);
-  padding-top: var(--e-4);
-  border-top: 1px solid var(--borde);
-}
-.novedades-version h3 { font-size: var(--txt-base); font-weight: 650; }
-.novedades-num { color: var(--acento); margin-right: var(--e-1); }
-.novedades-version h4 {
-  font-size: var(--txt-md);
-  font-weight: 650;
-  margin: var(--e-3) 0 var(--e-1);
-}
-.novedades-fecha { font-size: var(--txt-xs); color: var(--texto-ter); margin-bottom: var(--e-1); }
-.novedades-version p { margin: var(--e-1) 0; color: var(--texto-sec); }
-.novedades-version ul { margin: var(--e-1) 0; padding-left: 1.2em; color: var(--texto-sec); }
-.novedades-version li { margin: 2px 0; }
-.novedades-version strong { color: var(--texto); font-weight: 600; }
-.novedades-version code {
-  font-size: .92em;
-  background: var(--panel-2);
-  padding: 0 4px;
-  border-radius: 4px;
-}
-.novedades-pie { margin-top: var(--e-3); }
-.novedades-pie a { color: var(--acento); }
-
-/* Cuando la búsqueda se alarga: se dice que sigue y por qué tarda, y se deja entrar.
-   En ámbar tenue y no en rojo: no ha fallado nada, solo va despacio. */
-.arranque-lenta {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--e-2);
-  margin-top: var(--e-2);
-  padding: var(--e-3) var(--e-4);
-  border-radius: var(--radio);
-  background: var(--ambar-tenue);
-  font-size: var(--txt-md);
-  line-height: 1.5;
-}
-.arranque-lenta[hidden] { display: none; }
-.arranque-lenta strong { color: var(--texto); font-weight: 600; }
-
-/* El final: qué ha traído la búsqueda, la versión y «Continuar». */
-.arranque-resumen {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--e-3);
-}
-.arranque-resumen[hidden] { display: none; }
-#arranque-resumen-cuerpo { width: 100%; }
-#arranque-resumen-cuerpo:empty { display: none; }
-.arranque-version { color: var(--texto-sec); font-size: var(--txt-md); }
-.arranque-resumen .boton-pri { justify-content: center; min-width: 160px; padding: var(--e-2) var(--e-5); font-size: var(--txt-base); }
-
-/* El bloque de cifras del resumen, el mismo en el arranque y en la pestaña. */
-.resumen {
-  text-align: left;
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: var(--e-3) var(--e-4);
-  margin-bottom: var(--e-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--e-2);
-}
-/* Los párrafos traen margen del navegador; aquí el espacio lo pone el `gap`. */
-.resumen p { margin: 0; }
-.resumen-total { font-size: var(--txt-lg); }
-.resumen-total strong { font-weight: 650; }
-.resumen.compacto .resumen-total { text-align: center; }
-.resumen.compacto .resumen-cuando { text-align: center; }
-.resumen-perfiles {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.resumen-perfiles li {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--e-3);
-  padding: var(--e-1) 0;
-  border-bottom: 1px solid var(--borde);
-  font-size: var(--txt-md);
-}
-.resumen-perfiles li:last-child { border-bottom: 0; }
-.resumen-perfiles li strong { font-variant-numeric: tabular-nums; font-weight: 650; }
-.resumen-perfiles li.cero { color: var(--texto-ter); }
-.resumen-temas { line-height: 1.5; }
-.resumen-fallos {
-  font-size: var(--txt-md);
-  color: var(--ambar);
-  line-height: 1.5;
-}
-.resumen-version-pie { margin-top: var(--e-4); }
-
-/* --- Pestañas -------------------------------------------------------------- */
-
-.vistas {
-  display: flex;
-  gap: 2px;
-  padding: var(--e-4) 0 0;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--borde);
-  margin-bottom: var(--e-1);
-}
-.tab {
+.check {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--texto-sec);
-  font: inherit;
   font-size: var(--txt-md);
-  font-weight: 500;
-  padding: var(--e-2) var(--e-3);
-  margin-bottom: -1px;
-  cursor: pointer;
-  border-radius: var(--radio-sm) var(--radio-sm) 0 0;
-  transition: color var(--transicion), background var(--transicion);
+  color: var(--texto-sec);
+  accent-color: var(--acento);
 }
-.tab:hover { color: var(--texto); background: var(--panel-2); }
-.tab[aria-selected="true"],
-.tab.activo {
-  color: var(--acento);
-  border-bottom-color: var(--acento);
-  font-weight: 650;
-}
-.tab.novedades { color: var(--verde); font-weight: 650; }
-.tab.novedades .ico { color: var(--verde); }
-
-/* --- Filtros --------------------------------------------------------------- */
 
 .filtros {
   display: flex;
   gap: var(--e-2);
   flex-wrap: wrap;
   align-items: center;
-  padding: var(--e-4) 0;
+  margin-bottom: var(--e-4);
 }
-input[type=search], select {
-  background: var(--panel);
-  color: var(--texto);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio-sm);
-  padding: 7px var(--e-3);
-  font-size: var(--txt-md);
-  font-family: inherit;
-  box-shadow: var(--sombra-1);
-  transition: border-color var(--transicion);
-}
-input[type=search]:hover, select:hover { border-color: var(--borde-fuerte); }
-input[type=search] { flex: 1 1 260px; min-width: 0; }
-.check {
-  font-size: var(--txt-md);
-  color: var(--texto-sec);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  accent-color: var(--acento);
-}
+.filtros-otras { margin-top: var(--e-3); }
 
-.contador { color: var(--texto-sec); font-size: var(--txt-md); margin: 0 0 var(--e-3); }
-.vacio { color: var(--texto-sec); text-align: center; padding: 50px 0; }
+.contador { color: var(--texto-sec); font-size: var(--txt-sm); margin: 0 0 var(--e-2); }
+.vacio { color: var(--texto-sec); text-align: center; padding: 56px 0; }
 
-/* Aviso de que la consulta está en marcha. Ocupa el mismo sitio que .vacio para
-   que la lista no salte al aparecer los resultados. */
+/* Aviso de que la consulta está en marcha. Ocupa el mismo sitio que .vacio para que la
+   lista no salte al aparecer los resultados. */
 .cargando {
   color: var(--texto-sec);
   text-align: center;
-  padding: 50px 0;
+  padding: 56px 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -771,180 +668,451 @@ input[type=search] { flex: 1 1 260px; min-width: 0; }
   content: '';
   width: 14px;
   height: 14px;
-  border: 2px solid var(--borde);
+  border: 2px solid var(--borde-fuerte);
   border-top-color: var(--acento);
   border-radius: 50%;
   animation: girar 0.7s linear infinite;
 }
 @keyframes girar { to { transform: rotate(360deg); } }
-
-/* Quien haya pedido menos animación no quiere una rueda girando sin parar. */
 @media (prefers-reduced-motion: reduce) {
   .cargando::before { animation-duration: 2.5s; }
 }
 
-/* --- La tarjeta ------------------------------------------------------------
- *
- * La unidad que se recorre cien veces al día, así que manda la jerarquía: primero de
- * qué va el contrato, después quién lo saca, y a la derecha la cifra que explica por
- * qué está en esa posición de la lista. Desde que la bandeja abre por «publicación más
- * reciente», esa cifra es la antigüedad de la publicación y no los días al cierre; el
- * plazo sigue estando, en su píldora, que es donde se compara con el de al lado.
- */
+/* --- Temáticas de «Otras licitaciones» ------------------------------------- */
 
-.lista { display: flex; flex-direction: column; gap: var(--e-2); }
-
-.tarjeta {
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-left: 3px solid transparent;
+/* Chips de selección múltiple. Son botones con `aria-pressed`, y el estilo cuelga de ahí y
+   no de una clase: así el aspecto y lo que se anuncia no pueden contradecirse. */
+.chips-tema { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-tema {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--e-3);
+  background: var(--relleno);
+  border: 0;
   border-radius: var(--radio);
+  font: inherit;
+  font-size: var(--txt-md);
+  color: var(--texto-sec);
+  cursor: default;
+  transition: background var(--transicion), color var(--transicion), box-shadow var(--transicion);
+}
+.chip-tema:hover { background: var(--activo); color: var(--texto); }
+.chip-tema[aria-pressed="true"] {
+  background: var(--acento-tenue);
+  color: var(--acento-texto);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1.5px var(--acento-borde);
+}
+/* «Resto» se aparta un poco de las temáticas IT: es el cajón de todo lo demás. */
+.chip-tema.resto { background: none; box-shadow: inset 0 0 0 1px var(--borde-fuerte); }
+.chip-tema.resto[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--acento-borde); background: var(--acento-tenue); }
+.chip-tema .n { font-size: var(--txt-xs); color: var(--texto-ter); font-variant-numeric: tabular-nums; }
+.chip-tema .n:empty { display: none; }
+.chip-tema[aria-pressed="true"] .n { color: var(--acento-texto); }
+
+/* --- Avisos -------------------------------------------------------------------
+ *
+ * Tarjetas con tono, como los avisos de Zepo Desk: rojo lo que ha fallado, azul lo que
+ * está pasando, verde lo que ha terminado y gris lo que es contexto.
+ */
+.avisos,
+.carga,
+.cobertura {
+  margin: 0 0 var(--e-3);
+  border-radius: var(--radio-lg);
+  font-size: var(--txt-md);
+}
+.avisos {
   padding: var(--e-3) var(--e-4);
-  cursor: pointer;
+  background: var(--rojo-tenue);
+  color: var(--texto);
+}
+.avisos strong { color: var(--rojo); }
+/* Cada aviso lleva su «x», así que el ancla del botón es el párrafo y no la caja. */
+.avisos p { margin: 3px 0; position: relative; padding-right: 26px; }
+.avisos .cerrar { top: -4px; right: -4px; width: 24px; height: 24px; font-size: 18px; }
+
+/* Cobertura: gris y no rojo, a propósito. No ha pasado nada malo: son los límites de la
+   herramienta, y saberlos es parte de usarla bien. */
+.cobertura {
+  padding: var(--e-2) var(--e-4);
+  background: var(--relleno);
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+}
+.cobertura summary { cursor: default; list-style: none; -webkit-user-select: none; user-select: none; }
+.cobertura summary::-webkit-details-marker { display: none; }
+.cobertura summary::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 10px 1px 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform .15s;
+}
+.cobertura[open] summary::before { transform: rotate(45deg); }
+.cobertura summary:hover { color: var(--texto); }
+.cobertura ul { margin: var(--e-2) 0 var(--e-1); padding-left: 1.9em; }
+.cobertura li { margin-bottom: 5px; line-height: 1.45; }
+.cobertura b { color: var(--texto); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .cobertura summary::before { transition: none; }
+}
+
+/* Una búsqueda que corre por detrás: azul, porque no ha pasado nada malo. */
+.carga {
+  padding: var(--e-3) var(--e-4);
+  background: var(--acento-tenue);
+  display: flex;
+  gap: var(--e-5);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.carga-texto { flex: 1 1 320px; display: flex; flex-direction: column; gap: 2px; }
+.carga-texto strong { font-weight: 600; color: var(--acento-texto); }
+/* La búsqueda ha terminado: el mismo cartel, en verde, con lo que ha traído. */
+.carga.terminada { background: var(--verde-tenue); }
+.carga.terminada .carga-texto strong { color: var(--verde); }
+.terminada-botones { display: flex; gap: var(--e-2); }
+.carga-barras { flex: 1 1 260px; display: flex; flex-direction: column; gap: var(--e-1); }
+.carga-barras label {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: var(--e-1) var(--e-4);
-  box-shadow: var(--sombra-1);
-  transition: border-color var(--transicion), background var(--transicion);
+  gap: 2px var(--e-3);
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
 }
-.tarjeta:hover { border-color: var(--borde-fuerte); background: var(--panel-2); }
-.tarjeta:hover h3 { color: var(--acento); }
+.carga-barras span { grid-column: 1 / -1; }
+.carga-barras progress { grid-column: 1 / -1; }
 
-/* Los tres estados de triaje. El código de color se mantiene —verde sigue, azul
-   presentada— pero con el canto más ancho, porque a 3 px sobre un borde de 1 px había
-   que buscarlo. */
-.tarjeta.rev-siguiendo { border-left-color: var(--verde); }
-.tarjeta.rev-presentada { border-left-color: var(--acento); }
-/* Descartada: antes solo bajaba la opacidad al 50 %, y en tema claro eso sobre blanco
-   casi no se distingue de una normal. Ahora además pierde el fondo y el título deja de
-   ir en negrita: se lee como archivada, no como que la pantalla se ha estropeado. */
-.tarjeta.rev-descartado {
-  opacity: .62;
-  background: transparent;
-  box-shadow: none;
+progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--acento);
 }
+/* Sin `value` la barra es indeterminada: se usa cuando no se sabe el total, que es
+   preferible a inventarse un porcentaje. */
+progress:not([value]) { opacity: .7; }
+
+/* --- La tarjeta ------------------------------------------------------------
+ *
+ * Una fila de lista como las de Zepo Desk: sin caja, con el fondo que aparece al pasar
+ * el ratón y que se queda mientras su ficha está abierta (`.seleccionada`). Manda la
+ * jerarquía: de qué va el contrato, quién lo saca y, a la derecha, la cifra que explica
+ * por qué está en esa posición de la lista.
+ */
+
+.lista { display: flex; flex-direction: column; gap: 2px; }
+
+.tarjeta {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--e-4);
+  padding: var(--e-3) var(--e-3) var(--e-3) var(--e-4);
+  border-radius: var(--radio-lg);
+  cursor: default;
+  position: relative;
+  transition: background var(--transicion);
+}
+/* Las columnas de la rejilla pueden encoger por debajo de lo que pide su contenido: sin
+   esto, una fila de píldoras sin salto ensanchaba la tarjeta más allá de la lista. */
+.tarjeta > * { min-width: 0; }
+.tarjeta:hover { background: var(--relleno); }
+.tarjeta.seleccionada { background: var(--activo); }
+
+/* Los estados de triaje, con una barrita a la izquierda: verde lo que sigues, azul lo
+   presentado. Dentro de la fila y no como borde, para que no mueva el texto. */
+.tarjeta.rev-siguiendo::before,
+.tarjeta.rev-presentada::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--verde);
+}
+.tarjeta.rev-presentada::before { background: var(--acento); }
+/* Descartada: más apagada y con el título sin negrita. Se lee como archivada, no como que
+   la pantalla se ha estropeado. */
+.tarjeta.rev-descartado { opacity: .6; }
 .tarjeta.rev-descartado h3 { font-weight: 500; color: var(--texto-sec); }
 .tarjeta.rev-descartado:hover { opacity: 1; }
 
-/* Las plataformas agregadas de PLACSP meten el objeto entero del contrato en el
-   título, con párrafos de veinte líneas. Se recorta a tres para poder recorrer la
-   lista con la vista; el texto completo está en la ficha. */
+/* Las plataformas agregadas de PLACSP meten el objeto entero del contrato en el título,
+   con párrafos de veinte líneas. Se recorta a dos para poder recorrer la lista con la
+   vista; el texto completo está en la ficha. */
 .tarjeta h3 {
-  margin: 0;
-  font-size: var(--txt-base);
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
   letter-spacing: -0.005em;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  transition: color var(--transicion);
 }
 .tarjeta .organo {
-  color: var(--texto-sec);
-  font-size: var(--txt-md);
-  margin-top: 2px;
   display: flex;
   align-items: flex-start;
   gap: 5px;
+  margin-top: 2px;
+  color: var(--texto-sec);
+  font-size: var(--txt-sm);
 }
-.tarjeta .organo .ico { margin-top: .22em; color: var(--texto-ter); }
+.tarjeta .organo .ico { margin-top: .2em; color: var(--texto-ter); }
 .tarjeta .meta {
   grid-column: 1 / -1;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
-  margin-top: var(--e-2);
   align-items: center;
+  margin-top: var(--e-2);
 }
 
 /* --- Píldoras -------------------------------------------------------------
  *
- * Eran ocho variantes en una sola fila y se leían como un muro. Ahora hay dos rangos:
- * las que deciden (nueva, perfil, importe, plazo) con color y contorno propio, y las
- * descriptivas (comunidad, procedimiento, fuente, anuncios, estado) en gris de tercer
- * nivel y sin borde. La fila sigue siendo una, pero la vista ya sabe dónde mirar.
+ * Los chips de Zepo Desk: 20 px de alto, esquinas de 6 y tonos suaves. Dos rangos: las
+ * que deciden (nueva, perfil, importe, plazo) con color, y las descriptivas (comunidad,
+ * procedimiento, fuente, estado) en gris de tercer nivel y sin fondo.
  */
 
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: var(--txt-xs);
-  padding: 2px var(--e-2);
-  border-radius: var(--radio-pill);
-  background: var(--panel-2);
+  height: 20px;
+  max-width: 100%;
+  padding: 0 6px;
+  border-radius: var(--radio-sm);
   color: var(--texto-ter);
-  border: 1px solid transparent;
-  white-space: nowrap;
+  font-size: 11.5px;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
 }
-.pill .ico { width: .9em; height: .9em; stroke-width: 2; }
+/* Un incumbente puede ser una UTE de seis razones sociales: la píldora se recorta con
+   puntos suspensivos en vez de empujar la fila. Las que llevan el texto suelto, sin
+   `<span>` dentro (las de Vencimientos), necesitan ser `inline-block` para poder
+   recortarse: un `inline-flex` no sabe poner los puntos a su propio texto. */
+.pill { min-width: 0; overflow: hidden; }
+.pill > span { overflow: hidden; text-overflow: ellipsis; }
+.pill:not(:has(> *)) { display: inline-block; line-height: 20px; text-overflow: ellipsis; }
+.pill .ico { width: 12px; height: 12px; stroke-width: 2; }
 
-/* Las que deciden */
-.pill.importe {
-  color: var(--texto);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  border-color: var(--borde);
-}
-.pill.perfil { color: var(--acento); background: var(--acento-tenue); border-color: var(--acento-borde); }
-/* La temática de las fichas de «Otras licitaciones». Contorno y no relleno: describe en
-   qué estante está, no pide atención como el perfil. */
-.pill.tema { color: var(--verde); border-color: var(--verde); background: transparent; }
-.pill.plazo-ok { color: var(--verde); background: var(--verde-tenue); border-color: transparent; }
-.pill.plazo-pronto { color: var(--ambar); background: var(--ambar-tenue); border-color: var(--ambar); }
-.pill.plazo-vencido { color: var(--rojo); background: var(--rojo-tenue); border-color: transparent; }
-.pill.incumbente { color: var(--ambar); background: var(--ambar-tenue); }
-.pill.anuncios { color: var(--texto-sec); border-color: var(--borde); border-style: dashed; }
-/* La única píldora rellena de la fila. El resto son contorno y compiten entre sí; ésta
-   tiene que verse al pasar la vista por la lista sin leerla, que es para lo que sirve. */
-.pill.nueva {
-  background: var(--acento);
-  border-color: var(--acento);
-  color: #fff;
-  font-weight: 650;
-}
+.pill.importe { background: var(--relleno); color: var(--texto); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pill.perfil { background: var(--acento-tenue); color: var(--acento-texto); }
+/* La temática de las fichas de «Otras licitaciones»: en qué estante está. */
+.pill.tema { background: var(--turquesa-tenue); color: var(--turquesa); }
+.pill.plazo-ok { background: var(--verde-tenue); color: var(--verde); }
+.pill.plazo-pronto { background: var(--ambar-tenue); color: var(--ambar); }
+.pill.plazo-vencido { background: var(--rojo-tenue); color: var(--rojo); }
+.pill.incumbente { background: var(--ambar-tenue); color: var(--ambar); }
+.pill.anuncios { background: var(--relleno); color: var(--texto-sec); }
+/* La única píldora rellena de la fila: tiene que verse al pasar la vista sin leerla. */
+.pill.nueva { background: var(--acento); color: #fff; font-weight: 600; }
 
 /* --- La cifra de la derecha ------------------------------------------------ */
 
 .derecha {
-  text-align: right;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
+  text-align: right;
 }
 .dias {
-  font-size: var(--txt-xl);
-  font-weight: 650;
+  font: 600 var(--txt-xl)/1.1 var(--letra-titulo);
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 .dias small {
   display: block;
-  font-size: 10px;
-  font-weight: 500;
+  margin-top: 1px;
+  font: 500 10px/1.2 var(--letra);
   color: var(--texto-ter);
   text-transform: uppercase;
   letter-spacing: .05em;
 }
 .dias.pronto { color: var(--ambar); }
 .dias.vencido { color: var(--rojo); }
-
-/* La antigüedad de la publicación, debajo de la cifra grande y en pequeño. No le quita
-   el sitio a los días al cierre —esa es la cifra que se decide mirando— pero desde que
-   la bandeja abre por «publicación más reciente» hay que poder ver por qué una ficha
-   está donde está. En acento mientras la ficha aún lleve la etiqueta «Nueva». */
 .publicada {
   font-size: var(--txt-xs);
   color: var(--texto-ter);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.publicada.recien { color: var(--acento); font-weight: 600; }
+.publicada.recien { color: var(--acento-texto); font-weight: 600; }
+
+/* --- Adjudicatarios -------------------------------------------------------- */
+
+.fila-empresa .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
+.fila-empresa .cifras b { font-weight: 600; color: var(--texto); }
+.contratos-empresa { grid-column: 1 / -1; margin-top: var(--e-3); font-size: var(--txt-md); }
+.contratos-empresa li { margin-bottom: var(--e-1); color: var(--texto-sec); }
+.contratos-empresa a { color: var(--acento-texto); }
+
+/* --- Ficha (panel de detalle) ------------------------------------------------
+ *
+ * La tercera columna de la aplicación, como el panel de detalle de Zepo Desk: la lista se
+ * estrecha para dejarle sitio y la fila abierta queda marcada. Cuando la ventana no da
+ * para las tres columnas, flota encima con su fondo (ver la consulta de abajo; el mismo
+ * corte está en `app.js`, en `fichaFlotante()`).
+ */
+.panel {
+  position: relative;
+  width: var(--ancho-ficha);
+  height: 100vh;
+  overflow-y: auto;
+  padding: max(var(--e-5), calc(var(--franja) + 4px)) var(--e-5) var(--e-7);
+  background: var(--ficha);
+  border-left: 1px solid var(--borde);
+  scrollbar-width: thin;
+  animation: entrar-ficha 180ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes entrar-ficha {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.panel-fondo {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  background: rgb(7 14 52 / .28);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+@media (max-width: 1239px) {
+  .panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: min(var(--ancho-ficha), 100%);
+    box-shadow: var(--sombra-2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel { animation: none; }
+}
+
+.cerrar {
+  position: absolute;
+  top: max(var(--e-3), calc(var(--franja) - 4px));
+  right: var(--e-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 0;
+  border-radius: var(--radio-sm);
+  color: var(--texto-ter);
+  font-size: 22px;
+  line-height: 1;
+  cursor: default;
+  transition: background var(--transicion), color var(--transicion);
+}
+.cerrar:hover { color: var(--texto); background: var(--relleno); }
+.panel h2 {
+  margin: 0 32px var(--e-1) 0;
+  font: 600 17px/1.35 var(--letra-titulo);
+  letter-spacing: -0.01em;
+}
+/* Con `max-content` acotado, la columna de las etiquetas se ajusta a la más larga que haya
+   de verdad y el valor se queda con el resto. */
+.panel .campo {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 6px var(--e-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--borde);
+  font-size: var(--txt-md);
+}
+.panel .campo dt { color: var(--texto-ter); }
+.panel .campo dd { margin: 0; }
+/* Los rótulos de sección, como el `SectionTitle` de Zepo Desk. */
+.panel h4 {
+  margin: var(--e-5) 0 var(--e-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--texto-ter);
+}
+.motivo {
+  padding: var(--e-2) var(--e-3);
+  background: var(--relleno);
+  border-radius: var(--radio);
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+  line-height: 1.5;
+}
+.descripcion { margin: var(--e-2) 0 0; font-size: var(--txt-md); color: var(--texto-sec); }
+.acciones { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--e-3) 0; }
+.acciones button.activo {
+  background: var(--acento-tenue);
+  color: var(--acento-texto);
+  box-shadow: 0 0 0 1.5px var(--acento-borde);
+}
+.enlaces { display: flex; flex-direction: column; gap: 5px; font-size: var(--txt-md); }
+.enlaces a { word-break: break-all; }
+.hist { padding-left: 1.2em; font-size: var(--txt-sm); color: var(--texto-sec); }
+.hist li { margin-bottom: 3px; }
+.guardado { margin-left: var(--e-2); color: var(--verde); font-size: var(--txt-sm); }
+
+/* --- Términos de búsqueda -------------------------------------------------- */
+
+.consejos {
+  margin-bottom: var(--e-4);
+  padding: var(--e-3) var(--e-4);
+  background: var(--relleno);
+  border-radius: var(--radio-lg);
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+}
+.consejos ul { margin: 0; padding-left: 1.4em; }
+.consejos li { margin: 3px 0; }
+.consejos b { color: var(--texto); }
+
+/* Cada perfil, una tarjeta de ajustes como las de Zepo Desk. */
+.perfil-caja {
+  margin-bottom: var(--e-3);
+  padding: var(--e-4);
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-xl);
+  box-shadow: var(--sombra-1);
+}
+.perfil-caja > header {
+  display: flex; align-items: center; gap: var(--e-3); flex-wrap: wrap; margin-bottom: var(--e-3);
+}
+.perfil-caja h3 { font: 600 var(--txt-lg)/1.3 var(--letra-titulo); }
+.campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--e-3); }
+.campo-term label { display: block; margin-bottom: var(--e-1); font-size: var(--txt-sm); color: var(--texto-sec); }
+.campo-term label b { color: var(--texto); font-weight: 600; }
+.campo-term textarea { min-height: 108px; font-size: var(--txt-sm); line-height: 1.45; }
+.campo-num { display: flex; align-items: center; gap: var(--e-2); font-size: var(--txt-md); }
+.campo-num input { width: 120px; }
+
+.acciones-ajustes { display: flex; align-items: center; gap: var(--e-3); margin: var(--e-4) 0; flex-wrap: wrap; }
+.previsualizacion {
+  padding: var(--e-4);
+  background: var(--panel);
+  border-radius: var(--radio-xl);
+  box-shadow: 0 0 0 1.5px var(--acento-borde), var(--sombra-1);
+  font-size: var(--txt-md);
+}
+.previsualizacion h4 { margin: var(--e-3) 0 6px; }
+.previsualizacion li { color: var(--texto-sec); margin-bottom: 3px; }
 
 /* La búsqueda manual, al final de «Términos de búsqueda». Encuadrada como una tarjeta
    para que se lea como una herramienta aparte y no como un tercer botón de la fila de
@@ -956,285 +1124,284 @@ input[type=search] { flex: 1 1 260px; min-width: 0; }
   gap: var(--e-4);
   flex-wrap: wrap;
   margin-top: var(--e-5);
-  padding: var(--e-3) var(--e-4);
-  background: var(--panel-2);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
+  padding: var(--e-4);
+  background: var(--relleno);
+  border-radius: var(--radio-xl);
 }
 .buscar-manual p { margin-top: 2px; max-width: 52ch; }
-
-/* El detalle de la búsqueda en marcha, en su propia fila dentro del recuadro. Separado
-   por una línea porque no es parte de la explicación de arriba: es lo que está pasando
-   ahora mismo, y cuando no pasa nada no está. */
+/* El detalle de la búsqueda en marcha, en su propia fila dentro del recuadro. */
 .busqueda-progreso {
   flex-basis: 100%;
   border-top: 1px solid var(--borde);
   padding-top: var(--e-3);
 }
-.busqueda-progreso[hidden] { display: none; }
 .busqueda-progreso p {
-  /* Sin `max-width`: la frase de la descarga es larga y aquí hay ancho de sobra. La
-     altura reservada evita que la barra salte al cambiar de fase. */
-  max-width: none;
   min-height: 2.6em;
   font-size: var(--txt-sm);
   color: var(--texto-sec);
   line-height: 1.5;
 }
-.busqueda-progreso progress {
-  width: 100%;
-  height: 6px;
-  margin-top: var(--e-1);
-  accent-color: var(--acento);
-}
-.busqueda-progreso progress:not([value]) { opacity: .7; }
+.busqueda-progreso progress { margin-top: var(--e-1); }
 
-/* --- Adjudicatarios -------------------------------------------------------- */
-
-.fila-empresa { cursor: pointer; }
-.fila-empresa .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; }
-.fila-empresa .cifras b { font-weight: 650; }
-.contratos-empresa { grid-column: 1 / -1; margin-top: var(--e-3); font-size: var(--txt-md); }
-.contratos-empresa li { margin-bottom: var(--e-1); color: var(--texto-sec); }
-.contratos-empresa a { color: var(--acento); }
-
-/* --- Panel de detalle ------------------------------------------------------ */
-
-/* El fondo oscurecido no es adorno: hasta ahora el panel solo se cerraba con la «×» o
-   con Escape, y pulsar fuera —que es lo primero que hace cualquiera— no hacía nada.
-   Ahora hay dónde pulsar, y además separa la ficha de la lista que queda detrás. */
-.panel-fondo {
+/* --- Pantalla de arranque --------------------------------------------------
+ *
+ * Lo primero que se ve al abrir. Del color del fondo y no un velo translúcido: debajo hay
+ * una bandeja a medio pintar con los datos de la sesión anterior, y dejarla entrever
+ * invita a leer números que están a punto de cambiar. La caja es un diálogo de Zepo Desk:
+ * tarjeta elevada, esquinas de 16 y el logo arriba.
+ */
+.arranque {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, .34);
-  z-index: 19;
-  border: 0;
-  padding: 0;
-  cursor: default;
-}
-
-.panel {
-  position: fixed;
-  top: 0; right: 0; bottom: 0;
-  width: min(560px, 100%);
-  background: var(--panel);
-  border-left: 1px solid var(--borde-fuerte);
-  padding: var(--e-5) var(--e-5) 40px;
+  z-index: 60;
+  display: flex;
+  padding: max(var(--e-5), var(--franja)) var(--e-5) var(--e-5);
+  background:
+    radial-gradient(900px 520px at 50% -10%, var(--acento-tenue), transparent 70%),
+    var(--fondo);
+  /* Con las novedades de una actualización la caja puede ser más alta que la ventana. El
+     scroll va aquí, y la caja se centra con `margin: auto`: centrada con `align-items`, lo
+     que sobresale por arriba quedaría cortado y fuera del alcance del scroll. */
   overflow-y: auto;
+}
+.arranque-caja {
+  margin: auto;
+  width: min(520px, 100%);
+  padding: var(--e-6) var(--e-6) var(--e-5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-3);
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-xl);
   box-shadow: var(--sombra-2);
-  z-index: 20;
-  animation: entrar-panel 160ms ease;
 }
-@keyframes entrar-panel {
-  from { transform: translateX(16px); opacity: 0; }
-  to { transform: none; opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .panel { animation: none; }
-}
-
-.cerrar {
-  position: absolute; top: var(--e-3); right: var(--e-4);
-  background: none; border: 0; color: var(--texto-sec);
-  font-size: 26px; cursor: pointer; line-height: 1;
-  border-radius: var(--radio-sm);
-}
-.cerrar:hover { color: var(--texto); background: var(--panel-2); }
-.panel h2 {
-  font-size: var(--txt-lg);
-  font-weight: 650;
-  margin: 0 30px var(--e-1) 0;
-  line-height: 1.35;
+.arranque-logo .logo { width: 40px; height: 40px; }
+.arranque-caja h2 {
+  font: 700 var(--txt-xl)/1.3 var(--letra-titulo);
   letter-spacing: -0.01em;
 }
-/* 150 px de etiqueta partían «Adjudicatario» y dejaban los valores largos en una
-   columna estrecha. Con `max-content` acotado, la columna se ajusta a la etiqueta más
-   larga que haya de verdad y el valor se queda con el resto. */
-.panel .campo {
-  display: grid;
-  grid-template-columns: minmax(96px, max-content) 1fr;
-  gap: 6px var(--e-3);
+/* La frase la redacta `progreso._frase()` en Python, la misma que sale en la terminal.
+   Altura reservada para dos líneas: sin ella, cada cambio de fase mueve la barra. */
+.arranque-frase {
+  min-height: 2.9em;
   font-size: var(--txt-md);
-  padding: 5px 0;
-  border-bottom: 1px solid var(--borde);
-}
-.panel .campo dt { color: var(--texto-sec); }
-.panel .campo dd { margin: 0; }
-.panel h4 {
-  font-size: var(--txt-sm);
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--texto-sec);
-  margin: var(--e-5) 0 var(--e-2);
-  font-weight: 600;
-}
-.motivo {
-  background: var(--panel-2);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio-sm);
-  padding: var(--e-2) var(--e-3);
-  font-size: var(--txt-sm);
   color: var(--texto-sec);
   line-height: 1.5;
 }
-/* La descripción del pliego, debajo del motivo. Antes se le ponían los estilos en línea
-   desde `app.js`, que era el único sitio del proyecto donde se hacía eso. */
-.descripcion { font-size: var(--txt-md); color: var(--texto-sec); margin: var(--e-2) 0 0; }
-.acciones { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--e-3) 0; }
-.acciones button.activo {
-  border-color: var(--acento);
-  color: var(--acento);
-  background: var(--acento-tenue);
-}
-textarea {
-  width: 100%; min-height: 74px; background: var(--panel-2); color: var(--texto);
-  border: 1px solid var(--borde); border-radius: var(--radio-sm); padding: var(--e-2) var(--e-3);
-  font: inherit; font-size: var(--txt-md); resize: vertical;
-}
-.enlaces { display: flex; flex-direction: column; gap: 5px; font-size: var(--txt-md); }
-.enlaces a { color: var(--acento); word-break: break-all; }
-.hist { font-size: var(--txt-sm); color: var(--texto-sec); }
-.hist li { margin-bottom: 3px; }
-.guardado { color: var(--verde); font-size: var(--txt-sm); margin-left: var(--e-2); }
-
-/* --- Términos de búsqueda -------------------------------------------------- */
-
-.consejos {
-  background: var(--panel-2);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: var(--e-3) var(--e-4);
-  font-size: var(--txt-sm);
-  color: var(--texto-sec);
-  margin-bottom: var(--e-4);
-}
-.consejos ul { margin: 0; padding-left: 1.4em; }
-.consejos li { margin: 3px 0; }
-.consejos b { color: var(--texto); }
-
-.perfil-caja {
-  background: var(--panel);
-  border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: var(--e-4);
-  margin-bottom: var(--e-2);
-  box-shadow: var(--sombra-1);
-}
-.perfil-caja > header {
-  display: flex; align-items: center; gap: var(--e-3); flex-wrap: wrap; margin-bottom: var(--e-3);
-}
-.perfil-caja h3 { margin: 0; font-size: var(--txt-base); font-weight: 650; }
-.campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--e-3); }
-.campo-term label { display: block; font-size: var(--txt-sm); color: var(--texto-sec); margin-bottom: var(--e-1); }
-.campo-term label b { color: var(--texto); font-weight: 600; }
-.campo-term textarea { min-height: 108px; font-size: var(--txt-sm); line-height: 1.45; }
-.campo-num { display: flex; align-items: center; gap: var(--e-2); font-size: var(--txt-md); }
-.campo-num input { width: 120px; }
-input[type=number], input[type=text] {
-  background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde);
-  border-radius: var(--radio-sm); padding: 6px var(--e-2); font: inherit; font-size: var(--txt-md);
-}
-
-.acciones-ajustes { display: flex; align-items: center; gap: var(--e-3); margin: var(--e-4) 0; flex-wrap: wrap; }
-.previsualizacion {
-  background: var(--panel);
-  border: 1px solid var(--acento);
-  border-radius: var(--radio);
-  padding: var(--e-4);
-  font-size: var(--txt-md);
-  box-shadow: var(--sombra-1);
-}
-.previsualizacion h4 { margin: var(--e-3) 0 6px; }
-.previsualizacion li { color: var(--texto-sec); margin-bottom: 3px; }
-
-.pie {
-  margin-top: var(--e-6);
-  padding-top: var(--e-3);
-  border-top: 1px solid var(--borde);
+/* «Paso 1 de 2»: instalar la versión y buscar son dos esperas seguidas, y sin esto la
+   segunda parece que la primera ha vuelto a empezar. */
+.arranque-paso {
+  min-height: 1.2em;
+  font-size: var(--txt-xs);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
   color: var(--texto-ter);
-  font-size: var(--txt-sm);
 }
+.arranque-paso:empty { display: none; }
+/* La salida para cuando algo se ha colgado. Solo existe entonces. */
+.arranque-colgado {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-2);
+  margin-top: var(--e-2);
+}
+
+/* Tras una actualización la caja se ensancha para las novedades, que se leen alineadas a
+   la izquierda como cualquier texto largo. */
+.arranque-caja.con-novedades { width: min(680px, 100%); }
+.arranque-novedades {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--e-2);
+  padding-bottom: var(--e-4);
+  margin-bottom: var(--e-2);
+  border-bottom: 1px solid var(--borde);
+}
+.arranque-ok {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--e-2);
+  font: 600 var(--txt-lg)/1.3 var(--letra-titulo);
+  color: var(--verde);
+}
+.arranque-ok .ico { width: 1.2em; height: 1.2em; stroke-width: 2.4; }
+/* La lista hace scroll por su cuenta: con varias versiones encadenadas es larga, y si
+   empujara la caja, el progreso de la búsqueda y el botón se saldrían de la pantalla. */
+.novedades-lista {
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  padding: var(--e-3) var(--e-4);
+  text-align: left;
+  background: var(--relleno);
+  border-radius: var(--radio-lg);
+  font-size: var(--txt-md);
+  line-height: 1.55;
+}
+.novedades-version + .novedades-version {
+  margin-top: var(--e-4);
+  padding-top: var(--e-4);
+  border-top: 1px solid var(--borde);
+}
+.novedades-version h3 { font-size: var(--txt-base); font-weight: 600; }
+.novedades-num { color: var(--acento-texto); margin-right: var(--e-1); }
+.novedades-version h4 { margin: var(--e-3) 0 var(--e-1); font-size: var(--txt-md); font-weight: 600; }
+.novedades-fecha { margin-bottom: var(--e-1); font-size: var(--txt-xs); color: var(--texto-ter); }
+.novedades-version p { margin: var(--e-1) 0; color: var(--texto-sec); }
+.novedades-version ul { margin: var(--e-1) 0; padding-left: 1.2em; color: var(--texto-sec); }
+.novedades-version li { margin: 2px 0; }
+.novedades-version strong { color: var(--texto); font-weight: 600; }
+.novedades-version code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--relleno);
+  font-size: .92em;
+}
+.novedades-pie { margin-top: var(--e-3); }
+
+/* Cuando la búsqueda se alarga: se dice que sigue y por qué tarda, y se deja entrar. En
+   ámbar tenue y no en rojo: no ha fallado nada, solo va despacio. */
+.arranque-lenta {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-2);
+  margin-top: var(--e-2);
+  padding: var(--e-3) var(--e-4);
+  border-radius: var(--radio-lg);
+  background: var(--ambar-tenue);
+  font-size: var(--txt-md);
+  line-height: 1.5;
+}
+.arranque-lenta strong { color: var(--texto); font-weight: 600; }
+
+/* El final: qué ha traído la búsqueda, la versión y «Continuar». */
+.arranque-resumen {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-3);
+}
+#arranque-resumen-cuerpo { width: 100%; }
+#arranque-resumen-cuerpo:empty { display: none; }
+.arranque-version { font-size: var(--txt-md); color: var(--texto-sec); }
+.arranque-resumen .boton-pri { min-width: 160px; height: 34px; padding: 0 var(--e-5); font-size: var(--txt-base); }
+
+/* --- Resumen ----------------------------------------------------------------- */
+
+/* El bloque de cifras del resumen, el mismo en el arranque y en la pestaña. */
+.resumen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e-2);
+  margin-bottom: var(--e-4);
+  padding: var(--e-4);
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-xl);
+  box-shadow: var(--sombra-1);
+}
+/* En el arranque va dentro de una tarjeta, así que no lleva otra encima. */
+.resumen.compacto { background: var(--relleno); border: 0; box-shadow: none; border-radius: var(--radio-lg); }
+.resumen-total { font: 400 var(--txt-lg)/1.3 var(--letra-titulo); }
+.resumen-total strong { font: 700 var(--txt-xl)/1.3 var(--letra-titulo); letter-spacing: -0.01em; }
+.resumen.compacto .resumen-total,
+.resumen.compacto .resumen-cuando { text-align: center; }
+.resumen-perfiles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.resumen-perfiles li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--e-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--borde);
+  font-size: var(--txt-md);
+}
+.resumen-perfiles li:last-child { border-bottom: 0; }
+.resumen-perfiles li strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+.resumen-perfiles li.cero { color: var(--texto-ter); }
+.resumen-temas { line-height: 1.5; }
+.resumen-fallos { font-size: var(--txt-md); color: var(--ambar); line-height: 1.5; }
+.resumen-version-pie { margin-top: var(--e-4); }
 
 /* --- Analítica -----------------------------------------------------------
  *
- * Lo de aquí abajo está medido en pantalla, no tanteado, y los comentarios dicen contra
- * qué. Si hay que cambiar algo, medir primero.
+ * Las tarjetas de gráfica de Zepo Desk (`ChartCard`): esquinas de 16, línea y sombra
+ * suave, título en negrita y la pregunta debajo en gris. Las barras son `div` con su cifra
+ * en texto al lado, que es lo que hace que el dato se lea con un lector de pantalla y no
+ * solo se vea.
  */
 
-/* El primer sitio del proyecto que necesita un ancho máximo: el resto de las vistas son
-   listas, que a 2.500 px se leen igual de bien, pero una barra de 2.400 px de largo no
-   dice nada. Se sigue el precedente del `min()` de `.panel`.
-
-   1.280 y no 920: con doce bloques y etiquetas que son nombres de comunidad y de órgano,
-   los 920 dejaban media pantalla vacía a la derecha y partían «Comunidad Valenciana» en
-   dos líneas. A 1.280 cada pareja son dos columnas de ~630 px, que es donde una barra
-   con su etiqueta al lado se lee de un vistazo. */
-.analitica {
-  width: min(1280px, 100%);
-  display: grid;
-  gap: var(--e-3);
-}
-/* La misma idea que `.campos` —auto-fit sin un solo breakpoint— pero con el mínimo
-   ajustado: con 280 px caben tres columnas en los 920 de ancho, y como cada pareja tiene
-   dos bloques quedaba un tercio de hueco a la derecha. Con 380 caben exactamente dos, y
-   una sola cuando la ventana no da. El `min()` evita que se desborde en un móvil. */
+/* 1.180 y no menos: con etiquetas que son nombres de comunidad y de órgano, cada pareja
+   son dos columnas de ~560 px, que es donde una barra con su etiqueta se lee de un vistazo. */
+.analitica { display: grid; gap: var(--e-3); }
+/* auto-fit sin un solo breakpoint: dos columnas cuando caben, una cuando no. */
 .analitica .pareja {
   display: grid;
   gap: var(--e-3);
-  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
-  /* Cada tarjeta con su altura y no estiradas a la de la más alta: medido, el calendario
-     se quedaba con 185 px de vacío dentro del recuadro al lado de un bloque más largo, y
-     un hueco enmarcado se lee como un fallo. Alineadas por arriba, la fila mantiene el
-     ritmo horizontal y el borde de abajo llega donde acaba el dato. */
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+  /* Cada tarjeta con su altura y no estiradas a la de la más alta: un hueco enmarcado
+     se lee como un fallo. */
   align-items: start;
 }
 
 .bloque {
+  padding: var(--e-4);
   background: var(--panel);
   border: 1px solid var(--borde);
-  border-radius: var(--radio);
-  padding: var(--e-4);
+  border-radius: var(--radio-xl);
   box-shadow: var(--sombra-1);
 }
-.bloque h3 { margin: 0 0 2px; font-size: var(--txt-base); font-weight: 650; }
-.bloque .pregunta { margin: 0 0 var(--e-3); font-size: var(--txt-sm); color: var(--texto-sec); }
+.bloque h3 { margin: 0 0 2px; font-size: var(--txt-base); font-weight: 600; }
+.bloque .pregunta { margin: 0 0 var(--e-3); font-size: 11.5px; color: var(--texto-ter); }
 .bloque .nota { margin: var(--e-3) 0 0; font-size: var(--txt-sm); color: var(--texto-ter); }
 .bloque .titular {
-  font-size: var(--txt-2xl);
-  font-weight: 650;
+  font: 600 var(--txt-2xl)/1.15 var(--letra-titulo);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
 }
-.bloque .titular small { font-size: var(--txt-md); font-weight: 400; color: var(--texto-sec); }
-.bloque .cifras-fila { display: flex; gap: var(--e-5); flex-wrap: wrap; margin-bottom: var(--e-1); }
-.bloque .cifras-fila div { font-size: var(--txt-sm); color: var(--texto-sec); }
+.bloque .titular small { font: 400 var(--txt-md)/1.4 var(--letra); color: var(--texto-sec); }
+/* Las cifras sueltas, como fichas de cifra. */
+.bloque .cifras-fila { display: flex; gap: var(--e-2); flex-wrap: wrap; margin-bottom: var(--e-2); }
+.bloque .cifras-fila div {
+  flex: 1 1 110px;
+  padding: var(--e-2) var(--e-3);
+  background: var(--relleno);
+  border-radius: var(--radio-lg);
+  font-size: var(--txt-xs);
+  color: var(--texto-ter);
+}
 .bloque .cifras-fila b {
-  display: block; font-size: var(--txt-xl); font-weight: 650; color: var(--texto);
+  display: block;
+  font: 600 var(--txt-xl)/1.3 var(--letra-titulo);
+  color: var(--texto);
   font-variant-numeric: tabular-nums;
 }
 .bloque .cifras-fila .ojo b { color: var(--ambar); }
 
-/* Una fila de barra: etiqueta, carril y cifra. La cifra va SIEMPRE en texto al lado, que
-   es lo que hace que el dato se lea con un lector de pantalla y no solo se vea. */
+/* Una fila de barra: etiqueta, carril y cifra. */
 .fila-barra {
   display: grid;
   grid-template-columns: var(--ancho-etiqueta, 5.5em) 1fr auto;
   align-items: center;
   gap: var(--e-2);
+  margin-bottom: 4px;
   font-size: var(--txt-sm);
-  margin-bottom: 3px;
 }
 .fila-barra .etiqueta { color: var(--texto-sec); }
-/* Tres anchos de etiqueta, y los tres salen de medir el texto más largo de cada bloque
-   en pantalla, no de tantear: 5,5 em para los meses («ago *» ocupa 2,5); 8 em para los
-   tramos, donde el peor es «100k €–500k €» con 7,1; y 13 em para las categorías, donde
-   mandan «Negociado con publicidad» (12,3) y «Comunidad Valenciana» (10,7). Un solo
-   ancho para todos obligaba a elegir entre desperdiciar media tarjeta en el calendario o
-   partir las etiquetas en cuatro líneas, que es justo lo que había que arreglar. */
+/* Tres anchos de etiqueta, medidos contra el texto más largo de cada bloque: 5,5 em para
+   los meses, 8 para los tramos de importe y 13 para las categorías. */
 .bloque.etiquetas-medias { --ancho-etiqueta: 8em; }
 .bloque.etiquetas-anchas { --ancho-etiqueta: 13em; }
-/* Y cuando la etiqueta no es una categoría sino un NOMBRE, no hay columna que valga: un
-   órgano de contratación pasa de sesenta caracteres. Ahí la etiqueta se pone encima del
+/* Cuando la etiqueta es un NOMBRE —un órgano pasa de sesenta caracteres— va encima del
    carril y ocupa el ancho entero. */
 .fila-barra.apilada {
   grid-template-columns: 1fr auto;
@@ -1245,28 +1412,46 @@ input[type=number], input[type=text] {
 .fila-barra.apilada .etiqueta { grid-area: etiqueta; line-height: 1.3; }
 .fila-barra.apilada .barra { grid-area: barra; }
 .fila-barra.apilada .valor { grid-area: valor; }
-.fila-barra .valor { font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
-.barra { background: var(--panel-2); border-radius: 3px; height: 14px; position: relative; }
-.barra-relleno { background: var(--acento); border-radius: 3px; height: 100%; min-width: 2px; }
-/* La segunda serie (el año en curso) va superpuesta y más fina, para que la desviación se
-   vea en lugar de promediarse. */
+.fila-barra .valor { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.barra { position: relative; height: 12px; background: var(--relleno); border-radius: 4px; }
+.barra-relleno { height: 100%; min-width: 2px; background: var(--serie-1); border-radius: 4px; }
+/* La segunda serie (el año en curso) va superpuesta y más fina, en el segundo color de la
+   paleta, para que la desviación se vea en lugar de promediarse. */
 .barra-encima {
-  position: absolute; top: 3px; left: 0; height: 8px;
-  background: var(--texto); opacity: .55; border-radius: 2px; min-width: 2px;
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: 6px;
+  min-width: 2px;
+  background: var(--serie-2);
+  border-radius: 3px;
 }
 /* El mes en curso, rayado: sus datos están a medias y no se puede leer como los demás. */
 .barra-parcial {
   background: repeating-linear-gradient(
-    135deg, var(--acento), var(--acento) 4px, var(--panel-2) 4px, var(--panel-2) 8px);
+    135deg, var(--serie-1), var(--serie-1) 4px, transparent 4px, transparent 8px);
 }
-.leyenda { font-size: var(--txt-xs); color: var(--texto-sec); margin: var(--e-2) 0 0; }
-.leyenda .muestra { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
-.leyenda .muestra.media { background: var(--acento); }
-.leyenda .muestra.curso { background: var(--texto); opacity: .55; }
+.leyenda { margin: var(--e-2) 0 0; font-size: var(--txt-xs); color: var(--texto-sec); }
+.leyenda .muestra { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; }
+.leyenda .muestra.media { background: var(--serie-1); }
+.leyenda .muestra.curso { background: var(--serie-2); }
 
 /* Tabla escueta para los cinco mayores y para los CPV: sin bordes, que aquí lo que se
    compara son las cifras y no las celdas. */
 .tabla-escueta { width: 100%; border-collapse: collapse; font-size: var(--txt-sm); }
-.tabla-escueta td { padding: 3px 0; vertical-align: top; }
-.tabla-escueta td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: var(--e-3); }
+.tabla-escueta td { padding: 4px 0; vertical-align: top; border-bottom: 1px solid var(--borde); }
+.tabla-escueta tr:last-child td { border-bottom: 0; }
+.tabla-escueta td.num { padding-left: var(--e-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tabla-escueta .apagado { color: var(--texto-ter); }
+
+/* --- Ventanas estrechas -------------------------------------------------------
+ *
+ * La ventana de la app no baja de 820 px. Por debajo de ~980 la barra lateral se estrecha
+ * y los márgenes del contenido encogen, para que la lista no se quede en una columna de
+ * media pantalla.
+ */
+@media (max-width: 979px) {
+  :root { --ancho-lateral: 196px; }
+  .vista-cabecera { padding-left: var(--e-5); padding-right: var(--e-5); }
+  .cuerpo-ancho { padding-left: var(--e-5); padding-right: var(--e-5); }
+}

@@ -87,6 +87,24 @@
        carga inicial (la de horas) ni siquiera espera aquí. -->
   <div id="arranque" class="arranque" role="status" aria-live="polite">
     <div class="arranque-caja" id="arranque-caja">
+      <span class="arranque-logo">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+            <defs>
+              <linearGradient id="logo-arranque" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#2A3270"/>
+                <stop offset="1" stop-color="#142CD1"/>
+              </linearGradient>
+            </defs>
+            <rect width="32" height="32" rx="8" fill="url(#logo-arranque)"/>
+            <g fill="none" stroke="#fff" stroke-linecap="round">
+              <path d="M8 8a16 16 0 0 1 16 16" stroke-width="2" opacity=".45"/>
+              <path d="M8 14a10 10 0 0 1 10 10" stroke-width="2" opacity=".75"/>
+              <path d="M8 24 19.3 12.7" stroke-width="2.2"/>
+            </g>
+            <circle cx="8" cy="24" r="2.1" fill="#fff"/>
+            <circle cx="21" cy="18.5" r="2.7" fill="#7BE9E4"/>
+          </svg>
+      </span>
       <!-- Solo tras una actualización: qué versión ha entrado y qué trae. Se lee mientras
            el paso 2 sigue buscando debajo, que es justo el rato en que no hay otra cosa
            que hacer. Lo rellena `pintarNovedades()` con lo que devuelve /api/novedades. -->
@@ -128,272 +146,324 @@
     </div>
   </div>
 
-  <header class="cabecera">
-    <div class="titulo">
-      <h1>Radar de Licitaciones</h1>
-      <p class="sub">Concienciación en ciberseguridad · protección del correo · administración pública española</p>
-      <!-- Aquí vivía «Buscar ahora». Se ha ido a «Términos de búsqueda»: desde que la
-           aplicación busca sola al abrirse, era un botón que no hay que pulsar nunca
-           ocupando el sitio más visible de la pantalla. Lo que queda es la línea de
-           estado, que sí se lee: cuándo fue la última búsqueda y, si hay una en
-           marcha, por dónde va. -->
-      <div class="busqueda-ahora">
-        <span id="ultima-busqueda" class="pista"></span>
+  <!-- La aplicación, en tres columnas como Zepo Desk: la barra lateral con las vistas, el
+       contenido de la vista elegida y la ficha de la licitación abierta. El scroll vive
+       dentro de `.cuerpo` y no en la página: la barra lateral y la cabecera de la vista se
+       quedan quietas mientras se recorre la lista, como en cualquier app de macOS.
+
+       Los ids son los de siempre. `app.js` los busca por id y no por posición, así que
+       moverlos de sitio no le cambia nada; lo comprueba `tests/test_interfaz.py`. -->
+  <div class="app" id="app">
+    <nav class="lateral" aria-label="Vistas del radar">
+      <div class="lateral-cabeza">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs>
+            <linearGradient id="logo-lateral" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#2A3270"/>
+              <stop offset="1" stop-color="#142CD1"/>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="8" fill="url(#logo-lateral)"/>
+          <g fill="none" stroke="#fff" stroke-linecap="round">
+            <path d="M8 8a16 16 0 0 1 16 16" stroke-width="2" opacity=".45"/>
+            <path d="M8 14a10 10 0 0 1 10 10" stroke-width="2" opacity=".75"/>
+            <path d="M8 24 19.3 12.7" stroke-width="2.2"/>
+          </g>
+          <circle cx="8" cy="24" r="2.1" fill="#fff"/>
+          <circle cx="21" cy="18.5" r="2.7" fill="#7BE9E4"/>
+        </svg>
+        <span class="lateral-nombre">Radar de Licitaciones</span>
       </div>
-    </div>
-    <div class="kpis" id="kpis"></div>
-  </header>
 
-  <!-- Carga en segundo plano. Se rellena desde /api/busqueda-estado: la ingesta corre
-       en otro proceso y la base va creciendo mientras se trabaja aquí. -->
-  <div id="carga" class="carga" hidden>
-    <div class="carga-texto">
-      <strong id="carga-titulo"></strong>
-      <span id="carga-detalle" class="pista"></span>
-      <!-- El latido: lo único que se mueve solo. Es la respuesta a «¿sigue viva?». -->
-      <span id="carga-latido" class="pista"></span>
-    </div>
-    <div class="carga-barras">
-      <label>
-        <span id="carga-etapa-txt"></span>
-        <progress id="carga-etapa" max="100" value="0"></progress>
-      </label>
-      <label>
-        <span id="carga-tarea-txt"></span>
-        <progress id="carga-tarea" max="100"></progress>
-      </label>
-    </div>
-  </div>
+      <div class="lateral-lista" role="tablist" aria-orientation="vertical">
+        <p class="lateral-seccion">Licitaciones</p>
+        <button class="tab activo" role="tab" aria-selected="true" aria-controls="vista-bandeja"
+                data-vista="bandeja"><span class="tab-ico tono-acento"><svg class="ico" aria-hidden="true"><use href="#ico-bandeja"/></svg></span><span class="tab-txt">Bandeja</span><span class="cuenta" id="cuenta-bandeja" title="sin revisar"></span></button>
+        <!-- «N nuevas desde tu última visita», colgando de la Bandeja porque es un filtro
+             de ella y no una vista aparte. Lo rellena `cargarResumen()`. -->
+        <button class="tab novedades" id="tab-novedades" hidden></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-resumen"
+                data-vista="resumen"><span class="tab-ico tono-ambar"><svg class="ico" aria-hidden="true"><use href="#ico-destello"/></svg></span><span class="tab-txt">Resumen</span></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-otras"
+                data-vista="otras"><span class="tab-ico tono-violeta"><svg class="ico" aria-hidden="true"><use href="#ico-capas"/></svg></span><span class="tab-txt">Otras licitaciones</span></button>
 
-  <!-- Una búsqueda que ha terminado mientras se trabajaba —la que siguió por detrás
-       tras «Entrar sin esperar», o la de «Buscar ahora»—. Se queda hasta cerrarlo:
-       es la única forma de enterarse de lo que ha traído sin ir a buscarlo. -->
-  <div id="busqueda-terminada" class="carga terminada" hidden>
-    <div class="carga-texto">
-      <strong id="terminada-titulo"></strong>
-      <span id="terminada-detalle" class="pista"></span>
-    </div>
-    <div class="terminada-botones">
-      <button id="terminada-ver" class="boton-sec">Ver resumen</button>
-      <button id="terminada-cerrar" class="boton-sec">Cerrar</button>
-    </div>
-  </div>
-
-  <div id="avisos" class="avisos" hidden></div>
-
-  <!-- Aviso de que la versión nueva NO se ha podido instalar al abrir. Ya no lleva
-       botón: la instalación la hace sola la pantalla de arranque, y si falla se vuelve
-       a intentar la próxima vez que se abra. Va en su propio hueco y no en #avisos
-       porque ese lo reescribe entero cada refresco de los contadores. -->
-  <div id="aviso-version" class="avisos" hidden></div>
-
-  <!-- Qué cubre y qué no. Plegado de fábrica: es contexto permanente, no una alarma, y
-       un cartel fijo con seis puntos se deja de leer a la semana. Va fuera de #avisos
-       porque ese se reescribe entero cada refresco. El <details> abre y cierra solo, sin
-       JavaScript; lo único que pone el JS son las cifras y recordar si lo dejaste abierto. -->
-  <details id="cobertura" class="cobertura">
-    <summary id="cobertura-resumen">Qué cubre y qué no este radar</summary>
-    <ul id="cobertura-lista"></ul>
-  </details>
-
-  <nav class="vistas" role="tablist" aria-label="Vistas del radar">
-    <button class="tab activo" role="tab" aria-selected="true" aria-controls="vista-bandeja"
-            data-vista="bandeja"><svg class="ico" aria-hidden="true"><use href="#ico-bandeja"/></svg>Bandeja</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-resumen"
-            data-vista="resumen"><svg class="ico" aria-hidden="true"><use href="#ico-destello"/></svg>Resumen</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-otras"
-            data-vista="otras"><svg class="ico" aria-hidden="true"><use href="#ico-capas"/></svg>Otras licitaciones</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-vencimientos"
-            data-vista="vencimientos"><svg class="ico" aria-hidden="true"><use href="#ico-calendario"/></svg>Vencimientos</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-adjudicatarios"
-            data-vista="adjudicatarios"><svg class="ico" aria-hidden="true"><use href="#ico-trofeo"/></svg>Adjudicatarios</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-analitica"
-            data-vista="analitica"><svg class="ico" aria-hidden="true"><use href="#ico-grafico"/></svg>Analítica</button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="vista-ajustes"
-            data-vista="ajustes"><svg class="ico" aria-hidden="true"><use href="#ico-ajustes"/></svg>Términos de búsqueda</button>
-    <button class="tab novedades" id="tab-novedades" hidden></button>
-  </nav>
-
-  <section class="filtros" id="filtros">
-    <input type="search" id="q" placeholder="Buscar en objeto, órgano, expediente…" autocomplete="off">
-    <select id="perfil"><option value="">Todos los perfiles</option></select>
-    <select id="estado">
-      <option value="">Todo menos descartadas</option>
-      <option value="nuevo">Sin revisar</option>
-      <option value="siguiendo">En seguimiento</option>
-      <option value="presentada">Presentadas</option>
-      <option value="descartado">Descartadas</option>
-    </select>
-    <select id="ccaa"><option value="">Toda España</option></select>
-    <select id="importe_min">
-      <option value="">Cualquier importe</option>
-      <option value="25000">Desde 25.000 €</option>
-      <option value="50000">Desde 50.000 €</option>
-      <option value="100000">Desde 100.000 €</option>
-      <option value="300000">Desde 300.000 €</option>
-    </select>
-    <select id="orden">
-      <option value="reciente">Ordenar: publicación más reciente</option>
-      <option value="urgencia">Ordenar: cierran antes</option>
-      <option value="puntuacion">Ordenar: mejor encaje</option>
-      <option value="antigua">Ordenar: publicación más antigua</option>
-      <option value="importe">Ordenar: mayor importe</option>
-    </select>
-    <label class="check"><input type="checkbox" id="vivas" checked> Solo abiertas</label>
-    <a id="exportar" class="boton-sec" href="/api/export.csv">Exportar CSV</a>
-  </section>
-
-  <main>
-    <section id="vista-bandeja" role="tabpanel">
-      <p id="contador" class="contador"></p>
-      <p id="filtros-activos" class="filtros-activos" hidden></p>
-      <div id="lista" class="lista"></div>
-      <p id="vacio" class="vacio" hidden></p>
-      <button id="mas" class="boton-sec mas" hidden>Cargar más</button>
-    </section>
-
-    <!-- Lo nuevo de un vistazo: el mismo resumen que sale al abrir, para cualquier
-         periodo. Los dos primeros cuentan lo que ha ENTRADO en el radar; los tres de
-         calendario, lo PUBLICADO en ese plazo (ver `consultas.resumen_novedades`). -->
-    <section id="vista-resumen" role="tabpanel" hidden>
-      <p class="contador">
-        Qué hay nuevo que encaje con tus perfiles y en «Otras licitaciones», por periodo.
-      </p>
-      <div class="ventanas" id="resumen-periodos"></div>
-      <div id="resumen-cuerpo"></div>
-      <div id="resumen-lista" class="lista"></div>
-      <p id="resumen-version" class="pista resumen-version-pie"></p>
-    </section>
-
-    <!-- Lo que el radar descarga y no casa con ningún perfil, por temáticas. Lleva su
-         propia barra de filtros y no la de arriba: aquí no hay perfiles ni contadores de
-         cabecera, y sí temáticas y tipo de contrato. Lo que ya está en la Bandeja no
-         sale aquí, y marcar «Seguir» lo pasa a ella. -->
-    <section id="vista-otras" role="tabpanel" hidden>
-      <p class="contador">
-        Todo lo que el radar descarga y <strong>no</strong> casa con tus perfiles, ordenado
-        por temática. Lo que ya está en la Bandeja no sale aquí; si marcas
-        «Seguir», pasa a ella.
-      </p>
-      <div class="chips-tema" id="otras-temas" role="group" aria-label="Temáticas"></div>
-      <div class="filtros filtros-otras">
-        <input type="search" id="otras-q" placeholder="Buscar en objeto, órgano, expediente…" autocomplete="off">
-        <select id="otras-ccaa"><option value="">Toda España</option></select>
-        <select id="otras-tipo">
-          <option value="">Cualquier tipo</option>
-          <option value="servicios">Servicios</option>
-          <option value="suministros">Suministros</option>
-          <option value="obras">Obras</option>
-          <option value="otros">Otros tipos</option>
-        </select>
-        <select id="otras-importe">
-          <option value="">Cualquier importe</option>
-          <option value="25000">Desde 25.000 €</option>
-          <option value="50000">Desde 50.000 €</option>
-          <option value="100000">Desde 100.000 €</option>
-          <option value="300000">Desde 300.000 €</option>
-        </select>
-        <select id="otras-orden">
-          <option value="reciente">Ordenar: publicación más reciente</option>
-          <option value="urgencia">Ordenar: cierran antes</option>
-          <option value="antigua">Ordenar: publicación más antigua</option>
-          <option value="importe">Ordenar: mayor importe</option>
-        </select>
-        <label class="check"><input type="checkbox" id="otras-vivas" checked> Solo abiertas</label>
-        <label class="check"><input type="checkbox" id="otras-descartadas"> Ver descartadas</label>
+        <p class="lateral-seccion">Mercado</p>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-vencimientos"
+                data-vista="vencimientos"><span class="tab-ico tono-rojo"><svg class="ico" aria-hidden="true"><use href="#ico-calendario"/></svg></span><span class="tab-txt">Vencimientos</span></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-adjudicatarios"
+                data-vista="adjudicatarios"><span class="tab-ico tono-verde"><svg class="ico" aria-hidden="true"><use href="#ico-trofeo"/></svg></span><span class="tab-txt">Adjudicatarios</span></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-analitica"
+                data-vista="analitica"><span class="tab-ico tono-turquesa"><svg class="ico" aria-hidden="true"><use href="#ico-grafico"/></svg></span><span class="tab-txt">Analítica</span></button>
       </div>
-      <p id="otras-aviso" class="filtros-activos" hidden></p>
-      <p id="otras-contador" class="contador"></p>
-      <div id="otras-lista" class="lista"></div>
-      <p id="otras-vacio" class="vacio" hidden></p>
-      <button id="otras-mas" class="boton-sec mas" hidden>Cargar más</button>
-    </section>
 
-    <section id="vista-vencimientos" role="tabpanel" hidden>
-      <p class="contador">
-        Contratos ya adjudicados que vencen pronto. Es la lista para llamar
-        <strong>antes</strong> de que salga el pliego.
-      </p>
-      <div class="ventanas" id="ventanas"></div>
-      <p class="total-ventana" id="total-ventana"></p>
-      <div id="lista-vencimientos" class="lista"></div>
-    </section>
-
-    <section id="vista-adjudicatarios" role="tabpanel" hidden>
-      <p class="contador">
-        Quién se lleva estos contratos. Agrupa las variantes de razón social.
-      </p>
-      <p class="filtros-activos">
-        <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
-      </p>
-      <div id="lista-adjudicatarios" class="lista"></div>
-    </section>
-
-    <section id="vista-analitica" role="tabpanel" hidden>
-      <p class="contador">
-        Los patrones de este mercado, no lo que hay hoy: cuándo se publica, a cuánto se
-        cierra y cuánto tarda en decidirse. Sale del histórico descargado.
-      </p>
-      <div class="ventanas" id="analitica-rango"></div>
-      <p class="filtros-activos" id="analitica-filtro">
-        <select id="analitica-perfil" class="selector-ambito" aria-label="Ámbito"></select>
-      </p>
-      <p class="total-ventana" id="analitica-resumen"></p>
-      <div id="analitica" class="analitica"></div>
-    </section>
-
-    <section id="vista-ajustes" role="tabpanel" hidden>
-      <p class="contador">
-        Estas son las palabras que definen tu búsqueda. Al guardar se reevalúa todo
-        lo descargado, sin volver a bajar nada.
-      </p>
-      <div class="consejos" id="consejos"></div>
-      <div id="lista-perfiles"></div>
-      <div class="acciones-ajustes">
-        <button id="previsualizar" class="boton-sec">Ver qué cambiaría</button>
-        <button id="guardar-perfiles" class="boton-pri">Guardar y aplicar</button>
-        <span id="ajustes-aviso" class="pista"></span>
-      </div>
-      <div id="previsualizacion" class="previsualizacion" hidden></div>
-
-      <!-- La palanca manual, en la única pantalla donde apetece pulsarla: después de
-           tocar los términos de arriba, para ver qué entra con ellos. En el uso normal
-           no hace falta —la aplicación busca al abrirse y la tarea programada cada
-           mañana—, y por eso es un botón secundario y está al final. -->
-      <div class="buscar-manual">
-        <div>
-          <strong>Buscar ahora</strong>
-          <p class="pista">El radar busca solo al abrir la aplicación y cada mañana.
-            Esto fuerza una búsqueda ahora mismo: trae lo publicado desde la última.</p>
-        </div>
-        <button id="buscar-ahora" class="boton-sec"><svg class="ico" aria-hidden="true"><use href="#ico-buscar"/></svg><span id="buscar-ahora-txt">Buscar ahora</span></button>
-
-        <!-- Qué está haciendo, aquí y no solo en la línea de la cabecera: quien pulsa el
-             botón se queda mirando el botón, y «Buscando…» a secas no dice si está
-             bajando un ZIP de 130 MB o esperando a que TED conteste. Es la misma frase
-             que enseña la pantalla de arranque, que la escribe Python. -->
-        <div id="busqueda-progreso" class="busqueda-progreso" role="status"
-             aria-live="polite" hidden>
-          <p id="busqueda-frase"></p>
-          <progress id="busqueda-barra" max="100"></progress>
+      <div class="lateral-pie">
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-ajustes"
+                data-vista="ajustes"><span class="tab-ico tono-gris"><svg class="ico" aria-hidden="true"><use href="#ico-ajustes"/></svg></span><span class="tab-txt">Términos de búsqueda</span></button>
+        <!-- El estado del radar, que antes ocupaba la cabecera y el pie de página: cuándo
+             fue la última búsqueda (o por dónde va la que está en marcha), cómo fue cada
+             fuente y en qué versión estás. -->
+        <div class="estado">
+          <span id="ultima-busqueda"></span>
+          <span id="salud"></span>
+          <span id="version-app"></span>
         </div>
       </div>
-    </section>
-  </main>
+    </nav>
 
-  <!-- El fondo del panel. Va antes del panel para que quede por debajo sin tener que
-       pelearse con el z-index, y da el sitio donde pulsar para cerrar que faltaba. -->
-  <div id="panel-fondo" class="panel-fondo" hidden></div>
+    <div class="contenido">
+      <!-- La cabecera de la vista. La rellena `mostrarVista()` con el `data-titulo`, el
+           `data-icono`, el `data-tono` y el párrafo `.intro` de la sección que se abre:
+           así el texto de cada vista vive al lado de su marcado y no en el JavaScript. -->
+      <header class="vista-cabecera">
+        <span class="vista-icono tono-acento" id="vista-icono"><svg class="ico" aria-hidden="true"><use id="vista-icono-uso" href="#ico-bandeja"/></svg></span>
+        <div class="vista-titulos">
+          <h1 id="vista-titulo">Bandeja</h1>
+          <p id="vista-sub" class="vista-sub"></p>
+        </div>
+      </header>
 
-  <aside id="panel" class="panel" role="dialog" aria-modal="true"
-         aria-label="Ficha de la licitación" hidden>
-    <button class="cerrar" id="cerrar" aria-label="Cerrar">×</button>
-    <div id="panel-contenido"></div>
-  </aside>
+      <div class="cuerpo" id="cuerpo">
+        <div class="cuerpo-ancho">
+          <!-- Carga en segundo plano. Se rellena desde /api/busqueda-estado: la ingesta corre
+               en otro proceso y la base va creciendo mientras se trabaja aquí. -->
+          <div id="carga" class="carga" hidden>
+            <div class="carga-texto">
+              <strong id="carga-titulo"></strong>
+              <span id="carga-detalle" class="pista"></span>
+              <!-- El latido: lo único que se mueve solo. Es la respuesta a «¿sigue viva?». -->
+              <span id="carga-latido" class="pista"></span>
+            </div>
+            <div class="carga-barras">
+              <label>
+                <span id="carga-etapa-txt"></span>
+                <progress id="carga-etapa" max="100" value="0"></progress>
+              </label>
+              <label>
+                <span id="carga-tarea-txt"></span>
+                <progress id="carga-tarea" max="100"></progress>
+              </label>
+            </div>
+          </div>
 
-  <footer class="pie">
-    <span id="salud"></span>
-  </footer>
+          <!-- Una búsqueda que ha terminado mientras se trabajaba —la que siguió por detrás
+               tras «Entrar sin esperar», o la de «Buscar ahora»—. Se queda hasta cerrarlo:
+               es la única forma de enterarse de lo que ha traído sin ir a buscarlo. -->
+          <div id="busqueda-terminada" class="carga terminada" hidden>
+            <div class="carga-texto">
+              <strong id="terminada-titulo"></strong>
+              <span id="terminada-detalle" class="pista"></span>
+            </div>
+            <div class="terminada-botones">
+              <button id="terminada-ver" class="boton-sec">Ver resumen</button>
+              <button id="terminada-cerrar" class="boton-sec">Cerrar</button>
+            </div>
+          </div>
+
+          <div id="avisos" class="avisos" hidden></div>
+
+          <!-- Aviso de que la versión nueva NO se ha podido instalar al abrir. Ya no lleva
+               botón: la instalación la hace sola la pantalla de arranque, y si falla se vuelve
+               a intentar la próxima vez que se abra. Va en su propio hueco y no en #avisos
+               porque ese lo reescribe entero cada refresco de los contadores. -->
+          <div id="aviso-version" class="avisos" hidden></div>
+
+          <!-- Qué cubre y qué no. Plegado de fábrica: es contexto permanente, no una alarma, y
+               un cartel fijo con seis puntos se deja de leer a la semana. Va fuera de #avisos
+               porque ese se reescribe entero cada refresco. El <details> abre y cierra solo, sin
+               JavaScript; lo único que pone el JS son las cifras y recordar si lo dejaste abierto. -->
+          <details id="cobertura" class="cobertura">
+            <summary id="cobertura-resumen">Qué cubre y qué no este radar</summary>
+            <ul id="cobertura-lista"></ul>
+          </details>
+          <main>
+            <section id="vista-bandeja" role="tabpanel" data-titulo="Bandeja" data-icono="ico-bandeja"
+                     data-tono="acento">
+              <p class="intro">Lo que encaja con tus perfiles. Cada cifra es un filtro: púlsala y la
+                lista enseña exactamente esas licitaciones.</p>
+              <div class="kpis" id="kpis"></div>
+              <div class="filtros" id="filtros">
+                <input type="search" id="q" placeholder="Buscar en objeto, órgano, expediente…" autocomplete="off">
+                <select id="perfil"><option value="">Todos los perfiles</option></select>
+                <select id="estado">
+                  <option value="">Todo menos descartadas</option>
+                  <option value="nuevo">Sin revisar</option>
+                  <option value="siguiendo">En seguimiento</option>
+                  <option value="presentada">Presentadas</option>
+                  <option value="descartado">Descartadas</option>
+                </select>
+                <select id="ccaa"><option value="">Toda España</option></select>
+                <select id="importe_min">
+                  <option value="">Cualquier importe</option>
+                  <option value="25000">Desde 25.000 €</option>
+                  <option value="50000">Desde 50.000 €</option>
+                  <option value="100000">Desde 100.000 €</option>
+                  <option value="300000">Desde 300.000 €</option>
+                </select>
+                <select id="orden">
+                  <option value="reciente">Ordenar: publicación más reciente</option>
+                  <option value="urgencia">Ordenar: cierran antes</option>
+                  <option value="puntuacion">Ordenar: mejor encaje</option>
+                  <option value="antigua">Ordenar: publicación más antigua</option>
+                  <option value="importe">Ordenar: mayor importe</option>
+                </select>
+                <label class="check"><input type="checkbox" id="vivas" checked> Solo abiertas</label>
+                <a id="exportar" class="boton-sec" href="/api/export.csv">Exportar CSV</a>
+              </div>
+              <p id="contador" class="contador"></p>
+              <p id="filtros-activos" class="filtros-activos" hidden></p>
+              <div id="lista" class="lista"></div>
+              <p id="vacio" class="vacio" hidden></p>
+              <button id="mas" class="boton-sec mas" hidden>Cargar más</button>
+            </section>
+
+            <!-- Lo nuevo de un vistazo: el mismo resumen que sale al abrir, para cualquier
+                 periodo. Los dos primeros cuentan lo que ha ENTRADO en el radar; los tres de
+                 calendario, lo PUBLICADO en ese plazo (ver `consultas.resumen_novedades`). -->
+            <section id="vista-resumen" role="tabpanel" hidden data-titulo="Resumen"
+                     data-icono="ico-destello" data-tono="ambar">
+              <p class="intro">
+                Qué hay nuevo que encaje con tus perfiles y en «Otras licitaciones», por periodo.
+              </p>
+              <div class="ventanas" id="resumen-periodos"></div>
+              <div id="resumen-cuerpo"></div>
+              <div id="resumen-lista" class="lista"></div>
+              <p id="resumen-version" class="pista resumen-version-pie"></p>
+            </section>
+
+            <!-- Lo que el radar descarga y no casa con ningún perfil, por temáticas. Lleva su
+                 propia barra de filtros y no la de arriba: aquí no hay perfiles ni contadores de
+                 cabecera, y sí temáticas y tipo de contrato. Lo que ya está en la Bandeja no
+                 sale aquí, y marcar «Seguir» lo pasa a ella. -->
+            <section id="vista-otras" role="tabpanel" hidden data-titulo="Otras licitaciones"
+                     data-icono="ico-capas" data-tono="violeta">
+              <p class="intro">
+                Todo lo que el radar descarga y <strong>no</strong> casa con tus perfiles, ordenado
+                por temática. Lo que ya está en la Bandeja no sale aquí; si marcas
+                «Seguir», pasa a ella.
+              </p>
+              <div class="chips-tema" id="otras-temas" role="group" aria-label="Temáticas"></div>
+              <div class="filtros filtros-otras">
+                <input type="search" id="otras-q" placeholder="Buscar en objeto, órgano, expediente…" autocomplete="off">
+                <select id="otras-ccaa"><option value="">Toda España</option></select>
+                <select id="otras-tipo">
+                  <option value="">Cualquier tipo</option>
+                  <option value="servicios">Servicios</option>
+                  <option value="suministros">Suministros</option>
+                  <option value="obras">Obras</option>
+                  <option value="otros">Otros tipos</option>
+                </select>
+                <select id="otras-importe">
+                  <option value="">Cualquier importe</option>
+                  <option value="25000">Desde 25.000 €</option>
+                  <option value="50000">Desde 50.000 €</option>
+                  <option value="100000">Desde 100.000 €</option>
+                  <option value="300000">Desde 300.000 €</option>
+                </select>
+                <select id="otras-orden">
+                  <option value="reciente">Ordenar: publicación más reciente</option>
+                  <option value="urgencia">Ordenar: cierran antes</option>
+                  <option value="antigua">Ordenar: publicación más antigua</option>
+                  <option value="importe">Ordenar: mayor importe</option>
+                </select>
+                <label class="check"><input type="checkbox" id="otras-vivas" checked> Solo abiertas</label>
+                <label class="check"><input type="checkbox" id="otras-descartadas"> Ver descartadas</label>
+              </div>
+              <p id="otras-aviso" class="filtros-activos" hidden></p>
+              <p id="otras-contador" class="contador"></p>
+              <div id="otras-lista" class="lista"></div>
+              <p id="otras-vacio" class="vacio" hidden></p>
+              <button id="otras-mas" class="boton-sec mas" hidden>Cargar más</button>
+            </section>
+
+            <section id="vista-vencimientos" role="tabpanel" hidden data-titulo="Vencimientos"
+                     data-icono="ico-calendario" data-tono="rojo">
+              <p class="intro">
+                Contratos ya adjudicados que vencen pronto. Es la lista para llamar
+                <strong>antes</strong> de que salga el pliego.
+              </p>
+              <div class="ventanas" id="ventanas"></div>
+              <p class="total-ventana" id="total-ventana"></p>
+              <div id="lista-vencimientos" class="lista"></div>
+            </section>
+
+            <section id="vista-adjudicatarios" role="tabpanel" hidden data-titulo="Adjudicatarios"
+                     data-icono="ico-trofeo" data-tono="verde">
+              <p class="intro">
+                Quién se lleva estos contratos. Agrupa las variantes de razón social.
+              </p>
+              <p class="filtros-activos">
+                <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+              </p>
+              <div id="lista-adjudicatarios" class="lista"></div>
+            </section>
+
+            <section id="vista-analitica" role="tabpanel" hidden data-titulo="Analítica"
+                     data-icono="ico-grafico" data-tono="turquesa">
+              <p class="intro">
+                Los patrones de este mercado, no lo que hay hoy: cuándo se publica, a cuánto se
+                cierra y cuánto tarda en decidirse. Sale del histórico descargado.
+              </p>
+              <div class="ventanas" id="analitica-rango"></div>
+              <p class="filtros-activos" id="analitica-filtro">
+                <select id="analitica-perfil" class="selector-ambito" aria-label="Ámbito"></select>
+              </p>
+              <p class="total-ventana" id="analitica-resumen"></p>
+              <div id="analitica" class="analitica"></div>
+            </section>
+
+            <section id="vista-ajustes" role="tabpanel" hidden data-titulo="Términos de búsqueda"
+                     data-icono="ico-ajustes" data-tono="gris">
+              <p class="intro">
+                Estas son las palabras que definen tu búsqueda. Al guardar se reevalúa todo
+                lo descargado, sin volver a bajar nada.
+              </p>
+              <div class="consejos" id="consejos"></div>
+              <div id="lista-perfiles"></div>
+              <div class="acciones-ajustes">
+                <button id="previsualizar" class="boton-sec">Ver qué cambiaría</button>
+                <button id="guardar-perfiles" class="boton-pri">Guardar y aplicar</button>
+                <span id="ajustes-aviso" class="pista"></span>
+              </div>
+              <div id="previsualizacion" class="previsualizacion" hidden></div>
+
+              <!-- La palanca manual, en la única pantalla donde apetece pulsarla: después de
+                   tocar los términos de arriba, para ver qué entra con ellos. En el uso normal
+                   no hace falta —la aplicación busca al abrirse y la tarea programada cada
+                   mañana—, y por eso es un botón secundario y está al final. -->
+              <div class="buscar-manual">
+                <div>
+                  <strong>Buscar ahora</strong>
+                  <p class="pista">El radar busca solo al abrir la aplicación y cada mañana.
+                    Esto fuerza una búsqueda ahora mismo: trae lo publicado desde la última.</p>
+                </div>
+                <button id="buscar-ahora" class="boton-sec"><svg class="ico" aria-hidden="true"><use href="#ico-buscar"/></svg><span id="buscar-ahora-txt">Buscar ahora</span></button>
+
+                <!-- Qué está haciendo, aquí y no solo en la línea de la cabecera: quien pulsa el
+                     botón se queda mirando el botón, y «Buscando…» a secas no dice si está
+                     bajando un ZIP de 130 MB o esperando a que TED conteste. Es la misma frase
+                     que enseña la pantalla de arranque, que la escribe Python. -->
+                <div id="busqueda-progreso" class="busqueda-progreso" role="status"
+                     aria-live="polite" hidden>
+                  <p id="busqueda-frase"></p>
+                  <progress id="busqueda-barra" max="100"></progress>
+                </div>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <!-- El fondo de la ficha solo cuando flota: en una ventana ancha la ficha es la tercera
+         columna, como en Zepo Desk, y no tapa nada. Por debajo de ~1.240 px no cabe al lado
+         de la lista y pasa a flotar encima, con su fondo para cerrarla pulsando fuera. -->
+    <div id="panel-fondo" class="panel-fondo" hidden></div>
+
+    <aside id="panel" class="panel" role="dialog" aria-label="Ficha de la licitación" hidden>
+      <button class="cerrar" id="cerrar" aria-label="Cerrar">×</button>
+      <div id="panel-contenido"></div>
+    </aside>
+  </div>
 
   <script src="/app.js"></script>
 </body>

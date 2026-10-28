@@ -235,8 +235,14 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 ## Cómo se usa
 
-Hay siete pestañas arriba: Bandeja, Resumen, Otras licitaciones, Vencimientos,
-Adjudicatarios, Analítica y Términos de búsqueda.
+Las vistas están en la **barra lateral**, como en Zepo Desk: Bandeja, Resumen y Otras
+licitaciones arriba; Vencimientos, Adjudicatarios y Analítica en «Mercado»; y Términos de
+búsqueda al pie, junto al estado del radar (la última búsqueda, cómo van las fuentes y la
+versión). **⌘1…⌘7** cambian de vista en ese mismo orden.
+
+Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
+dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
+la cierra. La aplicación sigue el modo claro u oscuro de macOS.
 
 ### Al abrir: la búsqueda y el resumen
 
@@ -278,7 +284,7 @@ Los dos primeros cuentan lo que ha entrado en el radar; los de calendario, lo pu
 para que tras la carga inicial «el último trimestre» no sea el histórico de tres años.
 Debajo salen los expedientes, con la misma tarjeta que la Bandeja.
 
-### Los números de la cabecera
+### Los números de la Bandeja
 
 Cada cifra es un botón: al pulsarlo la lista muestra exactamente esas licitaciones.
 Todas cuentan **expedientes**, no anuncios, igual que la lista.
