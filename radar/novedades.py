@@ -82,7 +82,17 @@ def recien_actualizada(con: sqlite3.Connection) -> dict | None:
 
 
 def marcar_vista(con: sqlite3.Connection) -> None:
-    """Esta versión ya se ha estrenado: la próxima vez no hay nada que contar."""
+    """Esta versión ya se ha estrenado: la próxima vez no hay nada que contar.
+
+    Solo escribe si cambia, y no es por ahorrar una fila. `/api/novedades` lo llama cada
+    vez que se abre la aplicación, y casi siempre se abre con una búsqueda escribiendo
+    por detrás: una escritura tiene que esperar a que la búsqueda suelte la base, hasta
+    los 30 s de `db.conectar`. Medido el 28/10/2026: la pantalla de arranque esperó 15 s
+    para apuntar una versión que ya estaba apuntada, y si la espera pasa de 30 la
+    respuesta es un error y las novedades de una versión nueva no se enseñan.
+    """
+    if leer_preferencia(con, CLAVE_VISTA) == __version__:
+        return
     escribir_preferencia(con, CLAVE_VISTA, __version__)
     con.commit()
 
