@@ -105,6 +105,7 @@ class _Indicador:
         self._salida = sys.stdout
         self._tty = False
         self._pintada = False
+        self._mudo = False
         self._rueda = itertools.cycle(RUEDA)
 
         self._inicio = 0.0
@@ -140,6 +141,11 @@ class _Indicador:
         self._fichas = 0
         self._subtarea = 0
         self._subtareas = 0
+        # Cuándo cambió por última vez algo de lo que cuenta: bytes, fichas, fase... Es lo
+        # que distingue «va lento» de «se ha quedado clavado», y lo que mira el vigilante
+        # (`vigilante.py`). El reloj de `segundos` no entra: avanza aunque nada se mueva.
+        self._huella: tuple = ()
+        self._ultimo_avance = 0.0
 
     # -- ciclo de vida ----------------------------------------------------
 
@@ -159,6 +165,9 @@ class _Indicador:
             self._inicio = time.monotonic()
             self._ultimo_log = self._inicio
             self._ultimo_estado = 0.0  # que el primer tic publique ya
+            self._ultimo_avance = self._inicio
+            self._huella = ()
+            self._mudo = False
             self._parada.clear()
             self._hilo = threading.Thread(
                 target=self._bucle, name="progreso", daemon=True
@@ -290,6 +299,27 @@ class _Indicador:
         transcurrido = time.monotonic() - self._t_bytes
         return self._bytes_medidos / transcurrido if transcurrido > 0.5 else 0.0
 
+    def _anotar_avance(self, ahora: float) -> None:
+        """Si algo de lo que cuenta ha cambiado desde el último tic, eso es avanzar.
+
+        Se compara en el tic y no en cada `sumar_bytes()` porque esos son el camino
+        caliente: una tupla cada décima de segundo no se nota; una por trozo de 64 kB, sí.
+        """
+        huella = (self._etapa, self._fuente, self._tarea, self._fase, self._paginas,
+                  self._bytes, self._fichas, self._subtarea)
+        if huella != self._huella:
+            self._huella = huella
+            self._ultimo_avance = ahora
+
+    def sin_avance(self) -> float:
+        """Segundos desde el último avance. 0 si no hay indicador en marcha."""
+        hilo = self._hilo
+        if hilo is None or not hilo.is_alive():
+            # Sin hilo nadie anota el avance, y la cifra solo crecería: mejor no decir
+            # nada que acusar de atasco a una ingesta que no se está mirando.
+            return 0.0
+        return max(0.0, time.monotonic() - self._ultimo_avance)
+
     # -- pintado ----------------------------------------------------------
 
     def limpiar(self) -> None:
@@ -408,6 +438,9 @@ class _Indicador:
             "subtareas": self._subtareas,
             "fichas": self._fichas,
             "segundos": round(time.monotonic() - self._inicio, 1),
+            # Cuánto lleva sin moverse nada. Con esto la aplicación puede decir «va
+            # lento» o «parece atascada» sin adivinarlo comparando instantáneas.
+            "sin_avance": round(self.sin_avance(), 1),
             # El mismo texto que se ve en la terminal, para que la aplicación no
             # tenga que recomponerlo y las dos cuenten lo mismo.
             "resumen": self._resumen(),
@@ -440,8 +473,11 @@ class _Indicador:
                 self._tic()
             except (OSError, ValueError):
                 # La terminal se ha cerrado debajo. Callar es mejor que reventar
-                # la ingesta por no poder pintar una línea decorativa.
-                return
+                # la ingesta por no poder pintar una línea decorativa. Pero solo se deja
+                # de PINTAR: el hilo sigue, porque también es el que anota el avance y
+                # publica la instantánea. Si muriera aquí, el vigilante vería la ingesta
+                # parada para siempre y la abortaría por haber cerrado una ventana.
+                self._mudo = True
             # Sin terminal basta con despertarse una vez por segundo: quien
             # decide si toca escribir es `_tic` comparando contra INTERVALO_LOG.
             self._parada.wait(
@@ -457,9 +493,13 @@ class _Indicador:
             # segundo plano no hay terminal que mirar, y es justo entonces cuando la
             # aplicación necesita la instantánea.
             ahora = time.monotonic()
+            self._anotar_avance(ahora)
             if ahora - self._ultimo_estado >= INTERVALO_ESTADO:
                 self._ultimo_estado = ahora
                 self._publicar()
+
+            if self._mudo:
+                return
 
             if self._tty:
                 # Se recorta al ancho de la terminal: si la línea envuelve, el \r
@@ -501,6 +541,7 @@ tarea = _IND.tarea
 fase = _IND.fase
 subtarea = _IND.subtarea
 instantanea = _IND.instantanea
+sin_avance = _IND.sin_avance
 procesando = _IND.procesando
 pagina = _IND.pagina
 fichas = _IND.fichas

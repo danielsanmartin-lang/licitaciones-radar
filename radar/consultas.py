@@ -690,6 +690,243 @@ def _novedades(con) -> int:
     ).fetchone()[0]
 
 
+# --- Resumen de lo nuevo --------------------------------------------------------
+#
+# Lo que enseña la pantalla de arranque al terminar la búsqueda y la pestaña «Resumen»:
+# cuántos expedientes nuevos hay, por perfil y por temática. Dos clases de periodo, y la
+# diferencia importa:
+#
+# - `busqueda` y `visita` cuentan lo que ha ENTRADO en el radar, por id (los ids son
+#   monotónicos, ver `_marca_visita`). Es la pregunta «¿qué hay que no haya visto?».
+# - `semana`, `mes` y `trimestre` cuentan lo PUBLICADO en ese plazo, por la primera
+#   publicación del expediente, que es la misma fecha con la que ordena la bandeja. Si
+#   contaran por entrada, tras la carga inicial «el último trimestre» sería el histórico
+#   entero de tres años.
+#
+# La unidad es el expediente, como en la bandeja: un expediente es nuevo si su PRIMER
+# anuncio cae dentro del periodo. El anuncio de TED que se suma a un expediente de PLACSP
+# que ya tenías no es una licitación nueva.
+
+PERIODOS_RESUMEN = {
+    "busqueda": "la última búsqueda",
+    "visita": "desde la última vez",
+    "semana": "publicadas en la última semana",
+    "mes": "publicadas en el último mes",
+    "trimestre": "publicadas en el último trimestre",
+}
+DIAS_PERIODO = {"semana": 7, "mes": 30, "trimestre": 90}
+
+# Cuántos expedientes se listan como mucho. El resumen es para ver de un vistazo; para
+# recorrerlos todos está la bandeja.
+ITEMS_RESUMEN = 50
+
+_TEMATICAS_IT = tuple(c.clave for c in categorias.CATEGORIAS)
+
+
+def ultima_busqueda_terminada(con) -> dict | None:
+    fila = con.execute(
+        "SELECT * FROM busquedas WHERE terminada IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return dict(fila) if fila else None
+
+
+def _fallos_de_busqueda(con, busqueda: dict) -> list[dict]:
+    """Las fuentes que fallaron (o se cortaron) en esa búsqueda, para poder decirlo."""
+    filas = con.execute(
+        """SELECT fuente, error FROM ingest_log
+            WHERE iniciado_en >= ? AND iniciado_en <= ? AND ok = 0
+            ORDER BY id""",
+        (busqueda["iniciada"], busqueda["terminada"]),
+    ).fetchall()
+    return [{"fuente": f["fuente"], "error": (f["error"] or "")[:300]} for f in filas]
+
+
+def _ventana(con, periodo: str) -> dict:
+    """Traduce el periodo a condiciones: un tramo de ids o una fecha de corte."""
+    if periodo == "busqueda":
+        b = ultima_busqueda_terminada(con)
+        if b is None:
+            return {"vacia": True}
+        return {"desde_id": b["id_desde"], "hasta_id": b["id_hasta"], "busqueda": b}
+    if periodo == "visita":
+        from .db import APERTURA_PREVIA, APERTURA_PREVIA_EN
+
+        valor = _preferencia(con, APERTURA_PREVIA)
+        try:
+            marca = int(valor) if valor is not None else None
+        except ValueError:
+            marca = None
+        cuando = _preferencia(con, APERTURA_PREVIA_EN)
+        if marca is None:
+            # Antes de esta versión no se apuntaban las aperturas. Lo más parecido que
+            # hay es la marca del contador «N nuevas», que es «lo que ya has visto».
+            marca, cuando = _marca_visita(con), _ultima_visita(con)
+        if marca is None:
+            return {"vacia": True}
+        return {"desde_id": marca, "hasta_id": None, "cuando": cuando}
+    corte = con.execute("SELECT date('now', ?)", (f"-{DIAS_PERIODO[periodo]} day",)).fetchone()[0]
+    return {"corte": corte}
+
+
+def _filtro_ventana(v: dict, alias: str) -> tuple[str, list]:
+    """WHERE de la ventana sobre la tabla `alias`, con el «primer anuncio» incluido.
+
+    El NOT EXISTS es lo que hace que cuente el expediente y no el anuncio: si hay un
+    anuncio del mismo grupo anterior al periodo, el expediente ya existía.
+    """
+    if "corte" in v:
+        return (
+            f"{alias}.fecha_publicacion >= ?"
+            f" AND ({alias}.clave_grupo IS NULL OR NOT EXISTS ("
+            f"   SELECT 1 FROM licitaciones o WHERE o.clave_grupo = {alias}.clave_grupo"
+            f"     AND o.fecha_publicacion < ?))",
+            [v["corte"], v["corte"]],
+        )
+    sql = f"{alias}.id > ?"
+    params: list = [v["desde_id"]]
+    if v.get("hasta_id") is not None:
+        sql += f" AND {alias}.id <= ?"
+        params.append(v["hasta_id"])
+    sql += (f" AND ({alias}.clave_grupo IS NULL OR NOT EXISTS ("
+            f"   SELECT 1 FROM licitaciones o WHERE o.clave_grupo = {alias}.clave_grupo"
+            f"     AND o.id <= ?))")
+    params.append(v["desde_id"])
+    return sql, params
+
+
+def resumen_novedades(con: sqlite3.Connection, periodo: str = "busqueda", *,
+                      perfiles_activos: list[str] | None = None) -> dict:
+    """Expedientes nuevos del periodo, por perfil y por temática, y los primeros de ellos.
+
+    `perfiles_activos` lo pasa quien llama, como en `resumen()`: un perfil activo sin
+    nada nuevo tiene que salir con su cero, porque «0 de concienciación» también es una
+    respuesta.
+    """
+    if periodo not in PERIODOS_RESUMEN:
+        raise ValueError(
+            f"periodo no válido: {periodo}. Válidos: {', '.join(PERIODOS_RESUMEN)}"
+        )
+    v = _ventana(con, periodo)
+    salida: dict = {
+        "periodo": periodo,
+        "etiqueta": PERIODOS_RESUMEN[periodo],
+        "total": 0,
+        "por_perfil": [],
+        "por_tematica": [],
+        "items": [],
+        "busqueda": None,
+        "desde": v.get("cuando") or v.get("corte"),
+        "sin_datos": bool(v.get("vacia")),
+    }
+    activos = sorted(perfiles_activos or [])
+    if v.get("vacia"):
+        salida["por_perfil"] = [{"perfil": n, "total": 0} for n in activos]
+        salida["por_tematica"] = [{"clave": c.clave, "nombre": c.nombre, "total": 0}
+                                  for c in categorias.CATEGORIAS]
+        return salida
+
+    if "busqueda" in v:
+        b = v["busqueda"]
+        salida["busqueda"] = {
+            "iniciada": b["iniciada"], "terminada": b["terminada"],
+            "motivo": b["motivo"], "primera_carga": bool(b["primera_carga"]),
+            "fallos": _fallos_de_busqueda(con, b),
+        }
+        salida["desde"] = b["terminada"]
+
+    # Lo que entra en la bandeja: por `matches`, que es la tabla pequeña. Se agrupa aquí
+    # y no en SQL porque hacen falta tres cosas del mismo grupo —sus perfiles, su
+    # primera fecha y su último anuncio— y son unos pocos miles de filas como mucho.
+    filtro, params = _filtro_ventana(v, "l")
+    filas = con.execute(
+        f"""SELECT {_GRUPO} AS g, l.id, l.fecha_publicacion, m.perfil
+              FROM matches m
+              JOIN licitaciones l ON l.id = m.licitacion_id
+              LEFT JOIN revisiones r ON r.licitacion_id = l.id
+             WHERE COALESCE(r.estado, 'nuevo') != 'descartado' AND {filtro}""",
+        params,
+    ).fetchall()
+    grupos: dict[str, dict] = {}
+    for f in filas:
+        gr = grupos.setdefault(f["g"], {"ids": set(), "perfiles": set(), "fecha": None})
+        gr["ids"].add(f["id"])
+        gr["perfiles"].add(f["perfil"])
+        if f["fecha_publicacion"] and (gr["fecha"] is None or f["fecha_publicacion"] < gr["fecha"]):
+            gr["fecha"] = f["fecha_publicacion"]
+
+    conteo: dict[str, int] = {n: 0 for n in activos}
+    for gr in grupos.values():
+        for perfil in gr["perfiles"]:
+            conteo[perfil] = conteo.get(perfil, 0) + 1
+    salida["total"] = len(grupos)
+    salida["por_perfil"] = sorted(
+        ({"perfil": n, "total": t} for n, t in conteo.items()),
+        key=lambda p: (-p["total"], p["perfil"]),
+    )
+
+    # Las temáticas, casen o no con los perfiles: es lo que se ve en «Otras
+    # licitaciones». Sin `resto`, que son cientos de miles de obras y suministros.
+    #
+    # El CROSS JOIN es una orden para SQLite, no un producto cartesiano: obliga a entrar
+    # por `licitaciones` —por el índice de fecha o por el tramo de ids— y desde ahí mirar
+    # su temática. Al revés, recorría todas las fichas IT de la base para quedarse con las
+    # de la última semana: medido sobre la base real, 2,3 s frente a 0,02 s.
+    filtro_t, params_t = _filtro_ventana(v, "l")
+    marcas = ", ".join("?" * len(_TEMATICAS_IT))
+    por_tema = {
+        f["categoria"]: f["total"]
+        for f in con.execute(
+            f"""SELECT c.categoria, COUNT(DISTINCT {_GRUPO}) AS total
+                  FROM licitaciones l
+                  CROSS JOIN categorias c ON c.licitacion_id = l.id
+                  LEFT JOIN revisiones r ON r.licitacion_id = l.id
+                 WHERE c.categoria IN ({marcas})
+                   AND COALESCE(r.estado, 'nuevo') != 'descartado' AND {filtro_t}
+                 GROUP BY c.categoria""",
+            [*_TEMATICAS_IT, *params_t],
+        )
+    }
+    salida["por_tematica"] = [
+        {"clave": c.clave, "nombre": c.nombre, "total": por_tema.get(c.clave, 0)}
+        for c in categorias.CATEGORIAS
+    ]
+
+    # Los primeros, por fecha de su primera publicación, con el último anuncio de cada
+    # uno: es el que dice cómo está ahora.
+    elegidos = sorted(
+        grupos.values(), key=lambda gr: (gr["fecha"] or "", max(gr["ids"])), reverse=True
+    )[:ITEMS_RESUMEN]
+    if elegidos:
+        ids = [max(gr["ids"]) for gr in elegidos]
+        # Los mismos campos que una fila de la bandeja, para que la pantalla los pinte
+        # con la misma tarjeta y se lean igual en los dos sitios.
+        detalles = {
+            f["id"]: dict(f)
+            for f in con.execute(
+                f"""SELECT l.id, l.objeto, l.organo, l.importe_referencia,
+                           l.fecha_limite_presentacion, l.fecha_publicacion, l.ccaa,
+                           l.fuente, l.estado, l.procedimiento, l.adjudicatario,
+                           COALESCE(r.estado, 'nuevo') AS estado_revision
+                      FROM licitaciones l
+                      LEFT JOIN revisiones r ON r.licitacion_id = l.id
+                     WHERE l.id IN ({", ".join("?" * len(ids))})""",
+                ids,
+            )
+        }
+        for gr, lic_id in zip(elegidos, ids):
+            d = detalles.get(lic_id)
+            if d is None:
+                continue
+            d["primera_publicacion"] = gr["fecha"]
+            d["perfil"] = ",".join(sorted(gr["perfiles"]))
+            d["dias_restantes"] = _dias_restantes(d.get("fecha_limite_presentacion"))
+            dias = _dias_desde(gr["fecha"])
+            d["dias_desde_publicacion"] = dias
+            d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
+            salida["items"].append(d)
+    return salida
+
+
 def salud(con, en_marcha: bool = False) -> list[dict]:
     filas = con.execute(
         """SELECT l.fuente, l.iniciado_en, l.terminado_en, l.vistos, l.nuevos,

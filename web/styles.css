@@ -440,6 +440,12 @@ button.kpi.activo .t { color: var(--acento); }
   flex-wrap: wrap;
 }
 .carga-texto { flex: 1 1 320px; }
+/* La búsqueda ha terminado: el mismo cartel, en verde, con lo que ha traído. */
+.carga.terminada {
+  background: var(--verde-tenue);
+  border-color: var(--verde);
+}
+.terminada-botones { display: flex; gap: var(--e-2); }
 .carga-texto strong { display: block; }
 .carga-barras {
   flex: 1 1 260px;
@@ -602,15 +608,82 @@ button.kpi.activo .t { color: var(--acento); }
 .novedades-pie { margin-top: var(--e-3); }
 .novedades-pie a { color: var(--acento); }
 
-.arranque-listo {
+/* Cuando la búsqueda se alarga: se dice que sigue y por qué tarda, y se deja entrar.
+   En ámbar tenue y no en rojo: no ha fallado nada, solo va despacio. */
+.arranque-lenta {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--e-2);
+  margin-top: var(--e-2);
+  padding: var(--e-3) var(--e-4);
+  border-radius: var(--radio);
+  background: var(--ambar-tenue);
+  font-size: var(--txt-md);
+  line-height: 1.5;
+}
+.arranque-lenta[hidden] { display: none; }
+.arranque-lenta strong { color: var(--texto); font-weight: 600; }
+
+/* El final: qué ha traído la búsqueda, la versión y «Continuar». */
+.arranque-resumen {
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--e-3);
 }
-.arranque-listo[hidden] { display: none; }
-.arranque-listo p { color: var(--texto-sec); font-size: var(--txt-md); }
-.arranque-listo .boton-pri { justify-content: center; min-width: 160px; padding: var(--e-2) var(--e-5); font-size: var(--txt-base); }
+.arranque-resumen[hidden] { display: none; }
+#arranque-resumen-cuerpo { width: 100%; }
+#arranque-resumen-cuerpo:empty { display: none; }
+.arranque-version { color: var(--texto-sec); font-size: var(--txt-md); }
+.arranque-resumen .boton-pri { justify-content: center; min-width: 160px; padding: var(--e-2) var(--e-5); font-size: var(--txt-base); }
+
+/* El bloque de cifras del resumen, el mismo en el arranque y en la pestaña. */
+.resumen {
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  padding: var(--e-3) var(--e-4);
+  margin-bottom: var(--e-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--e-2);
+}
+/* Los párrafos traen margen del navegador; aquí el espacio lo pone el `gap`. */
+.resumen p { margin: 0; }
+.resumen-total { font-size: var(--txt-lg); }
+.resumen-total strong { font-weight: 650; }
+.resumen.compacto .resumen-total { text-align: center; }
+.resumen.compacto .resumen-cuando { text-align: center; }
+.resumen-perfiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.resumen-perfiles li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--e-3);
+  padding: var(--e-1) 0;
+  border-bottom: 1px solid var(--borde);
+  font-size: var(--txt-md);
+}
+.resumen-perfiles li:last-child { border-bottom: 0; }
+.resumen-perfiles li strong { font-variant-numeric: tabular-nums; font-weight: 650; }
+.resumen-perfiles li.cero { color: var(--texto-ter); }
+.resumen-temas { line-height: 1.5; }
+.resumen-fallos {
+  font-size: var(--txt-md);
+  color: var(--ambar);
+  line-height: 1.5;
+}
+.resumen-version-pie { margin-top: var(--e-4); }
 
 /* --- Pestañas -------------------------------------------------------------- */
 

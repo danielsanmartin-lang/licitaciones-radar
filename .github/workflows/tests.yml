@@ -31,7 +31,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - so: ubuntu-latest
+          # 24.04 fijo y no `latest`: desde que `ubuntu-latest` es la 26.04 (octubre de
+          # 2026), `setup-python` ya no tiene Python 3.9 para ella y el job ni arrancaba.
+          - so: ubuntu-24.04
             python: "3.9"
           - so: ubuntu-latest
             python: "3.13"

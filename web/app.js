@@ -777,16 +777,29 @@ function fmtDuracion(segundos) {
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 
-// Aviso de que el histórico está entrando por detrás. Solo sale en la carga inicial:
-// `detalle.etapas` es 0 en una búsqueda normal, que ya se cuenta en la cabecera y no
-// merece ocupar media pantalla.
-function pintarCarga(det) {
+// Aviso de que hay una búsqueda entrando por detrás. Dos formas:
+//   - la carga inicial (`detalle.etapas` > 0), con sus etapas y lo que cuesta cada una;
+//   - una búsqueda normal, en corto. Antes esta no salía —«ya se cuenta en la cabecera»—,
+//     pero desde que la pantalla de arranque deja entrar sin esperar, alguien tiene que
+//     decir que sigue buscando y que el resumen llegará al terminar. Mientras la pantalla
+//     de arranque está delante no se pinta: lo cuenta ella.
+function pintarCarga(det, explicacion) {
   const caja = $('carga');
-  if (!det || !det.etapas) {
+  if (!det || (!det.etapas && enArranque)) {
     caja.hidden = true;
     return;
   }
   caja.hidden = false;
+  $('carga-etapa').closest('label').hidden = !det.etapas;
+  if (!det.etapas) {
+    $('carga-titulo').textContent = 'Sigue buscando licitaciones nuevas';
+    $('carga-detalle').textContent = explicacion ||
+      'Puedes trabajar mientras: al terminar te avisará aquí con el resumen de lo nuevo.';
+    $('carga-latido').textContent =
+      (det.frase || det.resumen || '') + (det.segundos ? ` Lleva ${fmtDuracion(det.segundos)}.` : '');
+    pintarBarraTarea(det);
+    return;
+  }
 
   $('carga-titulo').textContent =
     `Se está trayendo el histórico · etapa ${det.etapa} de ${det.etapas}` +
@@ -807,7 +820,11 @@ function pintarCarga(det) {
   const etapa = $('carga-etapa');
   etapa.max = det.etapas;
   etapa.value = Math.max(0, det.etapa - 1);
+  pintarBarraTarea(det);
+}
 
+// La barra de lo que se está haciendo ahora mismo: bytes, ficheros del ZIP o nada.
+function pintarBarraTarea(det) {
   const barra = $('carga-tarea');
   const txt = $('carga-tarea-txt');
   const quien = det.titulo || det.fuente || 'preparando';
@@ -901,6 +918,8 @@ function vigilarBusqueda() {
   const btn = $('buscar-ahora');
   seVioEnMarcha = false;
   ticsVigilando = 0;
+  // El aviso de la búsqueda anterior ya no vale: va a haber otro.
+  $('busqueda-terminada').hidden = true;
 
   vigilando = setInterval(async () => {
     let d;
@@ -919,14 +938,17 @@ function vigilarBusqueda() {
       etiquetaBoton(det && det.etapas
         ? `Carga inicial (${det.etapa}/${det.etapas})`
         : 'Buscando…');
-      pintarCarga(det);
+      pintarCarga(det, d.explicacion);
       pintarProgresoBusqueda(det);
       // La carga inicial son horas: esa no se espera con la aplicación tapada. Se entra
       // y la cuenta el aviso de la cabecera, que para eso está y dice «puedes trabajar
       // mientras».
       if (enArranque) {
         if (det && det.etapas) cerrarArranque();
-        else pintarArranque(det);
+        else {
+          pintarArranque(det);
+          pintarLentitud(det, d.explicacion);
+        }
       }
       // Durante la carga inicial toda la narración vive en el bloque de abajo. Aquí
       // solo el estado corto: antes se pintaba la última línea del log recortada a 90
@@ -955,6 +977,10 @@ function vigilarBusqueda() {
     if (seVioEnMarcha) {
       await cargarResumen();
       await cargarLista();
+      // Si la pantalla de arranque ya no está —se entró sin esperar, o es la búsqueda
+      // de «Buscar ahora»—, nadie más va a contar lo que ha traído.
+      if (!enArranque) avisarBusquedaTerminada();
+      if (vistaActual === 'resumen') cargarResumenVista();
     }
     // Lo último, y después de recargar: quien espera la promesa destapa la bandeja ya
     // con lo que se acaba de traer, no con lo de ayer rellenándose a la vista.
@@ -977,8 +1003,10 @@ function vigilarBusqueda() {
 // Lo que se ve mientras tanto es el progreso de verdad —la misma frase que escribe la
 // terminal—, no un «cargando» fijo.
 //
-// La única salida manual es para cuando algo se ha colgado, y solo aparece entonces:
-// ver `vigilarCuelgue()`. Hay además dos casos en los que no se espera, porque no son
+// Hay dos salidas manuales, y las dos aparecen solo cuando hacen falta: cuando la
+// búsqueda pasa de dos minutos —va lenta, se explica por qué y se recomienda esperar,
+// ver `pintarLentitud()`— y cuando algo deja de dar señales de vida, ver
+// `vigilarCuelgue()`. Hay además dos casos en los que no se espera, porque no son
 // saltarse nada:
 //   - la carga inicial (la de horas, con etapas) no se espera aquí: se entra y la
 //     narra el aviso de la cabecera, que dice «puedes trabajar mientras»;
@@ -1005,6 +1033,28 @@ function cerrarArranque() {
   if (!enArranque) return;
   enArranque = false;
   $('arranque').hidden = true;
+  // Se entra: lo que hay ahora pasa a ser «la última vez» para la próxima. Sin esperar
+  // la respuesta, y sin quejarse si no llega: lo peor que pasa es que la próxima vez
+  // «Desde la última vez» cuente un poco de más.
+  fetch('/api/resumen/apertura', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+  // Si la búsqueda sigue por detrás, que lo diga la cabecera desde ya y no al siguiente
+  // tic del vigilante.
+  if (vigilando) estadoBusqueda().then((d) => d && d.en_marcha && pintarCarga(d.detalle, d.explicacion));
+}
+
+// A partir de cuánto se dice que la búsqueda va lenta y se ofrece entrar. Dos minutos:
+// una búsqueda normal con las fuentes contestando bien tarda alrededor de uno.
+const LENTA_TRAS_S = 120;
+
+function pintarLentitud(det, explicacion) {
+  const lenta = Boolean(det && det.segundos >= LENTA_TRAS_S) && $('arranque-colgado').hidden;
+  $('arranque-lenta').hidden = !lenta;
+  if (lenta) {
+    $('arranque-lenta-porque').textContent = explicacion ||
+      'Las plataformas oficiales a veces responden muy despacio. Lo que ya ha llegado ' +
+      'queda guardado.';
+  }
 }
 
 // Algo ha cambiado en lo que se está esperando: bytes, fase, fichas, versión. Se
@@ -1041,6 +1091,8 @@ function vigilarCuelgue() {
       'quedado colgado. Puedes entrar con lo que ya hay; se volverá a intentar la ' +
       'próxima vez que abras la aplicación.';
     $('arranque-colgado').hidden = false;
+    // Una sola salida a la vista: dos botones de entrar con textos distintos confunden.
+    $('arranque-lenta').hidden = true;
   }, 5000);
 }
 
@@ -1124,6 +1176,9 @@ async function instalarVersionNueva() {
   } catch {
     return false;  // sin servidor no hay nada que instalar; lo dirá la bandeja
   }
+  // Se guarda para el resumen del final, que dice en qué versión estás y si es la
+  // última: es la misma pregunta a GitHub, no hace falta repetirla.
+  infoVersion = info;
   // Sin red o sin releases no se puede instalar nada. No es saltarse el paso: es que
   // no ha habido respuesta, y quedarse aquí esperándola no la va a traer.
   if (!info.hay_nueva) return false;
@@ -1350,56 +1405,83 @@ function pintarNovedades(n) {
   if (pie.textContent) lista.appendChild(pie);
 }
 
-// Las dos cosas han terminado: se dice y se espera a «Continuar». Solo es la
-// versión la que se marca como vista al pulsarlo; quien cierra la aplicación antes
-// vuelve a ver las novedades la próxima vez.
-function mostrarListo(n) {
+// Las dos cosas han terminado: se dice qué ha traído la búsqueda y en qué versión
+// estás, y se espera a «Continuar». Antes esto solo pasaba tras una actualización y el
+// resto de las veces la pantalla se iba sola: se entraba sin saber si había algo nuevo.
+//
+// `conLicitaciones` es false cuando no hay búsqueda que resumir (la carga inicial, o
+// sin servidor): entonces solo sale si hay novedades de versión que leer.
+async function mostrarResumenArranque(n, conLicitaciones) {
   pasoArranque('Paso 1 y paso 2 terminados');
-  $('novedades-sub').textContent = subtituloNovedades(n, false);
+  if (n && n.actualizada) $('novedades-sub').textContent = subtituloNovedades(n, false);
   $('arranque-titulo').textContent = 'Todo listo';
   // Fuera lo que era del progreso: dejarlo vacío seguiría ocupando su hueco.
   for (const id of ['arranque-frase', 'arranque-barra', 'arranque-tiempo']) {
     $(id).hidden = true;
   }
   $('arranque-colgado').hidden = true;
-  $('arranque-listo-txt').textContent =
-    `Ya tienes la versión ${n.hasta} y las licitaciones al día.`;
-  $('arranque-listo').hidden = false;
+  $('arranque-lenta').hidden = true;
+
+  const cuerpo = $('arranque-resumen-cuerpo');
+  cuerpo.textContent = '';
+  if (conLicitaciones) {
+    let r = null;
+    try {
+      r = await pedirJSON('/api/resumen-novedades?periodo=busqueda');
+    } catch { /* sin resumen se entra igual: la bandeja ya está al día */ }
+    if (r && !r.error) cuerpo.appendChild(bloqueResumen(r, { compacto: true }));
+  }
+  if (!enArranque) return;  // se ha entrado mientras se pedía el resumen
+  $('arranque-version').textContent = textoVersion(n);
+  $('arranque-resumen').hidden = false;
   $('arranque-continuar').focus();
 }
 
-async function continuarTrasNovedades() {
+// Solo es la versión la que se marca como vista al pulsarlo; quien cierra la aplicación
+// antes vuelve a ver las novedades la próxima vez.
+async function continuarArranque() {
   $('arranque-continuar').disabled = true;
-  try {
-    await fetch('/api/novedades/vistas', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: '{}' });
-  } catch { /* si no se apunta, se vuelven a enseñar la próxima vez: no pasa nada */ }
+  if (novedadesArranque && novedadesArranque.actualizada) {
+    try {
+      await fetch('/api/novedades/vistas', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    } catch { /* si no se apunta, se vuelven a enseñar la próxima vez: no pasa nada */ }
+  }
   cerrarArranque();
 }
 
 // --- Paso 2: las licitaciones ------------------------------------------------
 
+// Devuelve true si hay una búsqueda que resumir al terminar: la que se acaba de hacer,
+// la que ya estaba en marcha, o una de hace menos de diez minutos que se reutiliza.
 async function buscarLoNuevo() {
   pasoArranque('Paso 2 de 2 · licitaciones nuevas');
   $('arranque-tiempo').textContent = '';
   let d = await estadoBusqueda();
-  if (!d) return;  // sin servidor no hay nada que esperar; que lo cuente la bandeja
+  if (!d) return false;  // sin servidor no hay nada que esperar; que lo cuente la bandeja
 
-  if (d.en_marcha && d.detalle && d.detalle.etapas) return;  // la carga inicial
+  if (d.en_marcha && d.detalle && d.detalle.etapas) return false;  // la carga inicial
 
   // Ya hay una corriendo: la tarea programada de la mañana, un `start.command`, u otra
   // ventana. Se espera a esa en lugar de pedir otra, que el cerrojo rechazaría.
   if (d.en_marcha) {
     $('arranque-titulo').textContent = 'Terminando la búsqueda que ya estaba en marcha';
     await vigilarBusqueda();
-    return;
+    return true;
   }
-  if (buscadoHaceMenosDe(d.ultima_busqueda, MINUTOS_FRESCO)) return;
+  if (buscadoHaceMenosDe(d.ultima_busqueda, MINUTOS_FRESCO)) return true;
 
   $('arranque-titulo').textContent = 'Buscando licitaciones nuevas';
   pintarArranque(null);
-  if (await lanzarBusqueda()) await vigilarBusqueda();
+  if (await lanzarBusqueda()) {
+    await vigilarBusqueda();
+    return true;
+  }
+  return false;
 }
+
+// Lo que contestó /api/novedades al abrir: si la versión es nueva y desde cuál se venía.
+let novedadesArranque = null;
 
 async function arrancar() {
   vigilarCuelgue();
@@ -1408,6 +1490,7 @@ async function arrancar() {
   // cuanto llegan, mientras los dos pasos siguen su curso.
   const novedades = pedirJSON('/api/novedades').catch(() => null);
   novedades.then((n) => {
+    novedadesArranque = n;
     if (n && n.actualizada && enArranque) pintarNovedades(n);
   });
 
@@ -1433,15 +1516,250 @@ async function arrancar() {
   }
 
   if (enArranque && await instalarVersionNueva()) return;
-  if (enArranque) await buscarLoNuevo();
-  // Tras una actualización no se cierra sola: hay novedades que leer, y se espera a
-  // «Continuar». Si no, como siempre.
+  const hayBusqueda = enArranque ? await buscarLoNuevo() : false;
   const n = await novedades;
-  if (n && n.actualizada && enArranque) {
-    mostrarListo(n);
+  // Se ha entrado sin esperar, o la carga inicial ya ha destapado la aplicación: el
+  // resumen lo dará el aviso de la cabecera cuando la búsqueda termine.
+  if (!enArranque) return;
+  // No se cierra sola: se enseña qué ha traído la búsqueda y la versión, y se espera a
+  // «Continuar». Sin búsqueda que resumir, solo si hay novedades de versión que leer.
+  if (hayBusqueda || (n && n.actualizada)) {
+    await mostrarResumenArranque(n, hayBusqueda);
     return;
   }
   cerrarArranque();
+}
+
+// --- Resumen de lo nuevo ------------------------------------------------------
+//
+// Lo mismo en tres sitios —la pantalla de arranque, el aviso de la cabecera cuando una
+// búsqueda termina por detrás y la pestaña «Resumen»— y con la misma consulta
+// (`consultas.resumen_novedades`), para que no puedan dar cifras distintas.
+
+// Los dos primeros cuentan lo que ha ENTRADO en el radar; los tres de calendario, lo
+// PUBLICADO en ese plazo. La etiqueta larga es la que lo dice.
+const PERIODOS = [
+  { clave: 'busqueda', etiqueta: 'Última búsqueda' },
+  { clave: 'visita', etiqueta: 'Desde la última vez' },
+  { clave: 'semana', etiqueta: 'Última semana' },
+  { clave: 'mes', etiqueta: 'Último mes' },
+  { clave: 'trimestre', etiqueta: 'Último trimestre' },
+];
+let periodoResumen = 'busqueda';
+
+// Lo que contestó GitHub en el paso 1 del arranque. La pestaña lo reutiliza para su pie
+// en lugar de volver a preguntar.
+let infoVersion = null;
+
+function cuantas(n) {
+  return n === 1 ? '1 licitación nueva' : `${n.toLocaleString('es-ES')} licitaciones nuevas`;
+}
+
+function sinV(version) {
+  return String(version || '').replace(/^v/i, '');
+}
+
+// En qué versión estás y si es la última. `n` es lo de /api/novedades al abrir (puede no
+// estar); `infoVersion`, lo que dijo GitHub.
+function textoVersion(n) {
+  const actual = sinV((infoVersion && infoVersion.version_actual) ||
+                      (n && (n.hasta || n.version)));
+  if (!actual) return '';
+  if (n && n.actualizada) return `Versión ${actual}: recién instalada, es la última publicada.`;
+  if (!infoVersion) return `Versión ${actual}.`;
+  if (infoVersion.error) {
+    return `Versión ${actual}. No se ha podido comprobar si hay otra más nueva: ` +
+      `${infoVersion.error}`;
+  }
+  if (infoVersion.hay_nueva) {
+    return `Versión ${actual}. Hay una más nueva, la ${sinV(infoVersion.version_nueva)}, ` +
+      'que no se ha podido instalar; se volverá a intentar la próxima vez que abras la ' +
+      'aplicación.';
+  }
+  return `Versión ${actual} · es la última publicada (comprobado en GitHub).`;
+}
+
+// De cuándo es lo que se cuenta, en una línea.
+function cuandoResumen(r) {
+  if (r.periodo === 'busqueda') {
+    if (!r.busqueda) return '';
+    const que = r.busqueda.primera_carga ? 'en la carga del histórico' : 'en la búsqueda';
+    return `${que} que terminó el ${fmtFechaHora(r.busqueda.terminada)}`;
+  }
+  if (r.periodo === 'visita') {
+    return r.desde ? `desde que entraste el ${fmtFechaHora(r.desde)}` : 'desde la última vez';
+  }
+  return `publicadas desde el ${fmtFecha(r.desde)}`;
+}
+
+function textoFallos(r) {
+  const fallos = (r.busqueda && r.busqueda.fallos) || [];
+  if (!fallos.length) return '';
+  const cortadas = fallos.filter((f) => (f.error || '').startsWith('atascada'));
+  const nombres = [...new Set(fallos.map((f) => f.fuente))].join(', ');
+  return (cortadas.length
+    ? `Se ha cortado alguna fuente por llevar demasiado sin avanzar (${nombres}).`
+    : `Alguna fuente no ha respondido bien (${nombres}).`) +
+    ' Lo que falte se pedirá en la próxima búsqueda.';
+}
+
+// El bloque con las cifras. `compacto` es para la pantalla de arranque, donde no cabe
+// más que lo esencial; la pestaña añade debajo la lista de expedientes.
+function bloqueResumen(r, { compacto = false } = {}) {
+  const caja = document.createElement('div');
+  caja.className = compacto ? 'resumen compacto' : 'resumen';
+
+  const total = document.createElement('p');
+  total.className = 'resumen-total';
+  if (r.sin_datos) {
+    total.textContent = r.periodo === 'busqueda'
+      ? 'Todavía no hay ninguna búsqueda apuntada.'
+      : 'Todavía no hay una visita anterior apuntada.';
+    caja.appendChild(total);
+    const p = document.createElement('p');
+    p.className = 'pista';
+    p.textContent = r.periodo === 'busqueda'
+      ? 'Aparecerá aquí en cuanto termine la próxima.'
+      : 'Desde la próxima vez que abras el radar, aquí verás lo que ha entrado entretanto.';
+    caja.appendChild(p);
+    return caja;
+  }
+  const n = document.createElement('strong');
+  n.textContent = r.total ? cuantas(r.total) : 'Ninguna licitación nueva';
+  total.appendChild(n);
+  caja.appendChild(total);
+
+  const cuando = cuandoResumen(r);
+  if (cuando) {
+    const p = document.createElement('p');
+    p.className = 'pista resumen-cuando';
+    p.textContent = cuando + (r.total ? ', en tu bandeja:' : '.');
+    caja.appendChild(p);
+  }
+
+  if (r.total) {
+    const ul = document.createElement('ul');
+    ul.className = 'resumen-perfiles';
+    for (const pf of r.por_perfil) {
+      const li = document.createElement('li');
+      if (!pf.total) li.className = 'cero';
+      const nom = document.createElement('span');
+      nom.textContent = pf.perfil;
+      const cif = document.createElement('strong');
+      cif.textContent = pf.total.toLocaleString('es-ES');
+      li.append(nom, cif);
+      ul.appendChild(li);
+    }
+    caja.appendChild(ul);
+  }
+
+  const temas = (r.por_tematica || []).filter((t) => t.total);
+  const pt = document.createElement('p');
+  pt.className = 'pista resumen-temas';
+  pt.textContent = temas.length
+    ? 'En «Otras licitaciones»: ' +
+      temas.map((t) => `${t.nombre} ${t.total.toLocaleString('es-ES')}`).join(' · ')
+    : 'Nada nuevo en las temáticas IT de «Otras licitaciones».';
+  caja.appendChild(pt);
+
+  const fallos = textoFallos(r);
+  if (fallos) {
+    const pf = document.createElement('p');
+    pf.className = 'resumen-fallos';
+    pf.textContent = fallos;
+    caja.appendChild(pf);
+  }
+  return caja;
+}
+
+// La búsqueda ha terminado con la aplicación abierta: se dice arriba qué ha traído.
+async function avisarBusquedaTerminada() {
+  let r;
+  try {
+    r = await pedirJSON('/api/resumen-novedades?periodo=busqueda');
+  } catch {
+    return;
+  }
+  if (!r || r.error || r.sin_datos) return;
+  $('terminada-titulo').textContent = r.total
+    ? `Búsqueda terminada: ${cuantas(r.total)}`
+    : 'Búsqueda terminada: no hay licitaciones nuevas en tu bandeja';
+  const perfiles = r.por_perfil.filter((p) => p.total)
+    .map((p) => `${p.perfil} ${p.total.toLocaleString('es-ES')}`).join(' · ');
+  const temas = (r.por_tematica || []).some((t) => t.total);
+  let detalle = perfiles;
+  if (temas) {
+    detalle += (detalle ? '; también hay novedades' : 'Hay novedades') +
+      ' en «Otras licitaciones»';
+  }
+  if (detalle) detalle += '.';
+  $('terminada-detalle').textContent = [detalle, textoFallos(r)].filter(Boolean).join(' ');
+  $('busqueda-terminada').hidden = false;
+}
+
+function pintarPeriodos() {
+  const cont = $('resumen-periodos');
+  cont.textContent = '';
+  for (const per of PERIODOS) {
+    const b = document.createElement('button');
+    b.className = 'ventana' + (per.clave === periodoResumen ? ' activa' : '');
+    const t = document.createElement('div');
+    t.className = 't';
+    t.textContent = per.etiqueta;
+    b.appendChild(t);
+    b.addEventListener('click', () => {
+      periodoResumen = per.clave;
+      cargarResumenVista();
+    });
+    cont.appendChild(b);
+  }
+}
+
+async function cargarResumenVista() {
+  pintarPeriodos();
+  $('resumen-lista').textContent = '';
+  const carga = empezarCarga('resumen-cuerpo');
+  let r;
+  try {
+    r = await pedirJSON('/api/resumen-novedades?periodo=' + periodoResumen);
+  } catch {
+    if (carga.terminar()) {
+      $('resumen-cuerpo').innerHTML = '<p class="vacio">No se ha podido cargar el resumen.</p>';
+    }
+    return;
+  }
+  if (!carga.terminar()) return;
+  if (r.error) {
+    const p = document.createElement('p');
+    p.className = 'vacio';
+    p.textContent = r.error;
+    $('resumen-cuerpo').appendChild(p);
+    return;
+  }
+  $('resumen-cuerpo').appendChild(bloqueResumen(r));
+
+  const frag = document.createDocumentFragment();
+  for (const it of r.items || []) frag.appendChild(tarjeta(it));
+  $('resumen-lista').appendChild(frag);
+  if (r.total > (r.items || []).length) {
+    const p = document.createElement('p');
+    p.className = 'pista';
+    p.textContent = `Se enseñan las ${r.items.length} más recientes de ${r.total.toLocaleString('es-ES')}; ` +
+      'el resto, en la Bandeja.';
+    $('resumen-lista').appendChild(p);
+  }
+  pintarVersionPie();
+}
+
+// La versión, también aquí: es lo otro que se enseña al abrir, y quien entró sin esperar
+// no lo ha visto. Una sola pregunta a GitHub por sesión.
+async function pintarVersionPie() {
+  if (!infoVersion) {
+    try {
+      infoVersion = await pedirJSON('/api/actualizacion');
+    } catch { /* sin respuesta se dice solo la versión */ }
+  }
+  $('resumen-version').textContent = textoVersion(novedadesArranque);
 }
 
 // --- Vencimientos ----------------------------------------------------------
@@ -1879,8 +2197,8 @@ let vistaActual = 'bandeja';
 
 function mostrarVista(vista) {
   vistaActual = vista;
-  for (const v of ['bandeja', 'otras', 'vencimientos', 'adjudicatarios', 'analitica',
-                   'ajustes']) {
+  for (const v of ['bandeja', 'resumen', 'otras', 'vencimientos', 'adjudicatarios',
+                   'analitica', 'ajustes']) {
     $('vista-' + v).hidden = v !== vista;
   }
   $('filtros').hidden = vista !== 'bandeja';
@@ -1891,6 +2209,7 @@ function mostrarVista(vista) {
     // primera dejaba a un lector de pantalla seis pestañas sin ninguna seleccionada.
     b.setAttribute('aria-selected', activa ? 'true' : 'false');
   }
+  if (vista === 'resumen') cargarResumenVista();
   if (vista === 'otras') cargarOtras();
   if (vista === 'vencimientos') cargarVencimientos();
   if (vista === 'adjudicatarios') cargarAdjudicatarios();
@@ -2119,7 +2438,14 @@ for (const id of ['otras-ccaa', 'otras-tipo', 'otras-importe', 'otras-orden', 'o
 $('otras-mas').addEventListener('click', () => cargarOtras(false));
 $('buscar-ahora').addEventListener('click', () => lanzarBusqueda());
 $('arranque-entrar').addEventListener('click', cerrarArranque);
-$('arranque-continuar').addEventListener('click', continuarTrasNovedades);
+$('arranque-sin-esperar').addEventListener('click', cerrarArranque);
+$('arranque-continuar').addEventListener('click', continuarArranque);
+$('terminada-ver').addEventListener('click', () => {
+  $('busqueda-terminada').hidden = true;
+  periodoResumen = 'busqueda';
+  mostrarVista('resumen');
+});
+$('terminada-cerrar').addEventListener('click', () => { $('busqueda-terminada').hidden = true; });
 $('previsualizar').addEventListener('click', () => previsualizarAjustes());
 $('guardar-perfiles').addEventListener('click', () => guardarAjustes());
 $('tab-novedades').addEventListener('click', async () => {

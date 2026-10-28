@@ -253,6 +253,8 @@ class Manejador(BaseHTTPRequestHandler):
 
         elif partes.path == "/api/busqueda-estado":
             activa = busqueda.en_marcha()
+            detalle = busqueda.detalle_progreso() if activa else None
+            ultima = consultas._ultima_busqueda(self.con)
             self._json({
                 "en_marcha": activa is not None,
                 "iniciada": (activa or {}).get("iniciada"),
@@ -260,9 +262,22 @@ class Manejador(BaseHTTPRequestHandler):
                 # Etapa, fase, bytes y ficheros: es lo que pinta la barra. La
                 # aplicación distingue una carga inicial de una búsqueda normal por
                 # `detalle.etapas`, que solo es > 0 en la primera.
-                "detalle": busqueda.detalle_progreso() if activa else None,
-                "ultima_busqueda": consultas._ultima_busqueda(self.con),
+                "detalle": detalle,
+                # Por qué tarda, en castellano: la enseña la pantalla de arranque
+                # cuando la búsqueda se alarga.
+                "explicacion": busqueda.explicar_lentitud(detalle, ultima) if activa else None,
+                "ultima_busqueda": ultima,
             })
+
+        elif partes.path == "/api/resumen-novedades":
+            try:
+                self._json(consultas.resumen_novedades(
+                    self.con,
+                    params.get("periodo") or "busqueda",
+                    perfiles_activos=_perfiles_activos(),
+                ))
+            except ValueError as exc:
+                self._error(str(exc))
 
         elif partes.path == "/api/actualizacion":
             # Sale a internet, así que puede tardar unos segundos y puede fallar; por eso
@@ -370,6 +385,10 @@ class Manejador(BaseHTTPRequestHandler):
 
             self._json(actualizacion.lanzar())
             return
+
+        if partes.path == "/api/resumen/apertura":
+            # Se entra en la aplicación: lo de hasta ahora pasa a ser «la última vez».
+            return self._json({"ok": True, "previa": db.rotar_apertura(self.con)})
 
         if partes.path == "/api/novedades/vistas":
             from . import novedades

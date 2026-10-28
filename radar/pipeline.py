@@ -11,7 +11,7 @@ import logging
 import sqlite3
 import zipfile
 
-from . import db, net, progreso
+from . import db, net, progreso, vigilante
 from .matching import Perfil, terminos_para_consultas
 from .sources.catalunya import FuenteCatalunya
 from .sources.placsp import DATASETS as DATASETS_PLACSP, FuentePLACSP
@@ -223,6 +223,13 @@ def ingerir(con: sqlite3.Connection, fuentes: list, *, anios: list[int] | None =
         except Exception as exc:  # noqa: BLE001 - se aísla la fuente a propósito
             error = f"{type(exc).__name__}: {exc}"
             log.error("Fuente %s falló: %s", fuente.nombre, error)
+        except vigilante.Atascada as exc:
+            # El vigilante ha cortado esta fuente porque llevaba un cuarto de hora sin
+            # moverse. Se trata como cualquier otro fallo: se guarda lo que ya había
+            # llegado, el cursor no se toca —la próxima búsqueda la retoma— y se sigue
+            # con las demás. Un PLACSP clavado no tiene por qué dejarte sin TED.
+            error = f"atascada: {exc}"
+            log.error("Fuente %s cortada: %s", fuente.nombre, error)
 
         con.commit()
         db.cerrar_ingest(
