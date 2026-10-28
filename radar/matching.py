@@ -225,8 +225,9 @@ def evaluar(perfil: Perfil, texto: str, cpvs: list[str], importe: float | None,
     """Aplica un perfil a una licitación.
 
     `ya_normalizado` evita repetir la normalización del texto una vez por perfil.
-    La base la guarda hecha (columna `texto_norm`), y eso convertía una evaluación
-    de 8,7 segundos sobre 127.000 registros en algo instantáneo.
+    La base la guarda hecha (columna `texto_reglas_norm`, la que lee `_SELECT_EVAL`), y
+    eso convertía una evaluación de 8,7 segundos sobre 127.000 registros en algo
+    instantáneo.
     """
     if not hasattr(perfil, "_fuertes"):
         perfil.preparar()
@@ -467,10 +468,15 @@ def previsualizar(con, perfiles: list[Perfil]) -> dict:
         f["licitacion_id"] for f in con.execute("SELECT DISTINCT licitacion_id FROM matches")
     }
     nuevas: set[int] = set()
-    for fila in con.execute(
-        """SELECT id, COALESCE(texto_norm, '') AS texto, cpv, importe_referencia,
-                  ccaa, fuente FROM licitaciones"""
-    ):
+    # Y por lo mismo se lee con la MISMA consulta que `reevaluar`, no con una copia. Aquí
+    # había una propia que se quedó en `texto_norm` cuando `_SELECT_EVAL` pasó a
+    # `texto_reglas_norm` (ver `VERSION_MATCHING`): la previsualización seguía dejando
+    # que el nombre del órgano casara y la bandeja ya no. Sobre la base real, sin tocar
+    # un solo término, decía «Pasarías de 537 a 664 (130 entran, 3 salen)»: entraban
+    # obras del «Departament d'Educació i Formació Professional», que regalaba el
+    # término ambiguo, y salía la herramienta DMARC de «Correos y Telégrafos», excluida
+    # por el nombre de quien la compra. Con la consulta compartida dice 0 y 0.
+    for fila in con.execute(_SELECT_EVAL):
         cpvs = (fila["cpv"] or "").split()
         for perfil in perfiles:
             if evaluar(perfil, fila["texto"], cpvs, fila["importe_referencia"],
@@ -566,6 +572,9 @@ CAMPOS_HUELLA_PERFIL = (
 # antes de escribir nada.
 LOTE = 5_000
 
+# Lo que se evalúa. Lo comparten `reevaluar` y `previsualizar`, y tiene que seguir así:
+# si cada una leyera su texto, «Ver qué cambiaría» prometería una bandeja distinta de
+# la que deja el botón de guardar.
 _SELECT_EVAL = """SELECT id, COALESCE(texto_reglas_norm, '') AS texto, cpv,
                          importe_referencia, ccaa, fuente FROM licitaciones"""
 
