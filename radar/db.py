@@ -278,6 +278,13 @@ INDICES_NUEVOS = (
     # con EXPLAIN QUERY PLAN, escrito como `IS NULL OR <>` el índice no se usa.
     "CREATE INDEX IF NOT EXISTS idx_lic_pendientes ON licitaciones (id) "
     "WHERE huella_evaluada IS NOT huella",
+    # Para enlazar una consulta previa con la licitación que sale de ella: mismo NIF de
+    # órgano y mismo número de expediente, sin mayúsculas ni espacios. Es un índice de
+    # EXPRESIÓN y la consulta tiene que escribir la expresión igual (ver
+    # `consultas.EXPEDIENTE_NORMALIZADO`). Sin él, el cruce de las 2.297 consultas con
+    # la base entera tardaba minutos.
+    "CREATE INDEX IF NOT EXISTS idx_lic_nif_exp ON licitaciones "
+    "(nif_organo, lower(replace(expediente, ' ', '')))",
 )
 
 

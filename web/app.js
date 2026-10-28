@@ -1868,6 +1868,11 @@ function bloqueResumen(r, { compacto = false } = {}) {
     p.textContent = cuando + (r.total ? ', en tu bandeja:' : '.');
     caja.appendChild(p);
   }
+  // Con algo al lado se lee mejor: «12 esta semana» dice poco si no se sabe si es mucho.
+  if (r.anterior) {
+    caja.appendChild(crear('p', 'pista resumen-cuando',
+      `Un año antes, en las mismas fechas: ${r.anterior.total.toLocaleString('es-ES')}.`));
+  }
 
   if (r.total) {
     const ul = document.createElement('ul');
@@ -2082,6 +2087,17 @@ async function cargarVencimientos() {
       mesesVencimiento = Number(b.dataset.meses);
       cargarVencimientos();
     });
+  }
+
+  // El calendario de los doce meses que vienen, encima de la lista: de un vistazo, qué
+  // meses vienen cargados y de quién son los contratos.
+  const calendario = $('calendario-vencimientos');
+  calendario.textContent = '';
+  if ((d.por_mes || []).some((m) => m.contratos)) {
+    const bloque = bloqueAnalitica('Calendario de renovaciones',
+      '¿Qué meses vienen cargados? Por expediente: un contrato con prórroga no cuenta dos veces.');
+    bloque.appendChild(calendarioRenovaciones(d.por_mes));
+    calendario.appendChild(bloque);
   }
 
   const plural = d.total === 1 ? 'contrato vence' : 'contratos vencen';
@@ -2494,11 +2510,11 @@ function pintarFichaCompetidor(cont, d, ambito) {
   if (!d.comunidades.length) {
     nota(donde, 'Ninguna adjudicación con comunidad publicada (TED no la publica).');
   } else {
-    const tope = Math.max(1, ...d.comunidades.map((x) => x.expedientes));
+    const valores = {};
     for (const x of d.comunidades) {
-      donde.appendChild(filaBarra(x.ccaa, 100 * x.expedientes / tope,
-        `${fmtEntero(x.expedientes)} · ${fmtImporteCorto(x.importe)}`, { apilada: true }));
+      valores[x.ccaa] = { valor: x.expedientes, detalle: fmtImporteCorto(x.importe) };
     }
+    donde.appendChild(mapaBaldosas(valores));
   }
 
   const clientes = bloqueAnalitica('A quién le vende', '¿Qué organismos le adjudican más?');
@@ -3390,6 +3406,7 @@ function columnas(puntos, { formato = fmtEntero, serie = '', serie2 = '',
     if (p.valor2 !== undefined && p.valor2 !== null) {
       filas.push({ valor: formato(p.valor2), nombre: serie2, clase: 'serie-2' });
     }
+    if (p.detalle) filas.push({ valor: '', nombre: p.detalle });
     conTooltip(col, p.titulo || p.etiqueta, filas);
   });
 
@@ -3574,6 +3591,135 @@ function columnasDeTramos(tramos, unidad, serie) {
   })), { serie, etiquetarTodo: true });
 }
 
+// La rampa secuencial: de 0 a `maximo` en a lo sumo cinco tramos de números redondos.
+// El cero es «sin dato» y va en el relleno neutro, no en el primer paso: así un hueco no
+// se confunde con «poco».
+// `cortes` son los límites superiores de cada paso menos el último; `pasoDe` devuelve la
+// clase (`paso-0`…`paso-5` en styles.css), que lleva el relleno y su tinta.
+function escala(cortes, minimo, maximo) {
+  const pasoDe = (v) => {
+    if (!(v > 0)) return 'paso-0';
+    const i = cortes.findIndex((c) => v <= c);
+    return 'paso-' + (i === -1 ? cortes.length + 1 : i + 1);
+  };
+  return { cortes, minimo, maximo, tramos: cortes.length + 1, pasoDe };
+}
+
+// Tramos iguales de números redondos: para recuentos pequeños, como el mapa de calor.
+function escalaLineal(maximo) {
+  const { paso } = escalaBonita(maximo, 5);
+  const tramos = Math.max(1, Math.min(5, Math.ceil(maximo / paso)));
+  return escala(Array.from({ length: tramos - 1 }, (_, i) => (i + 1) * paso), 0, tramos * paso);
+}
+
+// Tramos con el mismo número de comunidades en cada uno, para el dinero: un tramo lineal
+// pintaba de un color Madrid y del mismo todas las demás, de 28 k€ a 570 k€. Con menos de
+// cinco valores no hay quintiles que valgan y se vuelve a la lineal.
+function escalaCuantiles(valores) {
+  const v = valores.filter((x) => x > 0).sort((a, b) => a - b);
+  if (v.length < 5) return escalaLineal(Math.max(0, ...v));
+  const cortes = [0.2, 0.4, 0.6, 0.8].map((q) => v[Math.floor(q * v.length) - 1]);
+  return escala([...new Set(cortes)], v[0], v[v.length - 1]);
+}
+
+function leyendaEscala(esc, formato) {
+  const caja = crear('div', 'escala');
+  caja.appendChild(crear('span', '', formato(esc.minimo)));
+  const limites = [esc.minimo, ...esc.cortes, esc.maximo];
+  for (let i = 1; i <= esc.tramos; i++) {
+    const t = crear('span', 'tramo ' + 'paso-' + i);
+    t.title = `de ${formato(limites[i - 1])} a ${formato(limites[i])}`;
+    caja.appendChild(t);
+  }
+  caja.appendChild(crear('span', '', formato(esc.maximo)));
+  return caja;
+}
+
+// Las comunidades en una rejilla, cada una más o menos donde está: [nombre, abreviatura,
+// columna, fila]. Un mapa de verdad haría enorme a Castilla y León y diminuta a La Rioja;
+// aquí todas pesan lo mismo y lo que cuenta es el color.
+const BALDOSAS = [
+  ['Galicia', 'GAL', 0, 0], ['Asturias', 'AST', 1, 0], ['Cantabria', 'CNT', 2, 0],
+  ['País Vasco', 'PVA', 3, 0], ['Navarra', 'NAV', 4, 0],
+  ['Castilla y León', 'CYL', 2, 1], ['La Rioja', 'RIO', 3, 1], ['Aragón', 'ARA', 4, 1],
+  ['Cataluña', 'CAT', 5, 1],
+  ['Extremadura', 'EXT', 1, 2], ['Madrid', 'MAD', 2, 2], ['Castilla-La Mancha', 'CLM', 3, 2],
+  ['Comunidad Valenciana', 'VAL', 4, 2], ['Islas Baleares', 'BAL', 5, 2],
+  ['Andalucía', 'AND', 2, 3], ['Murcia', 'MUR', 3, 3],
+];
+const BALDOSAS_APARTE = [['Canarias', 'CAN', 0], ['Ceuta', 'CEU', 2], ['Melilla', 'MEL', 3]];
+
+// `valores`: { comunidad: { valor, detalle } }. La cifra va dentro de cada baldosa, con la
+// tinta que le toca a su relleno, y el detalle en el tooltip.
+function mapaBaldosas(valores, { formato = fmtEntero } = {}) {
+  const esc = escalaCuantiles(Object.values(valores).map((v) => v.valor || 0));
+  const caja = crear('div', 'mapa');
+  const pintar = (destino, [nombre, abrev, col, fila]) => {
+    const v = valores[nombre] || {};
+    const b = crear('div', `baldosa ${esc.pasoDe(v.valor)}`);
+    b.style.gridColumn = String(col + 1);
+    b.style.gridRow = String(fila + 1);
+    b.tabIndex = 0;
+    b.appendChild(crear('b', '', abrev));
+    b.appendChild(crear('span', '', v.valor ? formato(v.valor) : '—'));
+    conTooltip(b, nombre, [{ valor: v.valor ? formato(v.valor) : 'nada', nombre: v.detalle || '' }]);
+    destino.appendChild(b);
+  };
+  const rejilla = crear('div', 'baldosas');
+  BALDOSAS.forEach((b) => pintar(rejilla, b));
+  caja.appendChild(rejilla);
+  const aparte = crear('div', 'baldosas baldosas-aparte');
+  BALDOSAS_APARTE.forEach(([n, a, c]) => pintar(aparte, [n, a, c, 0]));
+  caja.appendChild(aparte);
+  caja.appendChild(leyendaEscala(esc, formato));
+  if (esc.tramos === 5 && esc.cortes.length === 4) {
+    caja.appendChild(crear('p', 'nota', 'Cada tono reúne a una quinta parte de las ' +
+      'comunidades con algo, de menos a más; pasa el ratón por la escala para ver sus límites.'));
+  }
+  return caja;
+}
+
+// Un órgano por fila y los doce meses, con la cifra dentro de cada celda que no es cero.
+function mapaCalor(filas, maximo, ambito = '') {
+  const esc = escalaLineal(maximo);
+  const rejilla = crear('div', 'calor');
+  rejilla.appendChild(crear('span', ''));
+  for (const m of MESES_CORTOS) rejilla.appendChild(crear('span', 'calor-mes', m));
+  for (const f of filas) {
+    const nombre = crear('span', 'calor-organo');
+    nombre.appendChild(enlaceFicha(f.organo, 'organismo', f.organo, ambito));
+    nombre.title = f.organo;
+    rejilla.appendChild(nombre);
+    f.meses.forEach((n, i) => {
+      const celda = crear('span', `calor-celda ${esc.pasoDe(n)}`, n ? String(n) : '');
+      celda.tabIndex = 0;
+      conTooltip(celda, `${f.organo} · ${MESES_CORTOS[i]}`,
+                 [{ valor: fmtEntero(n), nombre: n === 1 ? 'expediente' : 'expedientes' }]);
+      rejilla.appendChild(celda);
+    });
+  }
+  const caja = crear('div', 'mapa');
+  caja.appendChild(rejilla);
+  caja.appendChild(leyendaEscala(esc, fmtEntero));
+  return caja;
+}
+
+// Los doce meses que vienen, con cuántos contratos acaban en cada uno y de quién son.
+function calendarioRenovaciones(porMes) {
+  return columnas(porMes.map((m) => {
+    const mes = Number(m.mes.slice(5, 7));
+    const etiqueta = MESES_CORTOS[mes - 1] + (mes === 1 ? ` ${m.mes.slice(2, 4)}` : '');
+    return {
+      etiqueta,
+      titulo: `${MESES_CORTOS[mes - 1]} ${m.mes.slice(0, 4)}`,
+      valor: m.contratos,
+      detalle: m.incumbentes.length
+        ? 'incumbentes: ' + m.incumbentes.map((i) => `${i.empresa} (${i.contratos})`).join(', ')
+        : '',
+    };
+  }), { serie: 'contratos que vencen', etiquetarTodo: true });
+}
+
 // --- Los bloques ------------------------------------------------------------------
 
 function pintarCalendario(d) {
@@ -3720,6 +3866,7 @@ function pintarRenovaciones(d, mercado) {
     '¿Quién tiene un contrato acabándose antes de que salga el pliego nuevo?', 'renovaciones');
   titular(el, d.expedientes.toLocaleString('es-ES'),
           `contratos vencen en ${d.meses} meses · ${d.con_incumbente} con incumbente identificado`);
+  if (d.por_mes) el.appendChild(calendarioRenovaciones(d.por_mes));
   // Vencimientos solo lista lo de tus perfiles: mandar ahí desde una temática del
   // mercado llevaría a una lista que no cuadra con esta cifra.
   if (!mercado) {
@@ -3884,6 +4031,153 @@ function pintarOrganos(d, mercado) {
   return el;
 }
 
+// El dinero por comunidad en un mapa. Los mismos datos que las barras de al lado, sin los
+// contratos de más de 50 M€, que no caben en ninguna escala (van contados al pie).
+function pintarMapa(d, titulo, pregunta, ancla) {
+  const el = bloqueAnalitica(titulo, pregunta, ancla);
+  if (!d.comunidades.length) {
+    nota(el, 'Nada con comunidad publicada en este periodo.');
+    return el;
+  }
+  const valores = {};
+  for (const c of d.comunidades) {
+    valores[c.ccaa] = { valor: c.importe,
+                        detalle: `${fmtEntero(c.expedientes)} ${c.expedientes === 1 ? 'expediente' : 'expedientes'}` };
+  }
+  el.appendChild(mapaBaldosas(valores, { formato: fmtImporteCorto }));
+  const pie = [];
+  if (d.excluidos.length) {
+    pie.push(`Fuera del mapa, ${fmtEntero(d.excluidos.length)} ${d.excluidos.length === 1
+      ? 'contrato' : 'contratos'} de más de ${fmtImporteCorto(d.importe_maximo)}.`);
+  }
+  if (d.sin_comunidad) pie.push(`${fmtEntero(d.sin_comunidad)} sin comunidad (TED no la publica).`);
+  if (pie.length) nota(el, pie.join(' '));
+  return el;
+}
+
+function pintarEstacionalidad(d) {
+  const el = bloqueAnalitica('Cuándo publica cada uno',
+    '¿En qué meses saca sus expedientes cada uno de los que más compran?', 'estacionalidad');
+  if (!d.organos.length) {
+    nota(el, 'Nada con órgano publicado en este periodo.');
+    return el;
+  }
+  el.appendChild(mapaCalor(d.organos, d.maximo, ambitoAnalitica));
+  const m = metodo(el);
+  nota(m, `Los ${d.organos.length} órganos con más expedientes de ${fmtEntero(d.distintos)}, ` +
+          'por el mes de la primera publicación de cada expediente, sumando los años del ' +
+          'periodo de arriba. Pulsa un órgano para ver su ficha.');
+  return el;
+}
+
+const SERIES_CUOTA = ['serie-1', 'serie-2', 'serie-3', 'serie-4', 'serie-5'];
+
+function textoVariacion(v, anio) {
+  if (v === null || v === undefined) return '';
+  if (v === 0) return `= frente a ${anio}`;
+  return `${v > 0 ? '↑' : '↓'} ${fmtDecimal(Math.abs(v))} pts`;
+}
+
+function pintarCuota(d) {
+  const el = bloqueAnalitica('Cuota de mercado',
+    '¿Quién se lleva más expedientes cada año, y quién crece y quién se cae?', 'cuota');
+  if (!d.suficiente) return insuficiente(el, d.minimo_expedientes, 'adjudicación');
+  const fig = crear('div', 'cuota');
+  d.anios.forEach((anio, i) => {
+    const fila = crear('div', 'cuota-fila');
+    fila.appendChild(crear('span', 'anio', anio + (anio === d.anio_en_curso ? '*' : '')));
+    const barra = crear('div', 'apilada-barra');
+    const partes = [
+      ...d.empresas.map((e, k) => ({ nombre: e.empresa, clase: SERIES_CUOTA[k], ...e.por_anio[i] })),
+      { nombre: 'Otras empresas', clase: 'serie-gris', ...d.otros[i] },
+    ];
+    for (const parte of partes) {
+      if (!parte.expedientes) continue;
+      const seg = crear('span', `apilada-seg ${parte.clase}`);
+      seg.style.flexGrow = String(parte.expedientes);
+      seg.tabIndex = 0;
+      conTooltip(seg, `${parte.nombre} · ${anio}`, [{
+        valor: `${fmtDecimal(parte.cuota)} %`,
+        nombre: `${fmtEntero(parte.expedientes)} de ${fmtEntero(d.totales[i].expedientes)}` +
+                (parte.importe ? ` · ${fmtImporteCorto(parte.importe)}` : ''),
+      }]);
+      barra.appendChild(seg);
+    }
+    fila.appendChild(barra);
+    fig.appendChild(fila);
+  });
+  el.appendChild(fig);
+
+  // La leyenda lleva la cifra del último año escrita, que es lo que da la lectura: tres de
+  // los cinco colores no llegan a 3:1 sobre el blanco y no pueden ser lo único que la dé.
+  const ultimo = d.anios.length - 1;
+  const anterior = d.anios[ultimo - 1];
+  const lista = crear('ul', 'cuota-leyenda');
+  d.empresas.forEach((e, k) => {
+    const li = crear('li');
+    li.appendChild(crear('span', `muestra rect ${SERIES_CUOTA[k]}`));
+    const nombre = crear('span', 'apilada-nombre');
+    nombre.appendChild(enlaceFicha(e.empresa, 'competidor', e.empresa, ambitoAnalitica));
+    li.appendChild(nombre);
+    li.appendChild(crear('strong', '', `${fmtDecimal(e.por_anio[ultimo].cuota)} %`));
+    li.appendChild(crear('span', 'variacion', textoVariacion(e.variacion, anterior)));
+    lista.appendChild(li);
+  });
+  const li = crear('li');
+  li.appendChild(crear('span', 'muestra rect serie-gris'));
+  li.appendChild(crear('span', 'apilada-nombre',
+    `Otras ${fmtEntero(d.empresas_distintas - d.empresas.length)} empresas`));
+  li.appendChild(crear('strong', '', `${fmtDecimal(d.otros[ultimo].cuota)} %`));
+  li.appendChild(crear('span', 'variacion', ''));
+  lista.appendChild(li);
+  el.appendChild(lista);
+  nota(el, `Cuota en ${d.anios[ultimo]}${d.anios[ultimo] === d.anio_en_curso ? ' (en curso, *)' : ''}` +
+           ` y diferencia en puntos frente a ${anterior}.`);
+  const m = metodo(el);
+  nota(m, `Expedientes adjudicados con empresa publicada, por el año de la adjudicación (o el ` +
+          `de la primera publicación si no se fecha), desde ${d.siempre_desde}. Las cinco son ` +
+          'las que más ganan en todos esos años juntos, para que cada una tenga siempre el ' +
+          'mismo color. No depende del periodo de arriba: una cuota de tres meses no dice nada.');
+  return el;
+}
+
+function pintarConsultas(d) {
+  const el = bloqueAnalitica('De consulta previa a pliego',
+    '¿Cuánto margen da una consulta preliminar de mercado antes de que salga la licitación?',
+    'consultas');
+  if (d.mediana_dias !== null) {
+    titular(el, `${d.mediana_dias} días`,
+            `de mediana · la mitad entre ${d.p25} y ${d.p75}`);
+  }
+  if (d.suficiente) {
+    el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'consultas'));
+  }
+  nota(el, `En todo el mercado: ${fmtEntero(d.enlazadas)} de ${fmtEntero(d.consultas)} consultas ` +
+           'se han podido enlazar con su licitación. Es un mínimo: muchas cambian de número ' +
+           'al licitarse.');
+  const m = metodo(el);
+  nota(m, 'Se enlaza solo lo seguro: mismo NIF de órgano y mismo número de expediente, sin ' +
+          'mayúsculas ni espacios, y la licitación publicada después. Se mide sobre todo el ' +
+          'histórico y todo el mercado, porque en un solo nicho apenas hay casos.');
+
+  const titulo = crear('h4', '', d.abiertas_total
+    ? `Abiertas en tu ámbito y todavía sin pliego: ${fmtEntero(d.abiertas_total)}`
+    : 'Ninguna consulta abierta en tu ámbito sin pliego todavía');
+  el.appendChild(titulo);
+  if (d.abiertas.length) {
+    const lista = crear('div', 'lista');
+    for (const it of d.abiertas) lista.appendChild(tarjeta(it));
+    el.appendChild(lista);
+  } else {
+    nota(el, d.del_ambito === 1
+      ? 'La única consulta de tu ámbito ya no está abierta o ya tiene licitación.'
+      : d.del_ambito
+        ? `De las ${fmtEntero(d.del_ambito)} consultas de tu ámbito, ninguna sigue abierta sin licitación.`
+        : 'En este ámbito no ha entrado ninguna consulta preliminar.');
+  }
+  return el;
+}
+
 function pintarAdjudicatarios(d) {
   const el = bloqueAnalitica('Quién gana',
     '¿Qué empresas se llevan estos contratos, y contra quién voy a competir?',
@@ -4005,15 +4299,43 @@ function pintarCifrasClave(d) {
     ['Vencen pronto', d.renovaciones.expedientes.toLocaleString('es-ES'),
      `en ${d.renovaciones.meses} meses`, 'renovaciones'],
   ].filter(Boolean);
+  const comparado = comparacionCifras(d);
   for (const [etiqueta, valor, pie, ancla] of cifras) {
     const b = crear('button', 'cifra-clave');
     b.appendChild(crear('span', 't', etiqueta));
     b.appendChild(crear('span', 'n', valor));
     b.appendChild(crear('span', 's', pie));
+    if (comparado[ancla]) b.appendChild(crear('span', 'comparado', comparado[ancla]));
     b.addEventListener('click', ir(ancla));
     fila.appendChild(b);
   }
   return fila;
+}
+
+// «Lo que va de año» frente a las mismas fechas del año anterior. El recuento, en tanto por
+// ciento; las medianas, con la cifra de entonces al lado, porque «la baja sube un 7 %» no se
+// entiende y «en 2025 era del 15,0 %» sí. En color de texto: subir no siempre es bueno.
+function comparacionCifras(d) {
+  const c = d.comparacion;
+  if (!c) return {};
+  const antes = `en ${c.anio}, mismas fechas`;
+  const salida = {};
+  if (c.expedientes) {
+    const cambio = Math.round(100 * (d.generado_para.expedientes - c.expedientes) / c.expedientes);
+    salida.calendario = cambio === 0 ? `= que ${c.anio} (${fmtEntero(c.expedientes)})`
+      : `${cambio > 0 ? '↑' : '↓'} ${Math.abs(cambio)} % frente a ${c.anio} (${fmtEntero(c.expedientes)})`;
+  }
+  if (c.importe_mediano) salida.importes = `${antes}: ${fmtImporteCorto(c.importe_mediano)}`;
+  if (c.baja_mediana !== null && d.baja.suficiente) {
+    salida.baja = `${antes}: ${fmtDecimal(c.baja_mediana)} %`;
+  }
+  if (c.plazo_mediano !== null && d.plazo.suficiente) {
+    salida.plazo = `${antes}: ${c.plazo_mediano} días`;
+  }
+  if (c.ciclo_mediano !== null && d.ciclo.suficiente) {
+    salida.ciclo = `${antes}: ${c.ciclo_mediano} días`;
+  }
+  return salida;
 }
 
 // Mientras llega el rango nuevo se deja el anterior a la vista, apagado, en lugar de
@@ -4099,6 +4421,10 @@ async function cargarAnalitica() {
     // Dinero a la izquierda y número a la derecha de la MISMA pregunta: el orden de las
     // dos listas casi nunca coincide —Cataluña es 3.ª en euros y 2.ª en operaciones, País
     // Vasco 10.ª y 6.ª— y ese desajuste es justo lo que hay que poder ver de un vistazo.
+    [pintarMapa(d.comunidades.adjudicadas, 'Mapa del dinero adjudicado',
+                '¿En qué comunidades se ha adjudicado el dinero?', 'mapa-adjudicado'),
+     pintarMapa(d.comunidades.activas, 'Mapa del dinero en juego',
+                '¿Dónde queda dinero con el plazo todavía abierto?', 'mapa-activo')],
     [pintarComunidades(d.comunidades.adjudicadas,
                        'Comunidades por importe adjudicado',
                        '¿Dónde se ha repartido el dinero que ya está adjudicado?',
@@ -4115,7 +4441,11 @@ async function cargarAnalitica() {
                        '¿Dónde hay más pliegos abiertos ahora mismo?')],
     // Quién compra y quién gana, juntos: son las dos llamadas que salen de esta pestaña.
     [pintarOrganos(d.organos, g.mercado), pintarAdjudicatarios(d.adjudicatarios)],
+    // Los dos a lo ancho: doce meses por diez órganos, y tres años de seis empresas.
+    [pintarEstacionalidad(d.estacionalidad)],
+    [pintarCuota(d.cuota)],
     [pintarCpv(d.cpv), pintarProcedimiento(d.procedimiento)],
+    [pintarConsultas(d.consultas)],
     // La cartera, con tu triaje y tus puntuaciones, solo existe para tus perfiles: con
     // una temática el servidor la manda vacía y las renovaciones se quedan solas.
     d.cartera ? [pintarRenovaciones(d.renovaciones, g.mercado), pintarCartera(d.cartera)]

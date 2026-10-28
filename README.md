@@ -311,8 +311,10 @@ The same as on opening, for any period:
 | Última semana · Último mes · Último trimestre (week · month · quarter) | what was **published** in that span, by the date of the case file's first notice |
 
 The first two count what entered the radar; the calendar ones, what was published, so
-that after the initial load «last quarter» is not three years of history. The case files
-are listed below, with the same card as the Inbox.
+that after the initial load «last quarter» is not three years of history. The calendar
+ones also say how many there were **on the same dates a year earlier**, so you know
+whether 12 in a week is a lot or a little. The case files are listed below, with the same
+card as the Inbox.
 
 ### The numbers in the Inbox
 
@@ -495,7 +497,8 @@ much, so you can compare at a glance. This is the list to call *before* the tend
 documents come out, while you can still influence them. Only contracts that publish an
 end date or a duration appear: if the source does not give one, the tender is left out
 rather than estimated by eye. The contracting body and the incumbent on each card lead
-to their profile.
+to their profile. Above sits the **renewals calendar**: how many contracts end in each of
+the next twelve months, per procurement file, with their incumbents on hover.
 
 ### Adjudicatarios (Winning bidders)
 
@@ -538,8 +541,8 @@ page. From a tender that does not match your profiles, the profile opens with al
 
 ### Analítica (Analytics)
 
-The questions that are not "what is out there today". Fifteen blocks, each led by a
-sales question, in the order they are read:
+The questions that are not "what is out there today". At the top, a row of key figures;
+below, twenty blocks, each led by a sales question, in the order they are read:
 
 | Block | Answers |
 |---|---|
@@ -547,22 +550,41 @@ sales question, in the order they are read:
 | Tamaño de los contratos (Contract size) | how big these deals really are |
 | Importe al que se están cerrando los contratos (Value contracts are being awarded at) | how far below budget they are being awarded |
 | Cuánto tiempo tengo para presentar (How long I have to bid) | how many days there are from notice to deadline: if I see it today, whether there is time to write the bid |
+| Cuándo entra en el forecast (When it hits the forecast) | how many days pass from publication to award |
+| Mapa del dinero adjudicado · en juego (Map of money awarded · in play) | the same as the region bars, as a tile map: each region in its place and one shade per fifth, from least to most |
 | Top comunidades por adjudicaciones (Top regions by awards) | where the money already awarded has gone |
 | Top comunidades por número total de adjudicaciones (Top regions by total number of awards) | where the most deals close, whatever their size |
 | Top comunidades por licitaciones activas (Top regions by active tenders) | where there is money still in play, with the deadline still open |
 | Top comunidades por número de licitaciones activas (Top regions by number of active tenders) | where the most tenders are open right now |
 | Quién compra (Who buys) | which contracting authorities keep coming back, and which are worth going to see |
 | Quién gana (Who wins) | which companies win the most procurement files, and who you will be competing against |
+| Cuándo publica cada uno (When each one publishes) | a heatmap of the ten bodies that buy most by the twelve months: when to call each one |
+| Cuota de mercado (Market share) | the five companies that win most since 2024 and the rest, year by year, with the difference in points between the last two: who grows and who falls |
 | Qué compran exactamente (What exactly they buy) | which CPV codes your product falls under, with a link to fine-tune the terms |
 | Cómo se compra (How they buy) | the way in: open, simplified, restricted or by-invitation procedure |
-| Cuándo entra en el forecast (When it hits the forecast) | how many days pass from publication to award |
-| A quién llamo antes del pliego (Who to call before the tender) | how many contracts end within six months, with a known incumbent |
+| De consulta previa a pliego (From preliminary consultation to tender) | how long a preliminary market consultation takes to become a tender (market-wide: about 130 days median), and which consultations in your scope are still open with no tender. It is the earliest warning there is |
+| A quién llamo antes del pliego (Who to call before the tender) | how many contracts end within six months, with a known incumbent, and the calendar of the next twelve months |
 | Qué tengo de verdad hoy (What I really have today) | whether this is a pipeline or a historical archive |
 
 It is filtered by **scope** and by one of three ranges (this year, last 24 months,
-everything since 2024). The two blocks that talk about *now* — renewals and pipeline —
-deliberately ignore the range and say so, because a filter that is silently ignored is
-worse than one that is missing.
+everything since 2024). The blocks that talk about *now* — renewals and pipeline —, market
+share (always since 2024) and preliminary consultations (the whole history) deliberately
+ignore the range and say so, because a filter that is silently ignored is worse than one
+that is missing.
+
+With **this year**, each key figure is compared with **the same dates of the previous
+year** (from 1 January to today's date a year ago, not the whole year): «↓ 21 % frente a
+2025» for procurement files, and that year's median for the rest. In text colour and not
+green or red, because going up is not always good: a discount that rises is margin lost.
+
+The consultation-to-tender link only joins what is **certain**: same contracting body
+tax ID and same file number, ignoring case and spaces, with the tender published later.
+Many consultations change number when tendered, so what is linked is a minimum, and the
+block says so. To make it fast there is a new index, built automatically the first time
+this version opens: on a 4 GB database that is about 20 seconds, once.
+
+The body and company names in «Quién compra», «Quién gana», the heatmap and market share
+lead to their profiles.
 
 The scope can be your profiles — all of them or one — or one of the **market topics**
 from «Otras licitaciones», or all of IT together. With a topic, it looks at the whole

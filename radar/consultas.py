@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from . import categorias, db
 from .model import ESTADOS_VIVOS
@@ -973,6 +973,30 @@ def _filtro_ventana(v: dict, alias: str) -> tuple[str, list]:
     return sql, params
 
 
+def _total_un_anio_antes(con, periodo: str) -> dict:
+    """Cuántos expedientes nuevos hubo en el mismo periodo, un año antes.
+
+    Con la misma regla que el total —el expediente cuenta en la ventana en la que sale su
+    primer anuncio— y la misma entrada por `matches`. Sirve para leer «12 esta semana» con
+    algo al lado: si hace un año fueron 4, es que algo pasa.
+    """
+    desde, hasta = con.execute(
+        "SELECT date('now', ?, '-1 year'), date('now', '-1 year', '+1 day')",
+        (f"-{DIAS_PERIODO[periodo]} day",)).fetchone()
+    total = con.execute(
+        f"""SELECT COUNT(DISTINCT {_GRUPO})
+              FROM matches m
+              JOIN licitaciones l ON l.id = m.licitacion_id
+              LEFT JOIN revisiones r ON r.licitacion_id = l.id
+             WHERE COALESCE(r.estado, 'nuevo') != 'descartado'
+               AND l.fecha_publicacion >= ? AND l.fecha_publicacion < ?
+               AND (l.clave_grupo IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM licitaciones o WHERE o.clave_grupo = l.clave_grupo
+                       AND o.fecha_publicacion < ?))""",
+        (desde, hasta, desde)).fetchone()[0]
+    return {"total": total, "desde": desde, "hasta": hasta}
+
+
 def resumen_novedades(con: sqlite3.Connection, periodo: str = "busqueda", *,
                       perfiles_activos: list[str] | None = None) -> dict:
     """Expedientes nuevos del periodo, por perfil y por temática, y los primeros de ellos.
@@ -1038,6 +1062,8 @@ def resumen_novedades(con: sqlite3.Connection, periodo: str = "busqueda", *,
         for perfil in gr["perfiles"]:
             conteo[perfil] = conteo.get(perfil, 0) + 1
     salida["total"] = len(grupos)
+    if "corte" in v:
+        salida["anterior"] = _total_un_anio_antes(con, periodo)
     salida["por_perfil"] = sorted(
         ({"perfil": n, "total": t} for n, t in conteo.items()),
         key=lambda p: (-p["total"], p["perfil"]),
@@ -1386,7 +1412,54 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200) 
         # Recuento de cada ventana, para poder comparar de un vistazo sin cambiar
         # de selección una por una.
         "por_ventana": ventanas_vencimiento(con),
+        "por_mes": vencimientos_por_mes(con),
     }
+
+
+MESES_CALENDARIO_RENOVACIONES = 12
+INCUMBENTES_POR_MES = 3
+
+
+def vencimientos_por_mes(con: sqlite3.Connection, ambito: "Ambito | None" = None,
+                         meses: int = MESES_CALENDARIO_RENOVACIONES) -> list[dict]:
+    """El calendario de renovaciones: cuántos contratos acaban cada uno de los próximos
+    meses, y de quién son.
+
+    Uno por EXPEDIENTE, con su fin más tardío: un contrato con prórroga publicada no
+    vence dos veces. Los doce meses salen siempre, también los vacíos, porque un mes sin
+    nada que renovar también es una respuesta. Sin suma de importes por el mismo motivo
+    que el resto de la Analítica.
+    """
+    entrada, params = _entrada_expedientes(ambito)
+    filas = con.execute(
+        f"SELECT g, MAX(fin) AS fin, MAX(inc) AS inc FROM ("
+        f"  SELECT {_GRUPO} AS g, substr(l.fecha_fin_prevista, 1, 7) AS fin,"
+        "          l.adjudicatario AS inc"
+        f"  {entrada} AND {EN_VENTANA}) GROUP BY g",
+        params + [f"+{int(meses)} months"],
+    ).fetchall()
+    hoy = date.today()
+    calendario = []
+    for i in range(meses):
+        anio, mes = hoy.year + (hoy.month - 1 + i) // 12, (hoy.month - 1 + i) % 12 + 1
+        calendario.append({"mes": f"{anio}-{mes:02d}", "contratos": 0, "_inc": {}})
+    por_mes = {c["mes"]: c for c in calendario}
+    claves: dict = {}
+    for f in filas:
+        c = por_mes.get(f["fin"])
+        if c is None:
+            continue
+        c["contratos"] += 1
+        if f["inc"]:
+            if f["inc"] not in claves:
+                claves[f["inc"]] = normalizar_empresa(f["inc"])
+            clave = claves[f["inc"]]
+            nombre, n = c["_inc"].get(clave, (f["inc"], 0))
+            c["_inc"][clave] = (max(nombre, f["inc"], key=len), n + 1)
+    for c in calendario:
+        orden = sorted(c.pop("_inc").values(), key=lambda x: (-x[1], x[0]))
+        c["incumbentes"] = [{"empresa": e, "contratos": n} for e, n in orden[:INCUMBENTES_POR_MES]]
+    return calendario
 
 
 def ventanas_vencimiento(con: sqlite3.Connection,
@@ -1691,14 +1764,15 @@ def _rango(desde: str | None, hasta: str | None) -> tuple[str, list]:
     expediente «sale» cuando aparece su primer anuncio, no cuando se publica su
     adjudicación. Y de paso fija la semántica del filtro temporal de la pestaña:
     «expedientes que aparecieron por primera vez dentro del rango».
+
+    Acepta también días, 'AAAA-MM-DD', para la comparación con el año anterior: «lo que
+    va de año» tiene que medirse contra la misma ventana de días, no contra el año entero.
     """
     trozos, params = [], []
-    if desde:
-        trozos.append("mes >= ?")
-        params.append(desde)
-    if hasta:
-        trozos.append("mes <= ?")
-        params.append(hasta)
+    for valor, operador in ((desde, ">="), (hasta, "<=")):
+        if valor:
+            trozos.append(f"{'dia' if len(valor) == 10 else 'mes'} {operador} ?")
+            params.append(valor)
     return (" HAVING " + " AND ".join(trozos)) if trozos else "", params
 
 
@@ -1721,6 +1795,7 @@ def _expedientes(ambito: "Ambito | None", desde: str | None, hasta: str | None,
     sql = (
         f"SELECT {_GRUPO} AS g,"
         " MIN(substr(l.fecha_publicacion, 1, 7)) AS mes,"
+        " MIN(substr(l.fecha_publicacion, 1, 10)) AS dia,"
         " MAX(COALESCE(l.importe_adjudicacion, l.importe_referencia)) AS imp,"
         " MAX(mm.punt) AS punt"
         f"{extra}"
@@ -2016,7 +2091,8 @@ def _bloque_renovaciones(con, ambito) -> dict:
         "   GROUP BY g)", params + [f"+{MESES_RENOVACION} months"]
     ).fetchone()
     return {"expedientes": f["expedientes"], "con_incumbente": f["con_incumbente"],
-            "meses": MESES_RENOVACION, "siempre_a_fecha_de_hoy": True}
+            "meses": MESES_RENOVACION, "siempre_a_fecha_de_hoy": True,
+            "por_mes": vencimientos_por_mes(con, ambito)}
 
 
 def _bloque_ciclo(con, ambito, desde, hasta) -> dict:
@@ -2494,6 +2570,233 @@ def _bloque_adjudicatarios(con, ambito, desde, hasta) -> dict:
     }
 
 
+# --- Cuota de mercado, estacionalidad, consultas previas y año anterior ------------
+
+# La cuota se cuenta desde aquí: es lo que cubre el histórico de la carga inicial.
+CUOTA_DESDE = 2024
+CUOTA_EMPRESAS = 5
+ESTACIONALIDAD_ORGANOS = 10
+FUENTE_CONSULTAS = "placsp:consultas_previas"
+TRAMOS_CONSULTA = (30, 90, 180, 365)
+CONSULTAS_ABIERTAS = 10
+# Lo que dura «abierta» una consulta que no publica fecha de cierre.
+MESES_CONSULTA_SIN_FECHA = 6
+
+# La expresión del índice `idx_lic_nif_exp`. Tiene que ser literalmente la misma para
+# que SQLite lo use.
+EXPEDIENTE_NORMALIZADO = "lower(replace({t}.expediente, ' ', ''))"
+
+
+def _bloque_cuota(con, ambito) -> dict:
+    """Quién se reparte el mercado, año a año: las cinco empresas que más expedientes
+    ganan y el resto, en columnas al 100 %.
+
+    Las cinco son las del TOTAL de esos años, no las de cada uno, para que una empresa no
+    cambie de color ni desaparezca de un año al siguiente: el color va con la empresa y
+    no con su puesto. El ganador de cada expediente es el de su adjudicación más
+    reciente, y el año, el de esa adjudicación (o el de la primera publicación si la
+    fuente no la fecha). No depende del rango de la pestaña: una cuota de tres meses no
+    dice nada.
+    """
+    entrada, params = _entrada_expedientes(ambito)
+    filas = con.execute(
+        "SELECT g, adjudicatario, imp, anio FROM ("
+        f"  SELECT {_GRUPO} AS g, l.adjudicatario,"
+        "          COALESCE(l.importe_adjudicacion, l.importe_referencia) AS imp,"
+        "          substr(COALESCE(l.fecha_adjudicacion, l.fecha_publicacion), 1, 4) AS anio,"
+        f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+        "             ORDER BY l.fecha_adjudicacion DESC, l.id DESC) AS rn"
+        f"  {entrada} AND l.adjudicatario IS NOT NULL"
+        ") WHERE rn = 1", params,
+    ).fetchall()
+    hoy = date.today()
+    anios = [str(a) for a in range(CUOTA_DESDE, hoy.year + 1)]
+    claves: dict = {}
+    nombres: dict = {}
+    total_por: dict = {}
+    celdas: dict = {}
+    por_anio = {a: 0 for a in anios}
+    for f in filas:
+        if f["anio"] not in por_anio:
+            continue
+        if f["adjudicatario"] not in claves:
+            claves[f["adjudicatario"]] = normalizar_empresa(f["adjudicatario"])
+        clave = claves[f["adjudicatario"]]
+        if not clave:
+            continue
+        nombres.setdefault(clave, set()).add(f["adjudicatario"])
+        total_por[clave] = total_por.get(clave, 0) + 1
+        c = celdas.setdefault((clave, f["anio"]), {"expedientes": 0, "importe": 0.0})
+        c["expedientes"] += 1
+        c["importe"] += f["imp"] or 0
+        por_anio[f["anio"]] += 1
+
+    primeras = sorted(total_por, key=lambda k: (-total_por[k], k))[:CUOTA_EMPRESAS]
+
+    def serie(clave):
+        datos = []
+        for a in anios:
+            c = celdas.get((clave, a), {"expedientes": 0, "importe": 0.0})
+            datos.append({"anio": a, **c,
+                          "cuota": round(100 * c["expedientes"] / por_anio[a], 1)
+                          if por_anio[a] else None})
+        return datos
+
+    empresas = []
+    for clave in primeras:
+        datos = serie(clave)
+        cuotas = [d["cuota"] for d in datos[-2:]]
+        empresas.append({
+            "empresa": max(nombres[clave], key=len),
+            "por_anio": datos,
+            # Puntos entre los dos últimos años: «crece» o «se cae» de un vistazo.
+            "variacion": round(cuotas[1] - cuotas[0], 1)
+                         if len(cuotas) == 2 and None not in cuotas else None,
+        })
+    otros = []
+    for i, a in enumerate(anios):
+        n = por_anio[a] - sum(e["por_anio"][i]["expedientes"] for e in empresas)
+        otros.append({"anio": a, "expedientes": n,
+                      "cuota": round(100 * n / por_anio[a], 1) if por_anio[a] else None})
+    return {
+        "anios": anios,
+        "totales": [{"anio": a, "expedientes": por_anio[a]} for a in anios],
+        "empresas": empresas,
+        "otros": otros,
+        "empresas_distintas": len(total_por),
+        "anio_en_curso": str(hoy.year),
+        "siempre_desde": CUOTA_DESDE,
+        "suficiente": sum(por_anio.values()) >= MINIMO_EXPEDIENTES_CICLO,
+        "minimo_expedientes": MINIMO_EXPEDIENTES_CICLO,
+    }
+
+
+def _bloque_estacionalidad(con, ambito, desde, hasta) -> dict:
+    """En qué meses publica cada uno de los organismos que más compran.
+
+    El calendario de la pestaña dice cuándo sale el trabajo en general; esto dice cuándo
+    hay que llamar a cada uno. Por mes de primera publicación del expediente, sumando los
+    años del rango, y con el nombre exacto del órgano, como «Quién compra».
+    """
+    base, params = _expedientes(ambito, desde, hasta, columnas="MAX(l.organo) AS organo")
+    meses: dict = {}
+    for f in con.execute(f"SELECT organo, mes FROM ({base})", params):
+        nombre = (f["organo"] or "").strip()
+        if not nombre or not f["mes"]:
+            continue
+        meses.setdefault(nombre, [0] * 12)[int(f["mes"][5:7]) - 1] += 1
+    primeros = sorted(meses.items(), key=lambda x: (-sum(x[1]), x[0]))[:ESTACIONALIDAD_ORGANOS]
+    return {
+        "organos": [{"organo": o, "total": sum(m), "meses": m} for o, m in primeros],
+        "maximo": max((max(m) for _, m in primeros), default=0),
+        "distintos": len(meses),
+    }
+
+
+def _bloque_consultas(con, ambito) -> dict:
+    """Cuánto tarda una consulta preliminar de mercado en convertirse en pliego.
+
+    Es el aviso más temprano que hay: el órgano pregunta al mercado antes de escribir el
+    pliego. Solo se enlaza lo SEGURO: mismo NIF de órgano y mismo número de expediente,
+    sin mayúsculas ni espacios, con la licitación publicada después. Muchas consultas
+    cambian de número al licitarse —«CSIC CONSULTA 316» no es el expediente del pliego—,
+    así que lo enlazado es un «al menos», y se dice.
+
+    El tiempo se mide sobre TODO el mercado y todo el histórico: en un nicho apenas hay
+    casos, y lo que se quiere saber es cuánto margen da una consulta en general. Lo que sí
+    es del ámbito es la lista de consultas abiertas que todavía no tienen pliego.
+    """
+    expediente_c = EXPEDIENTE_NORMALIZADO.format(t="c")
+    expediente_l = EXPEDIENTE_NORMALIZADO.format(t="l")
+    filas = con.execute(
+        f"""SELECT c.id, substr(c.fecha_publicacion, 1, 10) AS pub,
+                   MIN(substr(l.fecha_publicacion, 1, 10)) AS licitada
+              FROM licitaciones c
+              LEFT JOIN licitaciones l
+                ON l.nif_organo = c.nif_organo AND {expediente_l} = {expediente_c}
+               AND l.fuente != ? AND l.fecha_publicacion > c.fecha_publicacion
+             WHERE c.fuente = ? AND c.nif_organo IS NOT NULL AND c.expediente IS NOT NULL
+             GROUP BY c.id""",
+        (FUENTE_CONSULTAS, FUENTE_CONSULTAS),
+    ).fetchall()
+    total = con.execute("SELECT COUNT(*) FROM licitaciones WHERE fuente = ?",
+                        (FUENTE_CONSULTAS,)).fetchone()[0]
+    enlazadas = {f["id"] for f in filas if f["licitada"]}
+    dias = []
+    for f in filas:
+        if not f["licitada"] or not f["pub"]:
+            continue
+        try:
+            d = (date.fromisoformat(f["licitada"]) - date.fromisoformat(f["pub"])).days
+        except ValueError:
+            continue
+        if d > 0:
+            dias.append(d)
+    dias.sort()
+
+    # Las del ámbito que siguen abiertas y no tienen pliego todavía.
+    viva, p_viva = _condicion_viva()
+    entrada, p_entrada = _entrada_expedientes(ambito)
+    corte = date.today() - timedelta(days=30 * MESES_CONSULTA_SIN_FECHA)
+    abiertas = [
+        f for f in con.execute(
+            f"SELECT l.id, {_GRUPO} AS g, l.fecha_publicacion, l.fecha_limite_presentacion"
+            f"{entrada} AND l.fuente = ? AND {viva}",
+            [*p_entrada, FUENTE_CONSULTAS, *p_viva])
+        if f["id"] not in enlazadas
+        and (f["fecha_limite_presentacion"]
+             or (f["fecha_publicacion"] or "")[:10] >= corte.isoformat())
+    ]
+    abiertas.sort(key=lambda f: (f["fecha_publicacion"] or ""), reverse=True)
+    del_ambito = con.execute(
+        f"SELECT COUNT(DISTINCT l.id){entrada} AND l.fuente = ?",
+        [*p_entrada, FUENTE_CONSULTAS]).fetchone()[0]
+    return {
+        "consultas": total,
+        "con_nif_y_expediente": len(filas),
+        "enlazadas": len(enlazadas),
+        "con_tiempo": len(dias),
+        "mediana_dias": round(_mediana(dias)) if dias else None,
+        "p25": round(_percentil(dias, 25)) if dias else None,
+        "p75": round(_percentil(dias, 75)) if dias else None,
+        "tramos": _tramos(dias, TRAMOS_CONSULTA),
+        "del_ambito": del_ambito,
+        "abiertas_total": len(abiertas),
+        "abiertas": _tarjetas(con, [
+            {"id": f["id"], "anuncios": 1, "primera_publicacion": f["fecha_publicacion"]}
+            for f in abiertas[:CONSULTAS_ABIERTAS]]),
+        "suficiente": len(dias) >= MINIMO_EXPEDIENTES_PLAZO,
+        "minimo_expedientes": MINIMO_EXPEDIENTES_PLAZO,
+        "siempre_todo_el_mercado": True,
+    }
+
+
+def _comparacion(con, ambito, hoy: date) -> dict:
+    """Las cifras clave de lo que va de año, pero del año anterior y en la MISMA ventana
+    de días: del 1 de enero al día de hoy de hace un año.
+
+    Comparar enero-octubre contra el año entero haría que todo pareciera caer.
+    """
+    anterior = hoy.year - 1
+    dia = min(hoy.day, 28) if hoy.month == 2 else hoy.day
+    desde, hasta = f"{anterior}-01-01", f"{anterior}-{hoy.month:02d}-{dia:02d}"
+    base, params = _expedientes(ambito, desde, hasta)
+    expedientes = con.execute(f"SELECT COUNT(*) FROM ({base})", params).fetchone()[0]
+    baja = _bloque_baja(con, ambito, desde, hasta)
+    plazo = _bloque_plazo(con, ambito, desde, hasta)
+    ciclo = _bloque_ciclo(con, ambito, desde, hasta)
+    return {
+        "anio": anterior,
+        "desde": desde,
+        "hasta": hasta,
+        "expedientes": expedientes,
+        "importe_mediano": _bloque_importes(con, ambito, desde, hasta)["mediana"],
+        "baja_mediana": baja["mediana"] if baja["suficiente"] else None,
+        "plazo_mediano": plazo["mediana_dias"] if plazo["suficiente"] else None,
+        "ciclo_mediano": ciclo["mediana_dias"] if ciclo["suficiente"] else None,
+    }
+
+
 # Lo calculado, guardado hasta que la base cambie. NO es una caché por tiempo: un TTL
 # pagaría el recálculo sin motivo y no lo pagaría cuando de verdad hace falta.
 #
@@ -2553,7 +2856,9 @@ def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
     puntuaciones, y de una temática no hay ni lo uno ni lo otro.
     """
     ambito = Ambito.de(perfil, categoria)
-    clave = (_firma_de_la_base(con), ambito, desde, hasta)
+    hoy = date.today()
+    # Con la fecha: la comparación con el año anterior es «hasta hoy», y mañana es otra.
+    clave = (_firma_de_la_base(con), ambito, desde, hasta, hoy)
     if clave in _MEMO:
         return _MEMO[clave]
 
@@ -2583,6 +2888,13 @@ def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
         "organos": _bloque_organos(con, ambito, desde, hasta),
         "adjudicatarios": _bloque_adjudicatarios(con, ambito, desde, hasta),
         "cartera": None if ambito.mercado else _bloque_cartera(con, ambito),
+        "cuota": _bloque_cuota(con, ambito),
+        "estacionalidad": _bloque_estacionalidad(con, ambito, desde, hasta),
+        "consultas": _bloque_consultas(con, ambito),
+        # Solo con «lo que va de año», que es el único rango con un año anterior
+        # comparable: «los últimos 24 meses» no tiene un «antes» de la misma forma.
+        "comparacion": _comparacion(con, ambito, hoy)
+                       if desde == f"{hoy.year}-01" and not hasta else None,
     }
 
     if len(_MEMO) >= _MEMO_MAXIMO:

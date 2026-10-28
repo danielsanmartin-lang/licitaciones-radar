@@ -292,7 +292,9 @@ Lo mismo que se ve al abrir, para cualquier periodo:
 
 Los dos primeros cuentan lo que ha entrado en el radar; los de calendario, lo publicado,
 para que tras la carga inicial «el último trimestre» no sea el histórico de tres años.
-Debajo salen los expedientes, con la misma tarjeta que la Bandeja.
+En los de calendario se dice también cuántos hubo **en las mismas fechas un año antes**,
+para saber si 12 en una semana es mucho o poco. Debajo salen los expedientes, con la
+misma tarjeta que la Bandeja.
 
 ### Los números de la Bandeja
 
@@ -458,7 +460,9 @@ importe. Los botones de ventana (3, 6, 12, 24 meses) muestran cuántos vencen en
 plazo y por cuánto importe, para poder comparar de un vistazo. Es la lista para llamar *antes* de que salga el pliego, cuando todavía se
 puede influir. Solo aparecen los que publican fecha de fin o duración: si la fuente
 no la da, la licitación no se lista en lugar de estimarla a ojo. El órgano y el
-incumbente de cada tarjeta llevan a su ficha.
+incumbente de cada tarjeta llevan a su ficha. Encima va el **calendario de
+renovaciones**: cuántos contratos acaban cada uno de los doce meses que vienen, por
+expediente, con sus incumbentes al pasar el ratón.
 
 ### Adjudicatarios
 
@@ -501,8 +505,8 @@ la IT.
 
 ### Analítica
 
-Las preguntas que no son «qué hay hoy». Quince bloques, cada uno con una pregunta de
-venta delante, en el orden en que se leen:
+Las preguntas que no son «qué hay hoy». Arriba, una fila de cifras clave; debajo, veinte
+bloques, cada uno con una pregunta de venta delante, en el orden en que se leen:
 
 | Bloque | Contesta a |
 |---|---|
@@ -510,21 +514,40 @@ venta delante, en el orden en que se leen:
 | Tamaño de los contratos | de qué tamaño son estas operaciones de verdad |
 | Importe al que se están cerrando los contratos | cuánto por debajo del presupuesto se están cerrando |
 | Cuánto tiempo tengo para presentar | cuántos días hay del anuncio al cierre del plazo: si lo veo hoy, si da tiempo a escribir la oferta |
+| Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
+| Mapa del dinero adjudicado · en juego | lo mismo que las barras de comunidades, en un mapa de baldosas: cada comunidad en su sitio y un tono por quinta parte, de menos a más |
 | Top comunidades por adjudicaciones | dónde se ha repartido el dinero que ya está adjudicado |
 | Top comunidades por número total de adjudicaciones | dónde se cierran más operaciones, cuesten lo que cuesten |
 | Top comunidades por licitaciones activas | dónde queda dinero en juego, con el plazo todavía abierto |
 | Top comunidades por número de licitaciones activas | dónde hay más pliegos abiertos ahora mismo |
 | Quién compra | qué órganos de contratación repiten, y a quién merece la pena ir a ver |
 | Quién gana | qué empresas se llevan más expedientes, contra quién vas a competir |
+| Cuándo publica cada uno | un mapa de calor de los diez órganos que más compran por los doce meses: cuándo llamar a cada uno |
+| Cuota de mercado | las cinco empresas que más ganan desde 2024 y el resto, año a año, con la diferencia en puntos entre los dos últimos: quién crece y quién se cae |
 | Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
 | Cómo se compra | por qué puerta se entra: abierto, simplificado, restringido o por invitación |
-| Cuándo entra en el forecast | cuántos días pasan de la publicación a la adjudicación |
-| A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido |
+| De consulta previa a pliego | cuánto tarda una consulta preliminar de mercado en convertirse en licitación (en todo el mercado: unos 130 días de mediana), y qué consultas de tu ámbito siguen abiertas sin pliego. Es el aviso más temprano que hay |
+| A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido, y el calendario de los doce meses que vienen |
 | Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico |
 
 Se filtra por **ámbito** y por uno de tres rangos (este año, últimos 24 meses, todo desde
-2024). Los dos bloques que hablan de *ahora* —renovaciones y cartera— ignoran el rango a
-propósito y lo dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+2024). Los bloques que hablan de *ahora* —renovaciones y cartera—, la cuota (desde 2024
+siempre) y las consultas previas (todo el histórico) ignoran el rango a propósito y lo
+dicen, porque un filtro que se ignora en silencio es peor que uno que falta.
+
+Con **este año**, cada cifra clave se compara con **las mismas fechas del año anterior**
+(del 1 de enero al día de hoy de hace un año, no el año entero): «↓ 21 % frente a 2025» en
+los expedientes, y la mediana de entonces en el resto. En color de texto y no en verde o
+rojo, porque subir no siempre es bueno: una baja que sube es margen que se pierde.
+
+El enlace de consulta a licitación solo junta lo **seguro**: mismo NIF de órgano y mismo
+número de expediente, sin mayúsculas ni espacios, con la licitación publicada después.
+Muchas consultas cambian de número al licitarse, así que lo enlazado es un mínimo, y el
+bloque lo dice. Para hacerlo rápido hay un índice nuevo, que se crea solo la primera vez
+que se abre esta versión: en una base de 4 GB son unos 20 segundos, una vez.
+
+Los nombres de órgano y de empresa de «Quién compra», «Quién gana», el mapa de calor y la
+cuota llevan a sus fichas.
 
 El ámbito puede ser tus perfiles —todos o uno— o una **temática del mercado** de las de
 «Otras licitaciones», o toda la IT junta. Con una temática se mira el mercado entero, case
