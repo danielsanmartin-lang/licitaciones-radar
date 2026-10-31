@@ -90,8 +90,16 @@ terminal.
 > **The first time, macOS is suspicious.** The app is not signed with an Apple
 > certificate — that costs $99 a year and is not worth it for an in-house tool — so
 > if you downloaded it from GitHub the system will refuse to open it with a double-click.
-> You fix this once: **right-click the app → Open**, and confirm. From then on it opens
-> normally. If you prefer the terminal:
+> You fix this once, and how depends on your macOS version:
+>
+> - **macOS 15 (Sequoia) or later:** double-click the app and dismiss the warning. Go to
+>   **System Settings → Privacy & Security**, scroll down to «Security», where it says
+>   «"Radar de Licitaciones" was blocked», and click **Open Anyway**. Confirm with your
+>   password or Touch ID and, in the warning that appears again, click **Open**. On these
+>   versions right-click → Open is no longer enough.
+> - **macOS 13 or 14:** **right-click the app → Open**, and confirm.
+>
+> From then on it opens normally. If you prefer the terminal, this works on any version:
 >
 > ```bash
 > xattr -dr com.apple.quarantine "Radar de Licitaciones.app"
@@ -164,7 +172,8 @@ someone the app must not mean accidentally sending them the opportunities you ar
 on.
 
 And the first time, macOS will distrust the app like any unsigned program downloaded
-from the internet: right-click → Open. It is explained above.
+from the internet: on macOS 15 or later, System Settings → Privacy & Security → Open
+Anyway; on 13 or 14, right-click → Open. It is explained above.
 
 ### Where your data lives
 

@@ -79,8 +79,16 @@ si algo va raro, porque va contando lo que hace por la terminal.
 > **La primera vez, macOS desconfía.** La app no está firmada con un certificado de
 > Apple —eso cuesta 99 $ al año y no los vale para una herramienta de uso interno—, así
 > que si te la has descargado de GitHub el sistema se negará a abrirla de un doble clic.
-> Se resuelve una sola vez: **clic derecho sobre la app → Abrir**, y confirmar. Desde
-> entonces se abre normal. Si prefieres la terminal:
+> Se resuelve una sola vez, y cómo depende de tu versión de macOS:
+>
+> - **macOS 15 (Sequoia) o posterior:** haz doble clic en la app y cierra el aviso. Ve a
+>   **Ajustes del Sistema → Privacidad y seguridad**, baja hasta «Seguridad», donde sale
+>   «Se ha bloqueado "Radar de Licitaciones"», y pulsa **Abrir igualmente**. Confirma
+>   con tu contraseña o Touch ID y, en el aviso que vuelve a salir, pulsa **Abrir**. En
+>   estas versiones el clic derecho → Abrir ya no basta.
+> - **macOS 13 o 14:** **clic derecho sobre la app → Abrir**, y confirmar.
+>
+> Desde entonces se abre normal. Si prefieres la terminal, vale para cualquier versión:
 >
 > ```bash
 > xattr -dr com.apple.quarantine "Radar de Licitaciones.app"
@@ -152,7 +160,9 @@ triaje y tus notas. Hay un test que lo vigila (`tests/test_rutas.py`), porque ma
 app a alguien no puede ser mandarle por accidente en qué oportunidades estás trabajando.
 
 Y la primera vez, macOS desconfiará de la app igual que de cualquier programa sin firmar
-descargado de internet: clic derecho → Abrir. Está explicado arriba.
+descargado de internet: en macOS 15 o posterior, Ajustes del Sistema → Privacidad y
+seguridad → Abrir igualmente; en el 13 o el 14, clic derecho → Abrir. Está explicado
+arriba.
 
 ### Dónde viven tus datos
 
