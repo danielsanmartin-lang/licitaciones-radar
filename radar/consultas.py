@@ -10,8 +10,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from . import categorias, db
-from .model import ESTADOS_VIVOS
+from . import categorias, db, enlaces
+from .model import ESTADOS_VIVOS, normalizar
 
 ORDENES = {
     # "Cierran antes" tiene que poner primero lo que cierra pronto y AÚN está
@@ -323,7 +323,7 @@ def bandeja(
     # que se entienda por qué no salen todas.
     total_sin_filtros = contar(con, solo_vivas=False)
 
-    items = [_preparar_item(dict(f)) for f in filas]
+    items = enlaces.anotar(con, [_preparar_item(dict(f)) for f in filas])
     return {"total": total, "total_sin_filtros": total_sin_filtros, "items": items}
 
 
@@ -512,7 +512,7 @@ def otras(
 
     return {
         "total": total,
-        "items": items,
+        "items": enlaces.anotar(con, items),
         "por_categoria": por_categoria,
         "clasificacion_pendiente": not categorias.al_dia(con),
     }
@@ -629,6 +629,11 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False,
         # presentado y todavía está en plazo.
         "siguiendo_en_plazo": _siguiendo_en_plazo(con),
         "novedades": _novedades(con),
+        # El número del icono de la aplicación en el Dock: lo nuevo desde la última
+        # visita, más las consultas previas que sigues cuyo pliego ha salido desde
+        # entonces. Sin visita apuntada no hay «desde», y no se cuenta nada.
+        "insignia": _novedades(con) + enlaces.licitadas_desde(
+            con, _marca_visita(con), ESTADOS_PROTEGIDOS),
         "ultima_visita": _ultima_visita(con),
         "ultima_busqueda": _ultima_busqueda(con),
         "por_perfil": perfiles,
@@ -1364,56 +1369,262 @@ EN_VENTANA = (
 )
 
 
-def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200) -> dict:
-    """Contratos ya adjudicados cuyo plazo termina pronto.
+# Las ventanas de los botones de Vencimientos, en meses.
+VENTANAS_VENCIMIENTO = (3, 6, 12, 24)
+# «Vencidos hace poco»: lo que acabó en estos últimos meses. Si nadie ha visto todavía el
+# pliego de la renovación, es el cliente más caliente de la lista.
+MESES_VENCIDOS = 6
+# «Sin fecha de fin»: adjudicaciones de estos últimos años cuya fuente no dice cuándo
+# acaban. No se les inventa una fecha; se listan aparte, de la más antigua a la más
+# reciente, que es lo más parecido a «la que antes toca renovar» sin adivinar.
+ANIOS_SIN_FECHA = 4
+LIMITE_SECCION_PROSPECCION = 100
+ESTADOS_PROSPECCION = ("pendiente", "contactado", "reunion", "descartado")
 
-    Es la lista para llamar ANTES de que salga el pliego, cuando el incumbente aún no
-    ha renovado. Solo aparecen los que tienen fecha de fin conocida: si la fuente no
-    la publica y no se puede deducir de la duración, la licitación no entra aquí en
-    lugar de entrar con una fecha inventada.
+
+def _expedientes_prospeccion(con: sqlite3.Connection, perfil: str | None) -> list[dict]:
+    """Un registro por EXPEDIENTE que case con tus perfiles (o con uno), con lo que hace
+    falta para prospectar: incumbente, importe, fin y en qué punto está el contacto.
+
+    Por expediente y no por anuncio: un contrato con prórroga publicada son dos anuncios
+    con dos fechas de fin, y se le llama una vez. Manda el fin más tardío. Entrando por
+    `matches` son unos pocos miles de filas, así que se agrupa en Python.
+
+    El `CROSS JOIN` es lo que obliga a SQLite a entrar por `matches`: con un JOIN normal
+    y el `GROUP BY l.id` prefería recorrer las 730.000 licitaciones en orden de id, y la
+    pestaña tardaba 17 s en lugar de centésimas.
     """
+    filtro, params = ("AND m.perfil = ?", [perfil]) if perfil else ("", [])
     filas = con.execute(
-        f"""SELECT l.id, l.objeto, l.organo, l.ccaa, l.fuente, l.url_detalle,
-                   l.adjudicatario, l.fecha_adjudicacion, l.duracion_meses,
-                   l.fecha_inicio_ejecucion, l.fecha_fin_prevista,
+        f"""SELECT {_GRUPO} AS clave, l.id, l.objeto, l.organo, l.nif_organo, l.ccaa,
+                   l.fuente, l.url_detalle, l.adjudicatario, l.fecha_adjudicacion,
+                   l.duracion_meses, l.fecha_inicio_ejecucion, l.fecha_fin_prevista,
+                   l.fecha_publicacion,
                    COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe,
                    group_concat(DISTINCT m.perfil) AS perfil,
-                   CAST(julianday(substr(l.fecha_fin_prevista, 1, 10))
-                        - julianday('now') AS INTEGER) AS dias_para_vencer
-              FROM licitaciones l
-              JOIN matches m ON m.licitacion_id = l.id
+                   COALESCE(r.estado, 'nuevo') AS revision
+              FROM matches m
+             CROSS JOIN licitaciones l ON l.id = m.licitacion_id
               LEFT JOIN revisiones r ON r.licitacion_id = l.id
-             WHERE {EN_VENTANA}
-               AND COALESCE(r.estado, 'nuevo') != 'descartado'
-             GROUP BY l.id
-             ORDER BY l.fecha_fin_prevista ASC, importe DESC, l.id ASC
-             LIMIT ?""",
-        (f"+{int(meses)} months", limite),
-    ).fetchall()
+             WHERE 1 = 1 {filtro}
+             GROUP BY m.licitacion_id""", params).fetchall()
 
-    agregado = con.execute(
-        f"""SELECT COUNT(*) AS total, COALESCE(SUM(importe), 0) AS importe FROM (
-                SELECT COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe
-                  FROM licitaciones l
-                  JOIN matches m ON m.licitacion_id = l.id
-                  LEFT JOIN revisiones r ON r.licitacion_id = l.id
-                 WHERE {EN_VENTANA}
-                   AND COALESCE(r.estado, 'nuevo') != 'descartado'
-                 GROUP BY l.id
-            )""",
-        (f"+{int(meses)} months",),
-    ).fetchone()
+    grupos: dict[str, list[dict]] = {}
+    for f in filas:
+        grupos.setdefault(f["clave"], []).append(dict(f))
+    estados = {f["clave"]: dict(f) for f in con.execute(
+        "SELECT clave, estado, nota, actualizado_en FROM prospeccion")}
+
+    salida = []
+    for clave, anuncios in grupos.items():
+        # El triaje se guarda en todos los anuncios del expediente; con que uno esté
+        # descartado, el expediente lo está.
+        if any(a["revision"] == "descartado" for a in anuncios):
+            continue
+        con_fin = [a for a in anuncios if a["fecha_fin_prevista"]]
+        por_adjudicacion = sorted(
+            anuncios, key=lambda a: (a["fecha_adjudicacion"] or "", a["fecha_publicacion"] or "",
+                                     a["id"]), reverse=True)
+        base = (max(con_fin, key=lambda a: (a["fecha_fin_prevista"], a["id"]))
+                if con_fin else por_adjudicacion[0])
+        e = dict(base)
+        e.pop("revision")
+        e["clave"] = clave
+        e["adjudicatario"] = base["adjudicatario"] or next(
+            (a["adjudicatario"] for a in por_adjudicacion if a["adjudicatario"]), None)
+        e["fecha_adjudicacion"] = por_adjudicacion[0]["fecha_adjudicacion"]
+        e["primera_publicacion"] = min(
+            (a["fecha_publicacion"] for a in anuncios if a["fecha_publicacion"]), default=None)
+        e["perfil"] = ",".join(sorted(
+            {p for a in anuncios for p in (a["perfil"] or "").split(",") if p}))
+        e["prospeccion"] = estados.get(clave) or {"clave": clave, "estado": "pendiente",
+                                                  "nota": None, "actualizado_en": None}
+        salida.append(e)
+    return salida
+
+
+def _clave_organo(e: dict) -> str:
+    return e.get("nif_organo") or normalizar(e.get("organo") or "")
+
+
+def _marcar_renovaciones(expedientes: list[dict]) -> None:
+    """Lo primero que el MISMO órgano ha publicado después, en tus perfiles.
+
+    No se usa para quitar nada de la lista —un órgano con dos contratos distintos en el
+    mismo perfil daría falsos «ya renovado»—, sino para decirlo en la tarjeta y que se
+    vea de un vistazo si la renovación ya ha salido.
+    """
+    por_organo: dict[str, list[dict]] = {}
+    for e in expedientes:
+        if e["primera_publicacion"]:
+            por_organo.setdefault(_clave_organo(e), []).append(e)
+    for lista in por_organo.values():
+        lista.sort(key=lambda e: e["primera_publicacion"])
+    for e in expedientes:
+        e["renovacion"] = None
+        if not e["primera_publicacion"]:
+            continue
+        perfiles = set(e["perfil"].split(","))
+        for otro in por_organo.get(_clave_organo(e), []):
+            if (otro["primera_publicacion"] > e["primera_publicacion"]
+                    and perfiles & set(otro["perfil"].split(","))):
+                e["renovacion"] = {"id": otro["id"], "objeto": otro["objeto"],
+                                   "publicada": otro["primera_publicacion"]}
+                break
+
+
+def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
+                 perfil: str | None = None, ver_descartados: bool = False) -> dict:
+    """La lista de prospección: contratos ya adjudicados que vencen pronto.
+
+    Es la lista para llamar ANTES de que salga el pliego, cuando el incumbente aún no
+    ha renovado. Tres apartados:
+
+    - `items`: los que vencen en los próximos `meses`. Solo los que tienen fecha de fin
+      conocida: si la fuente no la publica y no se puede deducir de la duración, no
+      entran aquí en lugar de entrar con una fecha inventada.
+    - `vencidos`: los que acabaron en los últimos MESES_VENCIDOS meses.
+    - `sin_fecha`: adjudicados en los últimos ANIOS_SIN_FECHA años sin fecha de fin.
+
+    Cada uno lleva su estado de prospección (pendiente, contactado, reunión,
+    descartado). Los descartados en la prospección se cuentan pero no se listan, salvo
+    con `ver_descartados`.
+    """
+    expedientes = _expedientes_prospeccion(con, perfil)
+    _marcar_renovaciones(expedientes)
+
+    # Las fronteras las calcula SQLite y no Python, para que sean las mismas fechas que
+    # el calendario de renovaciones (`EN_VENTANA`): sumar meses no es trivial en el 31
+    # de enero, y dos aritméticas distintas acaban discrepando en un día.
+    hoy = con.execute("SELECT date('now')").fetchone()[0]
+    ventanas = sorted({*VENTANAS_VENCIMIENTO, int(meses)})
+    limites = {m: con.execute("SELECT date('now', ?)", (f"+{m} months",)).fetchone()[0]
+               for m in ventanas}
+    desde_vencidos = con.execute("SELECT date('now', ?)",
+                                 (f"-{MESES_VENCIDOS} months",)).fetchone()[0]
+    desde_sin_fecha = con.execute("SELECT date('now', ?)",
+                                  (f"-{ANIOS_SIN_FECHA} years",)).fetchone()[0]
+    hoy_d = date.fromisoformat(hoy)
+
+    def dias(fin: str) -> int:
+        return (date.fromisoformat(fin[:10]) - hoy_d).days
+
+    futuros, vencidos, sin_fecha = [], [], []
+    for e in expedientes:
+        fin = e["fecha_fin_prevista"]
+        if fin:
+            if fin[:10] >= hoy:
+                e["dias_para_vencer"] = dias(fin)
+                futuros.append(e)
+            elif fin[:10] >= desde_vencidos:
+                e["dias_para_vencer"] = dias(fin)
+                vencidos.append(e)
+        elif e["adjudicatario"] and (e["fecha_adjudicacion"] or e["primera_publicacion"]
+                                     or "")[:10] >= desde_sin_fecha:
+            sin_fecha.append(e)
+
+    def descartado(e: dict) -> bool:
+        return e["prospeccion"]["estado"] == "descartado"
+
+    en_ventana = [e for e in futuros if e["fecha_fin_prevista"][:10] <= limites[meses]]
+    # Lo descartado en la prospección se cuenta, para poder decir «3 descartados» y
+    # ofrecer verlos, pero no se lista.
+    ocultos = sum(descartado(e) for e in en_ventana + vencidos + sin_fecha)
+    if not ver_descartados:
+        futuros = [e for e in futuros if not descartado(e)]
+        en_ventana = [e for e in en_ventana if not descartado(e)]
+        vencidos = [e for e in vencidos if not descartado(e)]
+        sin_fecha = [e for e in sin_fecha if not descartado(e)]
+
+    en_ventana.sort(key=lambda e: (e["fecha_fin_prevista"], -(e["importe"] or 0), e["id"]))
+    vencidos.sort(key=lambda e: (e["fecha_fin_prevista"], e["id"]), reverse=True)
+    sin_fecha.sort(key=lambda e: ((e["fecha_adjudicacion"] or e["primera_publicacion"] or ""),
+                                  e["id"]))
 
     return {
-        "total": agregado["total"],
-        "importe_total": agregado["importe"],
+        "total": len(en_ventana),
+        "importe_total": sum(e["importe"] or 0 for e in en_ventana),
         "meses": meses,
-        "items": [dict(f) for f in filas],
-        # Recuento de cada ventana, para poder comparar de un vistazo sin cambiar
-        # de selección una por una.
-        "por_ventana": ventanas_vencimiento(con),
-        "por_mes": vencimientos_por_mes(con),
+        "perfil": perfil,
+        "items": en_ventana[:limite],
+        # Recuento de cada ventana, para poder comparar de un vistazo sin cambiar de
+        # selección una por una. Sale de la misma lista, así que no puede descuadrar.
+        "por_ventana": [
+            {"meses": m,
+             "total": sum(1 for e in futuros if e["fecha_fin_prevista"][:10] <= limites[m]),
+             "importe": sum(e["importe"] or 0 for e in futuros
+                            if e["fecha_fin_prevista"][:10] <= limites[m])}
+            for m in VENTANAS_VENCIMIENTO
+        ],
+        "por_mes": vencimientos_por_mes(con, Ambito.de(perfil=perfil) if perfil else None),
+        "vencidos": vencidos[:LIMITE_SECCION_PROSPECCION],
+        "vencidos_total": len(vencidos),
+        "meses_vencidos": MESES_VENCIDOS,
+        "sin_fecha": sin_fecha[:LIMITE_SECCION_PROSPECCION],
+        "sin_fecha_total": len(sin_fecha),
+        "anios_sin_fecha": ANIOS_SIN_FECHA,
+        "descartados_ocultos": 0 if ver_descartados else ocultos,
     }
+
+
+def fijar_prospeccion(con: sqlite3.Connection, clave: str, *, estado: str | None = None,
+                      nota: str | None = None) -> dict:
+    """Apunta en qué punto está la prospección de un expediente."""
+    if not clave:
+        raise ValueError("falta la clave del expediente")
+    if estado is not None and estado not in ESTADOS_PROSPECCION:
+        raise ValueError(f"estado no válido: {estado}. Válidos: {', '.join(ESTADOS_PROSPECCION)}")
+    # Cada cambio toca SOLO su columna, en una sola sentencia. Leer la fila y escribirla
+    # entera perdía la nota: el servidor atiende cada petición en su hilo, y cambiar el
+    # estado justo al terminar de escribir la nota manda las dos a la vez.
+    columnas = {k: v for k, v in (("estado", estado), ("nota", nota)) if v is not None}
+    if "nota" in columnas:
+        columnas["nota"] = columnas["nota"].strip() or None
+    if columnas:
+        con.execute(
+            f"""INSERT INTO prospeccion (clave, estado, nota, actualizado_en)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(clave) DO UPDATE SET
+                    {", ".join(f"{c} = excluded.{c}" for c in columnas)},
+                    actualizado_en = excluded.actualizado_en""",
+            (clave, columnas.get("estado", "pendiente"), columnas.get("nota"), db.ahora()))
+        con.commit()
+    fila = con.execute("SELECT estado, nota FROM prospeccion WHERE clave = ?",
+                       (clave,)).fetchone()
+    return {"clave": clave, "estado": fila["estado"] if fila else "pendiente",
+            "nota": fila["nota"] if fila else None}
+
+
+COLUMNAS_PROSPECCION = [
+    "Apartado", "Órgano", "Objeto", "Incumbente", "Importe (€)", "Fin previsto",
+    "Días", "Adjudicada", "Duración (meses)", "Comunidad", "Perfil", "Estado",
+    "Nota", "Publicado después por el órgano", "Ficha oficial",
+]
+
+
+def prospeccion_csv(con: sqlite3.Connection, *, meses: int = 6,
+                    perfil: str | None = None) -> tuple[list[str], list[list]]:
+    """La lista de prospección entera, para llevarla a una hoja de cálculo."""
+    v = vencimientos(con, meses=meses, perfil=perfil, limite=10_000, ver_descartados=True)
+    filas = []
+    apartados = (
+        (f"Vence en {meses} meses", v["items"]),
+        (f"Vencido en los últimos {v['meses_vencidos']} meses", v["vencidos"]),
+        ("Sin fecha de fin publicada", v["sin_fecha"]),
+    )
+    for nombre, lista in apartados:
+        for e in lista:
+            filas.append([
+                nombre, e["organo"], e["objeto"], e["adjudicatario"],
+                round(e["importe"], 2) if e["importe"] else None,
+                (e["fecha_fin_prevista"] or "")[:10] or None, e.get("dias_para_vencer"),
+                (e["fecha_adjudicacion"] or "")[:10] or None,
+                round(e["duracion_meses"]) if e["duracion_meses"] else None,
+                e["ccaa"], e["perfil"].replace(",", " · "), e["prospeccion"]["estado"],
+                e["prospeccion"]["nota"],
+                (e["renovacion"] or {}).get("objeto"), e["url_detalle"],
+            ])
+    return COLUMNAS_PROSPECCION, filas
 
 
 MESES_CALENDARIO_RENOVACIONES = 12
@@ -1460,54 +1671,6 @@ def vencimientos_por_mes(con: sqlite3.Connection, ambito: "Ambito | None" = None
         orden = sorted(c.pop("_inc").values(), key=lambda x: (-x[1], x[0]))
         c["incumbentes"] = [{"empresa": e, "contratos": n} for e, n in orden[:INCUMBENTES_POR_MES]]
     return calendario
-
-
-def ventanas_vencimiento(con: sqlite3.Connection,
-                         ventanas: tuple[int, ...] = (3, 6, 12, 24)) -> list[dict]:
-    """Cuántos contratos vencen en cada ventana y por cuánto importe.
-
-    Una sola pasada, no una consulta por ventana: las ventanas estrechas están
-    contenidas en la más ancha, así que sus recuentos salen de la misma lectura con
-    agregación condicional. Cuatro consultas casi idénticas sobre 450.000
-    licitaciones tardaban 19,2 s; así tarda 0,04 s.
-    """
-    meses = [int(m) for m in ventanas]
-    if not meses:
-        return []
-
-    # El orden de los parámetros es el de aparición en el texto de la consulta:
-    # primero los de cada ventana, y el de la ventana ancha al final, dentro de
-    # EN_VENTANA.
-    columnas, params = [], []
-    for i, m in enumerate(meses):
-        columnas.append(
-            f"COUNT(CASE WHEN fin < date('now', ?, '+1 day') THEN 1 END) AS n{i}"
-        )
-        columnas.append(
-            "COALESCE(SUM(CASE WHEN fin < date('now', ?, '+1 day') THEN importe END), 0)"
-            f" AS i{i}"
-        )
-        params += [f"+{m} months", f"+{m} months"]
-    params.append(f"+{max(meses)} months")
-
-    f = con.execute(
-        f"""SELECT {', '.join(columnas)} FROM (
-                SELECT l.fecha_fin_prevista AS fin,
-                       COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe
-                  FROM licitaciones l
-                  JOIN matches m ON m.licitacion_id = l.id
-                  LEFT JOIN revisiones r ON r.licitacion_id = l.id
-                 WHERE {EN_VENTANA}
-                   AND COALESCE(r.estado, 'nuevo') != 'descartado'
-                 GROUP BY l.id
-            )""",
-        params,
-    ).fetchone()
-
-    return [
-        {"meses": m, "total": f[f"n{i}"], "importe": f[f"i{i}"]}
-        for i, m in enumerate(meses)
-    ]
 
 
 def historial(con: sqlite3.Connection, licitacion_id: int) -> list[dict]:
@@ -1569,7 +1732,7 @@ def para_csv(con: sqlite3.Connection, **filtros) -> tuple[list[str], list[list]]
 #    hay medianas, tramos y recuentos.
 # 3. **Los tramos y las medianas se calculan en Python** sobre la lista de valores que
 #    devuelve UNA consulta, no con una consulta por tramo. Es la misma lección que
-#    `ventanas_vencimiento` (una pasada en vez de cuatro), y entrando por `matches` la
+#    las ventanas de Vencimientos (una pasada en vez de cuatro), y entrando por `matches` la
 #    lista son unos miles de filas: la parte caliente es el disco, no el bucle.
 
 # Por debajo de estos mínimos un bloque NO se pinta: en su lugar la pestaña dice qué
@@ -1849,8 +2012,8 @@ def _percentil(valores: list, p: int) -> float | None:
 def _tramos(valores: list, cortes: tuple) -> list[dict]:
     """Reparte una lista ordenada en tramos. Es una PARTICIÓN: ni pierde ni duplica.
 
-    En un solo recorrido y no con una consulta por tramo, que es la lección de
-    `ventanas_vencimiento` (19,2 s -> 0,04 s) aplicada del lado de Python.
+    En un solo recorrido y no con una consulta por tramo, que es la lección de las
+    ventanas de Vencimientos (19,2 s -> 0,04 s con cuatro consultas en una).
     """
     salida = [{"desde": 0 if i == 0 else cortes[i - 1],
                "hasta": corte, "expedientes": 0}
@@ -2223,7 +2386,6 @@ def _bloque_cartera(con, ambito) -> dict:
         # El orden es el de APARICIÓN en el texto, no el lógico: las cuatro fronteras de
         # puntuación del SELECT de fuera, luego los estados vivos —que van dentro del
         # subquery, en la columna `abierta`— y al final el perfil, que entra con `entrada`.
-        # Es la misma trampa que ya documenta `ventanas_vencimiento`.
         [PUNTUACION_LISTA_CORTA, PUNTUACION_INTERMEDIA, PUNTUACION_LISTA_CORTA,
          PUNTUACION_INTERMEDIA] + p_viva + params
     ).fetchone()
@@ -2348,7 +2510,7 @@ def _bloque_comunidades(con, ambito, desde, hasta) -> dict:
     viva, p_viva = _condicion_viva()
     # El orden de los parámetros es el de APARICIÓN en el texto: `viva` va en el SELECT,
     # que se escribe antes del FROM donde entra el perfil. La misma trampa que ya
-    # documentan `ventanas_vencimiento` y `_bloque_cartera`.
+    # documenta `_bloque_cartera`.
     por_lote = (
         f"SELECT {_GRUPO} AS g, COALESCE(l.lote_num, '') AS lote,"
         " MIN(substr(l.fecha_publicacion, 1, 7)) AS mes,"
@@ -3070,7 +3232,7 @@ def _tarjetas(con, expedientes: list[dict]) -> list[dict]:
         d["primera_publicacion"] = e["primera_publicacion"]
         items.append(_preparar_item(d))
     orden = {e["id"]: i for i, e in enumerate(expedientes)}
-    return sorted(items, key=lambda d: orden[d["id"]])
+    return enlaces.anotar(con, sorted(items, key=lambda d: orden[d["id"]]))
 
 
 def _por_mes_del_anio(expedientes: list[dict]) -> list[dict]:

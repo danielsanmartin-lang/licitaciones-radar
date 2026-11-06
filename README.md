@@ -303,6 +303,16 @@ the end; but if you go in, the search carries on in the background, the header k
 reporting it and, when it finishes, says **«Búsqueda terminada: N nuevas · Ver
 resumen»**.
 
+**The number on the icon.** While the app is open, its Dock icon carries a number: the
+new tenders since you last looked at them —the same ones as «N nuevas» in the sidebar—
+plus the **market consultations you follow whose tender has now come out** (see
+[Market consultations and their tender](#market-consultations-and-their-tender)). It
+clears when you look at the new ones. So that the number is useful even if you keep the
+app open all day, every quarter of an hour it refreshes the figures and, if the last
+search is **more than four hours old**, launches another in the background, the same as
+«Buscar ahora». With the app closed there is no number: macOS does not let you badge an
+app that is not running.
+
 **If it really gets stuck.** A watchdog checks that the search keeps moving: bytes,
 records, pages or retries. If **15 minutes go by with nothing moving**, it cuts that
 source, keeps what had already arrived and carries on with the rest; the next search
@@ -366,6 +376,35 @@ vencido o cerradas** (past deadline or closed), from most recent to oldest. Clos
 show **who won and for how much** — looking at every notice of the procurement file, not
 just the last one — or «adjudicación pendiente» (award pending) if it is not known yet.
 The figure in the sidebar is what is still open.
+
+### Market consultations and their tender
+
+A preliminary market consultation is the contracting body asking around before it writes
+the tender documents, and what matters next is **when those documents come out**. PLACSP
+does not say —the tender notice carries no reference to the consultation—, so the radar
+works it out on every search, among what the same body publishes in the following two
+years:
+
+- **Segura** (certain): same contracting-body tax ID and same file number. It is rare: 76
+  of 2,310 real consultations.
+- **Probable** or **posible** (possible): same body and a similar subject. Words weigh by
+  how rare they are for that body: for the CSIC «suministro e instalación» says nothing
+  and «criomicroscopio» says everything. Checked by hand, the probable ones are right
+  about 13 times in 14 and the possible ones about 4 in 5; below that nothing is offered.
+
+A consultation's panel shows **«¿Se ha licitado ya?»** (Has it been tendered yet?) with
+the candidates, their level and the words they share, and two buttons: **Es esta** (This
+is it) and **No es esta** (Not this one). Your decision is stored separately and no
+search undoes it. The tender's panel says the reverse: **which consultation it comes
+from**. In the lists, the consultation carries **«Ya licitada»** (or «Posible
+licitación») and the tender **«Hubo consulta previa»**: the body talked to the market
+first, and someone may have shaped what it asks for.
+
+If you **follow** a consultation, the number on the app icon goes up when its tender
+comes out (certain, probable or confirmed by you).
+
+The first search after updating goes through every consultation, about twenty seconds;
+the following ones only through the bodies that have published something new.
 
 ### Bandeja (Inbox)
 
@@ -500,14 +539,34 @@ new version, the database is reclassified automatically.
 
 ### Vencimientos (Expiring contracts)
 
-Contracts **already awarded** whose term ends soon, with the incumbent and the value.
+This is the **prospecting list**: contracts **already awarded** that are expiring, with
+the incumbent and the value, to call *before* the tender documents come out, while you
+can still influence them. One procurement file per row: a contract with a published
+extension appears once, with its latest end date.
+
 The window buttons (3, 6, 12, 24 months) show how many expire in each period and for how
-much, so you can compare at a glance. This is the list to call *before* the tender
-documents come out, while you can still influence them. Only contracts that publish an
-end date or a duration appear: if the source does not give one, the tender is left out
-rather than estimated by eye. The contracting body and the incumbent on each card lead
-to their profile. Above sits the **renewals calendar**: how many contracts end in each of
-the next twelve months, per procurement file, with their incumbents on hover.
+much. Above sits the **renewals calendar**: how many contracts end in each of the next
+twelve months, with their incumbents on hover. At the top you choose **the profile** —all
+of them, or only awareness, or only email—.
+
+Below the window, two more sections:
+
+- **Expired in the last six months.** They have already ended; if the renewal has not
+  come out, the body is preparing it or has extended, and it is the moment to call.
+- **No published end date.** Awarded in the last four years by a source that does not say
+  when they end. No date is made up: they go from the oldest award to the most recent.
+
+On each card you record **where you are**: Pendiente (pending), Contactado (contacted),
+Reunión (meeting) or Descartado (discarded), and a one-line note («spoke to Marta, call
+back in January»). It is stored per procurement file in your database. Discarded ones
+stop showing —the header says how many are hidden and «Ver descartados» shows them—. If
+the same body has published something later in your profiles, the card says so
+(«después publicó: …»): it may be the renewal, and then it is no longer time to call but
+to bid.
+
+**Exportar CSV** takes all three sections, with the status and note of each contract, to
+work on them in a spreadsheet. The contracting body and the incumbent on each card lead
+to their profile.
 
 ### Adjudicatarios (Winning bidders)
 
@@ -924,8 +983,8 @@ top of that most of them fall out anyway because of `importe_minimo`.
   its tenders on PLACSP. What they would add is `adjudicatario`, `fecha_formalizacion`
   and `plazo_de_ejecucion_meses`, which is exactly what the Vencimientos view is missing.
   Pending as an improvement to that view, not as a source of tenders.
-- **Email or Slack alerts.** Inbox only: you have to go in and look. None of this has
-  been written, not even half-started.
+- **Alerts outside the app.** The only alert is the number on the Dock icon, and only
+  while the app is open. There is no email or Slack.
 - **A shared instance.** Each person has their own database and triage.
 
 On the native connector for Euskadi (the Basque Country): it was investigated and **is

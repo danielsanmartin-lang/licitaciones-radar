@@ -384,5 +384,119 @@ class TestNovedades(unittest.TestCase):
         self.assertEqual(ids, ["b"])
 
 
+class TestProspeccion(unittest.TestCase):
+    """Vencimientos como lista de prospección: un expediente por fila, los vencidos hace
+    poco y los que no publican fin, y el punto en que está cada llamada."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.con = db.conectar(Path(self.dir.name) / "t.db")
+
+    def tearDown(self):
+        self.con.close()
+        self.dir.cleanup()
+
+    def _fecha(self, mod: str) -> str:
+        return self.con.execute("SELECT date('now', ?)", (mod,)).fetchone()[0]
+
+    def _añadir(self, nombre, *, fin=None, perfil="p", expediente=None, adjudicada=None,
+                publicada="2024-01-10", organo="Órgano", nif="Q1"):
+        db.guardar(self.con, Licitacion(
+            fuente="prueba", id_externo=nombre, objeto=f"Concienciación {nombre}",
+            expediente=expediente or nombre, organo=organo, nif_organo=nif,
+            estado="adjudicada", adjudicatario="Incumbente SL", importe_adjudicacion=1000,
+            fecha_fin_prevista=fin, fecha_adjudicacion=adjudicada,
+            fecha_publicacion=publicada + "T00:00:00",
+        ))
+        lic_id = self.con.execute("SELECT id FROM licitaciones WHERE id_externo = ?",
+                                  (nombre,)).fetchone()[0]
+        self.con.execute(
+            """INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)
+               VALUES (?, ?, 3.0, 'm', ?)""", (lic_id, perfil, db.ahora()))
+        self.con.commit()
+        return lic_id
+
+    def test_un_expediente_con_prorroga_sale_una_vez_con_el_fin_mas_tardio(self):
+        self._añadir("original", fin=self._fecha("+2 months"), expediente="E-1")
+        self._añadir("prorroga", fin=self._fecha("+5 months"), expediente="E-1")
+        v = consultas.vencimientos(self.con, meses=6)
+        self.assertEqual(v["total"], 1)
+        self.assertEqual(v["items"][0]["fecha_fin_prevista"][:10], self._fecha("+5 months"))
+
+    def test_los_vencidos_hace_poco_van_aparte(self):
+        self._añadir("hace-poco", fin=self._fecha("-2 months"))
+        self._añadir("hace-mucho", fin=self._fecha("-10 months"))
+        v = consultas.vencimientos(self.con)
+        self.assertEqual([e["objeto"] for e in v["vencidos"]], ["Concienciación hace-poco"])
+        self.assertLess(v["vencidos"][0]["dias_para_vencer"], 0)
+        self.assertEqual(v["items"], [])
+
+    def test_los_sin_fecha_de_fin_van_aparte_de_la_mas_antigua_a_la_mas_reciente(self):
+        self._añadir("reciente", adjudicada=self._fecha("-3 months"))
+        self._añadir("antigua", adjudicada=self._fecha("-3 years"))
+        self._añadir("prehistorica", adjudicada=self._fecha("-6 years"))
+        v = consultas.vencimientos(self.con)
+        self.assertEqual([e["objeto"] for e in v["sin_fecha"]],
+                         ["Concienciación antigua", "Concienciación reciente"])
+
+    def test_filtrar_por_perfil(self):
+        self._añadir("de-p", fin=self._fecha("+1 months"), perfil="p")
+        self._añadir("de-q", fin=self._fecha("+1 months"), perfil="q")
+        v = consultas.vencimientos(self.con, perfil="q")
+        self.assertEqual([e["objeto"] for e in v["items"]], ["Concienciación de-q"])
+        self.assertEqual(v["por_ventana"][0]["total"], 1)
+
+    def test_el_estado_y_la_nota_se_guardan_por_expediente(self):
+        self._añadir("a", fin=self._fecha("+1 months"))
+        clave = consultas.vencimientos(self.con)["items"][0]["clave"]
+        consultas.fijar_prospeccion(self.con, clave, estado="contactado")
+        consultas.fijar_prospeccion(self.con, clave, nota="Llamar a Marta en enero")
+        p = consultas.vencimientos(self.con)["items"][0]["prospeccion"]
+        self.assertEqual((p["estado"], p["nota"]), ("contactado", "Llamar a Marta en enero"))
+
+    def test_lo_descartado_en_la_prospeccion_se_cuenta_pero_no_se_lista(self):
+        self._añadir("a", fin=self._fecha("+1 months"))
+        self._añadir("b", fin=self._fecha("+1 months"))
+        clave = consultas.vencimientos(self.con)["items"][0]["clave"]
+        consultas.fijar_prospeccion(self.con, clave, estado="descartado")
+        v = consultas.vencimientos(self.con)
+        self.assertEqual((v["total"], v["descartados_ocultos"]), (1, 1))
+        self.assertEqual(v["por_ventana"][0]["total"], 1)
+        self.assertEqual(consultas.vencimientos(self.con, ver_descartados=True)["total"], 2)
+
+    def test_cambiar_el_estado_no_borra_la_nota(self):
+        """Cambiar de estado justo después de escribir la nota manda las dos peticiones
+        a la vez; con lectura y escritura de la fila entera, la del estado pisaba la nota."""
+        consultas.fijar_prospeccion(self.con, "k", nota="Llamar en diciembre")
+        consultas.fijar_prospeccion(self.con, "k", estado="contactado")
+        self.assertEqual(consultas.fijar_prospeccion(self.con, "k"),
+                         {"clave": "k", "estado": "contactado", "nota": "Llamar en diciembre"})
+        consultas.fijar_prospeccion(self.con, "k", nota="  ")
+        self.assertIsNone(consultas.fijar_prospeccion(self.con, "k")["nota"])
+
+    def test_estado_no_valido(self):
+        with self.assertRaises(ValueError):
+            consultas.fijar_prospeccion(self.con, "x", estado="ganado")
+        with self.assertRaises(ValueError):
+            consultas.fijar_prospeccion(self.con, "", estado="contactado")
+
+    def test_avisa_de_lo_que_el_organo_publico_despues(self):
+        self._añadir("viejo", fin=self._fecha("+1 months"), publicada="2023-01-10")
+        nuevo = self._añadir("nuevo", fin=self._fecha("+30 months"), publicada="2025-06-01")
+        self._añadir("de-otro", fin=self._fecha("+30 months"), publicada="2025-07-01",
+                     organo="Otro", nif="Q2")
+        v = consultas.vencimientos(self.con)
+        self.assertEqual(v["items"][0]["renovacion"]["id"], nuevo)
+
+    def test_el_csv_lleva_los_tres_apartados(self):
+        self._añadir("futuro", fin=self._fecha("+1 months"))
+        self._añadir("vencido", fin=self._fecha("-1 months"))
+        self._añadir("sin-fin", adjudicada=self._fecha("-1 years"))
+        columnas, filas = consultas.prospeccion_csv(self.con)
+        self.assertEqual(len(filas), 3)
+        self.assertEqual(len(columnas), len(filas[0]))
+        self.assertEqual(len({f[0] for f in filas}), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -798,6 +798,12 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             reiniciarTrasActualizar(version: version)
         case "instalar-app":
             instalarAppNueva(ruta: datos["ruta"] as? String ?? "", version: version)
+        case "insignia":
+            // El número del icono en el Dock: lo nuevo desde la última visita. Cero lo
+            // quita. Solo existe mientras la aplicación está abierta: macOS no deja
+            // ponérselo a una aplicación cerrada.
+            let numero = (datos["numero"] as? NSNumber)?.intValue ?? 0
+            NSApp.dockTile.badgeLabel = numero > 0 ? String(numero) : nil
         default:
             break
         }

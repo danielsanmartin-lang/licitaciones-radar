@@ -285,6 +285,15 @@ recuperar) y ofrece **«Entrar sin esperar»**. Es mejor esperar, porque el resu
 al terminar; pero si entras, la búsqueda sigue por detrás, la cabecera lo va contando y,
 al acabar, avisa con **«Búsqueda terminada: N nuevas · Ver resumen»**.
 
+**El número del icono.** Mientras la aplicación está abierta, su icono del Dock lleva un
+número: las licitaciones nuevas desde la última vez que las miraste —las mismas de «N
+nuevas» en la barra lateral— más las **consultas previas que sigues cuyo pliego ya ha
+salido** (ver [Consultas previas y su pliego](#consultas-previas-y-su-pliego)). Se borra al
+mirar las nuevas. Para que el número sirva aunque la tengas abierta todo el día, cada
+cuarto de hora repasa las cifras y, si la última búsqueda tiene **más de cuatro horas**,
+lanza otra por detrás, la misma que «Buscar ahora». Con la aplicación cerrada no hay
+número: macOS no deja ponérselo a una aplicación que no está corriendo.
+
 **Si se atasca de verdad.** Un vigilante mira que la búsqueda avance: bytes, fichas,
 páginas o reintentos. Si pasan **15 minutos sin moverse nada**, corta esa fuente, guarda
 lo que ya había llegado y sigue con las demás; la siguiente búsqueda retoma la que se
@@ -343,6 +352,33 @@ perfil, en dos grupos: **en plazo**, por lo que cierra antes, y **plazo vencido 
 cerradas**, de lo más reciente a lo más antiguo. En las cerradas sale **quién ganó y por
 cuánto** —mirando todos los anuncios del expediente, no solo el último— o «adjudicación
 pendiente» si todavía no se sabe. La cifra de la barra lateral es lo que sigue en plazo.
+
+### Consultas previas y su pliego
+
+Una consulta preliminar de mercado es el órgano preguntando antes de escribir el pliego,
+y lo que interesa después es **cuándo sale ese pliego**. PLACSP no lo dice —el anuncio de
+licitación no lleva ninguna referencia a la consulta—, así que el radar lo deduce en cada
+búsqueda, entre lo que el mismo órgano publica en los dos años siguientes:
+
+- **Segura**: mismo NIF de órgano y mismo número de expediente. Pasa poco: de 2.310
+  consultas reales, 76.
+- **Probable** o **posible**: mismo órgano y un objeto parecido. Las palabras pesan según
+  lo raras que son en ese órgano: para el CSIC «suministro e instalación» no dice nada y
+  «criomicroscopio» lo dice todo. Revisado a mano, las probables aciertan unas 13 de cada
+  14 y las posibles unas 4 de cada 5; por debajo de eso no se propone nada.
+
+En la ficha de una consulta sale **«¿Se ha licitado ya?»** con las candidatas, su nivel y
+las palabras que comparten, y dos botones: **Es esta** y **No es esta**. Lo que decides
+se guarda aparte y no lo deshace ninguna búsqueda. La ficha del pliego dice al revés
+**de qué consulta viene**. En las listas, la consulta lleva **«Ya licitada»** (o «Posible
+licitación») y el pliego, **«Hubo consulta previa»**: el órgano habló con el mercado
+antes, y alguien pudo influir en lo que pide.
+
+Si **sigues** una consulta, el número del icono de la aplicación sube cuando sale su
+pliego (segura, probable o confirmada por ti).
+
+La primera búsqueda después de actualizar recorre todas las consultas, unos veinte
+segundos; las siguientes, solo los órganos que han publicado algo nuevo.
 
 ### Bandeja
 
@@ -465,14 +501,34 @@ nueva, la base se reclasifica sola.
 
 ### Vencimientos
 
-Contratos **ya adjudicados** cuyo plazo termina pronto, con el incumbente y el
-importe. Los botones de ventana (3, 6, 12, 24 meses) muestran cuántos vencen en cada
-plazo y por cuánto importe, para poder comparar de un vistazo. Es la lista para llamar *antes* de que salga el pliego, cuando todavía se
-puede influir. Solo aparecen los que publican fecha de fin o duración: si la fuente
-no la da, la licitación no se lista en lugar de estimarla a ojo. El órgano y el
-incumbente de cada tarjeta llevan a su ficha. Encima va el **calendario de
-renovaciones**: cuántos contratos acaban cada uno de los doce meses que vienen, por
-expediente, con sus incumbentes al pasar el ratón.
+Es la **lista de prospección**: contratos **ya adjudicados** que vencen, con el
+incumbente y el importe, para llamar *antes* de que salga el pliego, cuando todavía se
+puede influir. Un expediente por fila: un contrato con prórroga publicada sale una vez,
+con su fin más tardío.
+
+Los botones de ventana (3, 6, 12, 24 meses) muestran cuántos vencen en cada plazo y por
+cuánto importe. Encima va el **calendario de renovaciones**: cuántos contratos acaban
+cada uno de los doce meses que vienen, con sus incumbentes al pasar el ratón. Arriba se
+elige **el perfil** —todos, o solo concienciación, o solo correo—.
+
+Debajo de la ventana, dos apartados más:
+
+- **Vencidos en los últimos seis meses.** Ya han acabado; si la renovación no ha salido,
+  el órgano la está preparando o ha prorrogado, y es el momento de llamar.
+- **Sin fecha de fin publicada.** Adjudicados en los últimos cuatro años cuya fuente no
+  dice cuándo acaban. No se inventa una fecha: van de la adjudicación más antigua a la más
+  reciente.
+
+En cada tarjeta se apunta **en qué punto estás**: Pendiente, Contactado, Reunión o
+Descartado, y una nota de una línea («hablé con Marta, volver en enero»). Se guarda por
+expediente en tu base. Lo descartado deja de salir —la cabecera dice cuántos hay ocultos
+y «Ver descartados» los enseña—. Si el mismo órgano ha publicado algo después en tus
+perfiles, la tarjeta lo dice («después publicó: …»): puede ser la renovación, y entonces
+ya no toca llamar sino presentarse.
+
+**Exportar CSV** se lleva los tres apartados, con el estado y la nota de cada contrato,
+para trabajarlos en una hoja de cálculo. El órgano y el incumbente de cada tarjeta llevan
+a su ficha.
 
 ### Adjudicatarios
 
@@ -879,8 +935,8 @@ la mayoría cae de todas formas por `importe_minimo`.
   aportarían es `adjudicatario`, `fecha_formalizacion` y `plazo_de_ejecucion_meses`,
   que es justo lo que le falta a la vista de Vencimientos. Pendiente como mejora de
   esa vista, no como fuente de licitaciones.
-- **Avisos por email o Slack.** Solo bandeja: hay que entrar a mirar. No hay nada
-  escrito de esto, ni medio empezado.
+- **Avisos fuera de la aplicación.** El único aviso es el número del icono del Dock, y
+  solo mientras la aplicación está abierta. No hay correo ni Slack.
 - **Una instancia compartida.** Cada persona tiene su base y su triaje.
 
 Sobre el conector nativo de Euskadi: se investigó y **no hace falta**. Su API existe

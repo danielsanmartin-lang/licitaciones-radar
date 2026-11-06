@@ -422,13 +422,31 @@
             <section id="vista-vencimientos" role="tabpanel" hidden data-titulo="Vencimientos"
                      data-icono="ico-calendario" data-tono="rojo">
               <p class="intro">
-                Contratos ya adjudicados que vencen pronto. Es la lista para llamar
-                <strong>antes</strong> de que salga el pliego.
+                Tu lista de prospección: contratos ya adjudicados que vencen pronto, para
+                llamar <strong>antes</strong> de que salga el pliego. Apunta en cada uno en
+                qué punto estás; se guarda aquí y va en el CSV.
               </p>
+              <div class="filtros">
+                <select id="vencimientos-perfil" class="selector-ambito" aria-label="Perfil"></select>
+                <label class="check"><input type="checkbox" id="vencimientos-descartados"> Ver descartados</label>
+                <a id="vencimientos-exportar" class="boton-sec" href="/api/prospeccion.csv">Exportar CSV</a>
+              </div>
               <div id="calendario-vencimientos" class="analitica"></div>
               <div class="ventanas" id="ventanas"></div>
               <p class="total-ventana" id="total-ventana"></p>
               <div id="lista-vencimientos" class="lista"></div>
+              <!-- Los otros dos apartados de la prospección. Los rellena
+                   `cargarVencimientos()`; sin nada que enseñar se quedan ocultos. -->
+              <div id="prospeccion-vencidos" class="prospeccion-apartado" hidden>
+                <h3 class="apartado-titulo"></h3>
+                <p class="apartado-pista"></p>
+                <div class="lista"></div>
+              </div>
+              <div id="prospeccion-sin-fecha" class="prospeccion-apartado" hidden>
+                <h3 class="apartado-titulo"></h3>
+                <p class="apartado-pista"></p>
+                <div class="lista"></div>
+              </div>
             </section>
 
             <section id="vista-adjudicatarios" role="tabpanel" hidden data-titulo="Adjudicatarios"

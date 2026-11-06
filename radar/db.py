@@ -205,6 +205,42 @@ CREATE TABLE IF NOT EXISTS busquedas (
     primera_carga INTEGER NOT NULL DEFAULT 0,
     motivo        TEXT   -- completa | con_errores | atascada
 );
+
+-- Qué licitación ha salido de cada consulta preliminar de mercado (ver `enlaces.py`).
+-- Son CANDIDATAS calculadas: se rehacen en cada búsqueda para los órganos que han
+-- publicado algo nuevo, así que aquí no se guarda nada que haya decidido una persona.
+-- `licitacion_id` es el primer anuncio del expediente posterior a la consulta.
+CREATE TABLE IF NOT EXISTS enlaces_consulta (
+    consulta_id      INTEGER NOT NULL REFERENCES licitaciones(id) ON DELETE CASCADE,
+    licitacion_id    INTEGER NOT NULL REFERENCES licitaciones(id) ON DELETE CASCADE,
+    puntuacion       REAL NOT NULL,
+    mismo_expediente INTEGER NOT NULL DEFAULT 0,
+    palabras         TEXT,
+    PRIMARY KEY (consulta_id, licitacion_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_enlace_licitacion ON enlaces_consulta (licitacion_id);
+
+-- Lo que sí decide una persona: «es esta» o «no es esta». Va aparte para que rehacer las
+-- candidatas no lo borre.
+CREATE TABLE IF NOT EXISTS enlaces_decision (
+    consulta_id   INTEGER NOT NULL REFERENCES licitaciones(id) ON DELETE CASCADE,
+    licitacion_id INTEGER NOT NULL REFERENCES licitaciones(id) ON DELETE CASCADE,
+    decision      TEXT NOT NULL CHECK (decision IN ('si', 'no')),
+    decidido_en   TEXT NOT NULL,
+    PRIMARY KEY (consulta_id, licitacion_id)
+);
+
+-- La prospección de Vencimientos: en qué punto está cada contrato que vence. Por
+-- expediente (`clave` es su `clave_grupo`, o el id si no tiene) y no por anuncio, como
+-- el triaje. No reutiliza `revisiones`: aquello dice qué hiciste con el PLIEGO cuando
+-- salió; esto, si has llamado al cliente para la renovación.
+CREATE TABLE IF NOT EXISTS prospeccion (
+    clave          TEXT PRIMARY KEY,
+    estado         TEXT NOT NULL DEFAULT 'pendiente',
+    nota           TEXT,
+    actualizado_en TEXT NOT NULL
+);
 """
 
 # «vista» es lo que deja «Limpiar sin revisar»: ya no cuenta como pendiente, pero sigue en
