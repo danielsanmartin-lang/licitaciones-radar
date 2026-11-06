@@ -257,8 +257,8 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 Las vistas están en la **barra lateral**, como en Zepo Desk: Bandeja, Resumen y Otras
 licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios, Organismos y Analítica en
-«Mercado»; y Términos de búsqueda al pie, junto al estado del radar (la última búsqueda,
-cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
+«Mercado»; y Términos de búsqueda e Historial de versiones al pie, junto al estado del
+radar (la última búsqueda, cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
 
 Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
 dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
@@ -701,6 +701,16 @@ python3 radar.py actualizar                   # la instala
 la descarga de cada mañana termine en segundos en vez de repasar las 673.755 fichas de
 la base. Si cambias los términos de búsqueda, lo detecta y repasa todo igualmente; y
 `match` siempre lo mira todo, para eso está.
+
+### Historial de versiones
+
+Al pie de la barra lateral, debajo de Términos de búsqueda. Enseña **todas las versiones
+publicadas**, de la más nueva a la más antigua, con sus notas: las mismas que salen en la
+pantalla de arranque al actualizarse, así que lo que se escribe en cada release es lo que
+se lee aquí. La que tienes instalada va marcada como **«la tuya»**, y si hay alguna más
+nueva sin instalar se dice (se instala sola la próxima vez que abras la aplicación). Las
+notas se piden a GitHub y se recuerdan diez minutos; sin conexión, la vista lo dice y
+enlaza a la página de versiones.
 
 ### Actualizar el programa
 

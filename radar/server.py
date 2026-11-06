@@ -354,6 +354,13 @@ class Manejador(BaseHTTPRequestHandler):
             self._json({"actualizada": True, **info,
                         **novedades.notas(info["desde"], info["hasta"])})
 
+        elif partes.path == "/api/historial-versiones":
+            # «Historial de versiones», al pie de la barra lateral: las notas de todas
+            # las releases publicadas.
+            from . import novedades
+
+            self._json(novedades.historial())
+
         elif partes.path == "/api/actualizacion/estado":
             # No sale a internet: lee el progreso que va dejando en disco la instalación
             # y dice qué versión ejecuta este servidor. Lo pregunta la pantalla de

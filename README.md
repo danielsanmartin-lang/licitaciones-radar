@@ -274,8 +274,8 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 The views live in the **sidebar**, as in Zepo Desk: Bandeja (Inbox), Resumen (Summary)
 and Otras licitaciones (Other tenders) at the top; Siguiendo (Following), Vencimientos
 (Expiring contracts), Adjudicatarios (Winning bidders), Organismos (Contracting bodies) and
-Analítica (Analytics) under «Mercado» (Market); and Términos de búsqueda (Search terms) at
-the bottom, next to the radar's status (last search, how the sources are doing and the
+Analítica (Analytics) under «Mercado» (Market); and Términos de búsqueda (Search terms) and
+Historial de versiones (Version history) at the bottom, next to the radar's status (last search, how the sources are doing and the
 version). **⌘1…⌘9** switch views in that same order.
 
 Clicking a tender **opens its record on the right** and the list narrows to make room,
@@ -750,6 +750,15 @@ makes the morning download finish in seconds instead of going through all 673,75
 records in the database. If you change the search terms, it detects this and goes
 through everything anyway; and `match` always looks at everything — that is what it is
 for.
+
+### Historial de versiones (Version history)
+
+At the bottom of the sidebar, below Términos de búsqueda. It shows **every published
+version**, newest first, with its notes: the same ones the startup screen shows after an
+update, so what is written in each release is what is read here. The one you have
+installed is marked **«la tuya»** (yours), and if there is a newer one not yet installed it
+says so (it installs itself the next time you open the app). The notes come from GitHub
+and are kept for ten minutes; offline, the view says so and links to the releases page.
 
 ### Updating the program
 
