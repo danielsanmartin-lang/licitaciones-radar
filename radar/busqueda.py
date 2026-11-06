@@ -113,7 +113,8 @@ def detalle_progreso() -> dict | None:
 
 def lanzar(*, reiniciar_cursor: bool = False, dias: int | None = None,
            fuentes: list | None = None, backfill: list | None = None,
-           primera_carga: bool = False, etapas: list | None = None) -> dict:
+           primera_carga: bool = False, etapas: list | None = None,
+           bd: Path | str | None = None) -> dict:
     """Arranca la ingesta en segundo plano. Lanza RuntimeError si ya hay una.
 
     El cerrojo definitivo lo toma el proceso hijo; esta comprobación solo sirve
@@ -127,7 +128,10 @@ def lanzar(*, reiniciar_cursor: bool = False, dias: int | None = None,
 
     # -u desactiva el buffer del hijo: sin él, las líneas del registro que lee la
     # aplicación llegarían a ráfagas en lugar de a medida que pasan las cosas.
-    orden = [sys.executable, "-u", str(rutas.ENTRADA_CLI), "ingest"]
+    orden = [sys.executable, "-u", str(rutas.ENTRADA_CLI)]
+    if bd:
+        orden += ["--bd", str(bd)]
+    orden.append("ingest")
     if primera_carga:
         orden.append("--primera-carga")
         if etapas:

@@ -973,6 +973,51 @@ progress:not([value]) { opacity: .7; }
   margin-top: var(--e-2);
 }
 
+/* --- Prospección (Vencimientos) -------------------------------------------
+ *
+ * Debajo de las píldoras, en qué punto está la llamada: cuatro estados en un control
+ * segmentado y una nota de una línea. Lo descartado se apaga como en el triaje. */
+.tarjeta .prospeccion-fila {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--e-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: var(--e-2);
+}
+.segmentos {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radio);
+  background: var(--relleno);
+}
+.segmentos button {
+  all: unset;
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: var(--radio-sm);
+  font-size: var(--txt-sm);
+  color: var(--texto-sec);
+}
+.segmentos button:hover { color: var(--texto); }
+.segmentos button.activo { background: var(--fondo); color: var(--texto); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+.segmentos button:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+.tarjeta.pros-contactado .segmentos button.activo { color: var(--acento-texto); }
+.tarjeta.pros-reunion .segmentos button.activo { color: var(--verde); }
+.tarjeta.pros-descartado { opacity: .6; }
+.tarjeta.pros-descartado:hover { opacity: 1; }
+.nota-prospeccion {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: var(--txt-sm);
+}
+.nota-prospeccion.guardada { box-shadow: 0 0 0 1.5px var(--verde); }
+.pill.renovacion { background: var(--violeta-tenue); color: var(--violeta); cursor: pointer; }
+.pill.renovacion:hover { text-decoration: underline; }
+.prospeccion-apartado { margin-top: var(--e-6); }
+.apartado-titulo { margin: 0 0 var(--e-1); font-size: var(--txt-lg); font-weight: 600; }
+.apartado-pista { margin: 0 0 var(--e-3); font-size: var(--txt-md); color: var(--texto-sec); max-width: 70ch; }
+
 /* --- Píldoras -------------------------------------------------------------
  *
  * Los chips de Zepo Desk: 20 px de alto, esquinas de 6 y tonos suaves. Dos rangos: las
@@ -1014,6 +1059,12 @@ progress:not([value]) { opacity: .7; }
 .pill.anuncios { background: var(--relleno); color: var(--texto-sec); }
 /* La única píldora rellena de la fila: tiene que verse al pasar la vista sin leerla. */
 .pill.nueva { background: var(--acento); color: #fff; font-weight: 600; }
+/* Consulta previa ↔ pliego (ver `pintarEnlacesConsulta` en app.js). «Ya licitada» en
+   verde porque es la noticia que se esperaba; «posible», en gris, porque está por
+   confirmar. */
+.pill.licitada { background: var(--verde-tenue); color: var(--verde); font-weight: 600; }
+.pill.licitada.posible { background: var(--relleno); color: var(--texto-sec); font-weight: 500; }
+.pill.consulta-previa { background: var(--violeta-tenue); color: var(--violeta); }
 
 /* --- La cifra de la derecha ------------------------------------------------ */
 
@@ -1205,6 +1256,31 @@ progress:not([value]) { opacity: .7; }
 .hist { padding-left: 1.2em; font-size: var(--txt-sm); color: var(--texto-sec); }
 .hist li { margin-bottom: 3px; }
 .guardado { margin-left: var(--e-2); color: var(--verde); font-size: var(--txt-sm); }
+
+/* Las licitaciones que pueden salir de una consulta previa, y al revés. */
+.enlace-consulta {
+  padding: var(--e-2) var(--e-3);
+  margin-bottom: var(--e-2);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+}
+.enlace-consulta.rechazada { opacity: .55; }
+.enlace-consulta .pista { font-size: var(--txt-sm); color: var(--texto-sec); margin-top: 3px; }
+.enlace-cabecera { display: flex; align-items: flex-start; gap: var(--e-2); }
+.enlace-cabecera .pill { flex: none; text-transform: capitalize; }
+.enlace-titulo {
+  all: unset;
+  cursor: pointer;
+  font-size: var(--txt-md);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.enlace-titulo:hover { text-decoration: underline; }
+.enlace-titulo:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.enlace-acciones { display: flex; align-items: center; gap: 6px; margin-top: var(--e-2); }
+.pill.nivel-confirmada, .pill.nivel-segura { background: var(--verde-tenue); color: var(--verde); }
+.pill.nivel-probable { background: var(--acento-tenue); color: var(--acento-texto); }
+.pill.nivel-posible { background: var(--relleno); color: var(--texto-sec); }
 
 /* --- Términos de búsqueda -------------------------------------------------- */
 

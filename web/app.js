@@ -404,6 +404,7 @@ async function cargarResumen() {
   $('cuenta-bandeja').textContent = d.sin_revisar ? d.sin_revisar.toLocaleString('es-ES') : '';
   $('cuenta-siguiendo').textContent =
     d.siguiendo_en_plazo ? d.siguiendo_en_plazo.toLocaleString('es-ES') : '';
+  avisarIcono(d.insignia);
   ultimoResumen = d;
   $('limpiar-abrir').disabled = !d.sin_revisar;
   if (!$('limpiar').hidden) pintarLimpiar();
@@ -634,6 +635,18 @@ function tarjeta(it) {
   }
   if (it.adjudicatario) {
     meta.appendChild(pildora(`ganó ${it.adjudicatario.slice(0, 38)}`, { clase: 'incumbente' }));
+  }
+  // El enlace entre una consulta previa y el pliego que sale de ella (ver
+  // `radar/enlaces.py`). En la consulta, si ya se ha licitado; en el pliego, que hubo
+  // consulta antes: el órgano habló con el mercado, y alguien pudo influir en lo que pide.
+  if (it.licitada) {
+    const firme = it.licitada !== 'posible';
+    meta.appendChild(pildora(firme ? 'Ya licitada' : 'Posible licitación', {
+      clase: firme ? 'licitada' : 'licitada posible', ico: 'ico-destello',
+      titulo: TEXTO_NIVEL[it.licitada] }));
+  } else if (it.consulta_previa) {
+    meta.appendChild(pildora('Hubo consulta previa', {
+      clase: 'consulta-previa', titulo: TEXTO_NIVEL[it.consulta_previa] }));
   }
   // Varios anuncios del mismo expediente colapsados en una fila.
   if ((it.anuncios || 1) > 1) {
@@ -1380,6 +1393,40 @@ function ventanaNativa() {
     window.webkit.messageHandlers.radar;
 }
 
+// El número del icono de la aplicación en el Dock: lo mismo que «N nuevas» de la barra
+// lateral, más las consultas previas que sigues cuyo pliego ha salido. Lo pone la ventana
+// de macOS; en el navegador no hay icono al que ponérselo.
+let ultimaInsignia = null;
+function avisarIcono(n) {
+  const nativa = ventanaNativa();
+  const numero = Math.max(0, Number(n) || 0);
+  if (!nativa || numero === ultimaInsignia) return;
+  ultimaInsignia = numero;
+  nativa.postMessage({ accion: 'insignia', numero });
+}
+
+// Con la aplicación abierta todo el día, el número del icono solo sirve si alguien sigue
+// buscando. Cada cuarto de hora se refrescan las cifras —por si la tarea de las mañanas
+// ha traído algo— y, si la última búsqueda tiene más de HORAS_ENTRE_BUSQUEDAS, se lanza
+// otra, la misma que «Buscar ahora». Nada de esto corre con la pantalla de arranque
+// delante ni con una búsqueda en marcha: ahí ya se está esperando a una.
+const HORAS_ENTRE_BUSQUEDAS = 4;
+const MINUTOS_ENTRE_REPASOS = 15;
+// La hora del último intento propio, aparte de la de la última búsqueda que fue bien: sin
+// red, «la última búsqueda» no avanza nunca y se volvería a intentar cada cuarto de hora.
+let ultimoIntentoSolo = Date.now();
+setInterval(async () => {
+  if (enArranque || vigilancia) return;
+  await cargarResumen();
+  const d = ultimoResumen;
+  const horas = HORAS_ENTRE_BUSQUEDAS * 3600 * 1000;
+  if (d && !buscadoHaceMenosDe(d.ultima_busqueda, HORAS_ENTRE_BUSQUEDAS * 60)
+      && Date.now() - ultimoIntentoSolo > horas) {
+    ultimoIntentoSolo = Date.now();
+    lanzarBusqueda();
+  }
+}, MINUTOS_ENTRE_REPASOS * 60 * 1000);
+
 async function reiniciarConVersion(version, appNueva) {
   const nativa = ventanaNativa();
   if (appNueva) {
@@ -2002,6 +2049,7 @@ async function pintarVersionPie() {
 // --- Vencimientos ----------------------------------------------------------
 
 let mesesVencimiento = 6;
+let perfilVencimiento = '';
 
 // --- Siguiendo -----------------------------------------------------------------
 //
@@ -2060,12 +2108,21 @@ async function cargarVencimientos() {
   // dejarlos mientras carga el nuevo es peor que no mostrar nada.
   $('ventanas').innerHTML = '';
   $('total-ventana').textContent = '';
+  llenarPerfilVencimientos();
+  // Sus propios parámetros y no `query()`, que lleva dentro los filtros de la Bandeja.
+  const params = (extra = {}) => {
+    const p = new URLSearchParams({ meses });
+    if (perfilVencimiento) p.set('perfil', perfilVencimiento);
+    for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
+    return p.toString();
+  };
+  $('vencimientos-exportar').href = '/api/prospeccion.csv?' + params();
 
   const cont = $('lista-vencimientos');
   let d;
   try {
-    const r = await fetch('/api/vencimientos?meses=' + meses);
-    d = await r.json();
+    d = await pedirJSON('/api/vencimientos?' + params({
+      descartados: $('vencimientos-descartados').checked ? '1' : '' }));
   } catch {
     if (carga.terminar()) {
       cont.innerHTML = '<p class="vacio">No se pudieron cargar los vencimientos.</p>';
@@ -2104,48 +2161,190 @@ async function cargarVencimientos() {
   $('total-ventana').innerHTML =
     `<strong>${d.total.toLocaleString('es-ES')}</strong> ${plural} en los próximos ` +
     `${meses} meses, por <strong>${fmtImporte(d.importe_total)}</strong> en total.`;
+  if (d.descartados_ocultos) {
+    $('total-ventana').appendChild(document.createTextNode(
+      ` ${d.descartados_ocultos.toLocaleString('es-ES')} descartados en la prospección no salen.`));
+  }
 
   if (!d.items.length) {
     cont.innerHTML = `<p class="vacio">Nada vence en los próximos ${meses} meses.
       Para verlo hace falta histórico de adjudicaciones:
       <code>python3 radar.py ingest --primera-carga</code></p>`;
-    return;
+  } else {
+    for (const it of d.items) cont.appendChild(tarjetaProspecto(it, 'vence'));
   }
 
-  for (const it of d.items) {
-    const el = document.createElement('article');
-    el.className = 'tarjeta';
-    el.dataset.id = it.id;
-    const meses_txt = it.duracion_meses
-      ? `contrato de ${Math.round(it.duracion_meses)} meses` : '';
-    el.innerHTML = `
-      <div>
-        <h3></h3>
-        <div class="organo"></div>
-        <div class="meta">
-          <span class="pill incumbente"></span>
-          <span class="pill importe">${fmtImporte(it.importe)}</span>
-          <span class="pill">vence ${fmtFecha(it.fecha_fin_prevista)}</span>
-          ${meses_txt ? `<span class="pill">${meses_txt}</span>` : ''}
-          ${it.ccaa ? `<span class="pill">${it.ccaa}</span>` : ''}
-        </div>
-      </div>
-      <div class="derecha">
-        <div class="dias ${it.dias_para_vencer <= 90 ? 'pronto' : ''}">${it.dias_para_vencer}<small>días</small></div>
-      </div>`;
-    el.querySelector('h3').textContent = it.objeto || '(sin objeto)';
-    if (it.organo) el.querySelector('.organo').appendChild(enlaceFicha(it.organo, 'organismo', it.organo));
-    const incumbente = el.querySelector('.incumbente');
-    incumbente.textContent = 'incumbente: ';
-    if (it.adjudicatario) {
-      incumbente.appendChild(enlaceFicha(it.adjudicatario, 'competidor', it.adjudicatario));
-    } else {
-      incumbente.appendChild(document.createTextNode('no publicado'));
+  pintarApartadoProspeccion('prospeccion-vencidos', d.vencidos, d.vencidos_total,
+    `Vencidos en los últimos ${d.meses_vencidos} meses`,
+    'Ya han acabado. Si el órgano no ha publicado todavía la renovación, es el momento ' +
+    'de llamar: o la está preparando, o ha prorrogado.', 'vencido');
+  pintarApartadoProspeccion('prospeccion-sin-fecha', d.sin_fecha, d.sin_fecha_total,
+    'Sin fecha de fin publicada',
+    `Adjudicados en los últimos ${d.anios_sin_fecha} años cuya fuente no dice cuándo ` +
+    'acaban. No se inventa la fecha: van de la adjudicación más antigua a la más reciente.',
+    'sin-fecha');
+}
+
+// El desplegable de perfiles de Vencimientos. Los perfiles salen del último resumen,
+// como los de la Bandeja; se rehace solo si han cambiado.
+function llenarPerfilVencimientos() {
+  const sel = $('vencimientos-perfil');
+  const firma = JSON.stringify(ultimosPerfiles);
+  if (sel.dataset.firma === firma) return;
+  sel.dataset.firma = firma;
+  sel.textContent = '';
+  sel.appendChild(new Option('Todos tus perfiles', ''));
+  for (const p of ultimosPerfiles) sel.appendChild(new Option(p, p));
+  sel.value = ultimosPerfiles.includes(perfilVencimiento) ? perfilVencimiento : '';
+}
+
+function pintarApartadoProspeccion(idCaja, items, total, titulo, pista, tipo) {
+  const caja = $(idCaja);
+  const lista = caja.querySelector('.lista');
+  lista.textContent = '';
+  caja.hidden = !items || !items.length;
+  if (caja.hidden) return;
+  caja.querySelector('.apartado-titulo').textContent =
+    `${titulo} · ${total.toLocaleString('es-ES')}`;
+  caja.querySelector('.apartado-pista').textContent =
+    pista + (total > items.length ? ` Salen los ${items.length} primeros; el CSV los lleva todos.` : '');
+  for (const it of items) lista.appendChild(tarjetaProspecto(it, tipo));
+}
+
+const ESTADOS_PROSPECCION = [
+  ['pendiente', 'Pendiente'],
+  ['contactado', 'Contactado'],
+  ['reunion', 'Reunión'],
+  ['descartado', 'Descartado'],
+];
+
+// Una tarjeta de la prospección: el contrato, su incumbente y, debajo, en qué punto está
+// la llamada. `tipo` es el apartado: «vence», «vencido» o «sin-fecha».
+function tarjetaProspecto(it, tipo) {
+  const p = it.prospeccion || { estado: 'pendiente' };
+  const el = document.createElement('article');
+  el.className = `tarjeta prospecto pros-${p.estado}`;
+  el.dataset.id = it.id;
+  el.innerHTML = `
+    <div class="principal">
+      <h3></h3>
+      <div class="organo"></div>
+    </div>
+    <div class="derecha"></div>
+    <div class="meta"></div>
+    <div class="prospeccion-fila"></div>`;
+  el.querySelector('h3').textContent = it.objeto || '(sin objeto)';
+  if (it.organo) el.querySelector('.organo').appendChild(enlaceFicha(it.organo, 'organismo', it.organo));
+
+  const derecha = el.querySelector('.derecha');
+  const dias = crear('div', 'dias');
+  if (tipo === 'sin-fecha') {
+    dias.innerHTML = '<small>sin fecha</small>';
+  } else {
+    const n = Math.abs(it.dias_para_vencer);
+    if (tipo === 'vencido') dias.classList.add('vencido');
+    else if (it.dias_para_vencer <= 90) dias.classList.add('pronto');
+    dias.appendChild(crear('span', '', n.toLocaleString('es-ES')));
+    dias.appendChild(crear('small', '', tipo === 'vencido' ? 'días desde' : 'días'));
+  }
+  derecha.appendChild(dias);
+
+  const meta = el.querySelector('.meta');
+  // Una UTE de seis razones sociales no cabe y se recorta: el nombre entero, al pasar el ratón.
+  const incumbente = pildora('incumbente: ', { clase: 'incumbente', titulo: it.adjudicatario || '' });
+  incumbente.lastChild.appendChild(it.adjudicatario
+    ? enlaceFicha(it.adjudicatario, 'competidor', it.adjudicatario)
+    : document.createTextNode('no publicado'));
+  meta.appendChild(incumbente);
+  meta.appendChild(pildora(fmtImporte(it.importe), { clase: 'importe' }));
+  if (it.fecha_fin_prevista) {
+    meta.appendChild(pildora(`${tipo === 'vencido' ? 'venció' : 'vence'} ` +
+                             fmtFecha(it.fecha_fin_prevista), { ico: 'ico-calendario' }));
+  } else if (it.fecha_adjudicacion) {
+    meta.appendChild(pildora(`adjudicada ${fmtFecha(it.fecha_adjudicacion)}`,
+                             { ico: 'ico-calendario' }));
+  }
+  if (it.duracion_meses) meta.appendChild(pildora(`contrato de ${Math.round(it.duracion_meses)} meses`));
+  for (const perfil of (it.perfil || '').split(',').filter(Boolean)) {
+    meta.appendChild(pildora(perfil, { clase: 'perfil' }));
+  }
+  if (it.ccaa) meta.appendChild(pildora(it.ccaa));
+  // Lo primero que el mismo órgano ha publicado después en tus perfiles: puede ser la
+  // renovación —y entonces ya no hay que llamar, hay que presentarse— o algo distinto.
+  if (it.renovacion) {
+    const r = pildora(`después publicó: ${(it.renovacion.objeto || '').slice(0, 48)}`, {
+      clase: 'renovacion', ico: 'ico-destello',
+      titulo: `El ${fmtFecha(it.renovacion.publicada)}. Puede ser la renovación: ábrela para comprobarlo.` });
+    r.addEventListener('click', (ev) => { ev.stopPropagation(); abrirPanel(it.renovacion.id); });
+    meta.appendChild(r);
+  }
+
+  // En qué punto está la llamada. Va dentro de la tarjeta, que al pulsarla abre la ficha:
+  // los controles paran el clic para no abrirla al cambiar de estado.
+  const fila = el.querySelector('.prospeccion-fila');
+  fila.addEventListener('click', (ev) => ev.stopPropagation());
+  const grupo = crear('div', 'segmentos');
+  grupo.setAttribute('role', 'group');
+  grupo.setAttribute('aria-label', 'Estado de la prospección');
+  for (const [valor, texto] of ESTADOS_PROSPECCION) {
+    const b = crear('button', valor === p.estado ? 'activo' : '', texto);
+    b.setAttribute('aria-pressed', String(valor === p.estado));
+    b.addEventListener('click', async () => {
+      if (await guardarProspeccion(it.clave, { estado: valor })) {
+        // Descartar la saca de la lista; lo demás solo cambia la tarjeta.
+        if (valor === 'descartado' && !$('vencimientos-descartados').checked) {
+          cargarVencimientos();
+          return;
+        }
+        for (const otro of grupo.querySelectorAll('button')) {
+          otro.classList.toggle('activo', otro === b);
+          otro.setAttribute('aria-pressed', String(otro === b));
+        }
+        el.className = `tarjeta prospecto pros-${valor}`;
+      }
+    });
+    grupo.appendChild(b);
+  }
+  fila.appendChild(grupo);
+  const nota = document.createElement('input');
+  nota.type = 'text';
+  nota.className = 'nota-prospeccion';
+  nota.placeholder = 'Nota: con quién has hablado, cuándo volver a llamar…';
+  nota.value = p.nota || '';
+  let guardada = nota.value;
+  const guardarNota = async () => {
+    if (nota.value === guardada) return;
+    if (await guardarProspeccion(it.clave, { nota: nota.value })) {
+      guardada = nota.value;
+      nota.classList.add('guardada');
+      setTimeout(() => nota.classList.remove('guardada'), 1200);
     }
-    el.addEventListener('click', () => abrirPanel(it.id));
-    cont.appendChild(el);
+  };
+  nota.addEventListener('blur', guardarNota);
+  nota.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') nota.blur(); });
+  fila.appendChild(nota);
+
+  el.addEventListener('click', () => abrirPanel(it.id));
+  return el;
+}
+
+async function guardarProspeccion(clave, cambios) {
+  try {
+    const r = await pedirJSON('/api/prospeccion', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clave, ...cambios }),
+    });
+    return !r.error;
+  } catch {
+    return false;
   }
 }
+
+$('vencimientos-perfil').addEventListener('change', () => {
+  perfilVencimiento = $('vencimientos-perfil').value;
+  cargarVencimientos();
+});
+$('vencimientos-descartados').addEventListener('change', () => cargarVencimientos());
 
 // --- Adjudicatarios --------------------------------------------------------
 
@@ -2953,11 +3152,13 @@ async function abrirPanel(id) {
   ].filter(([, v]) => v);
 
   const cont = $('panel-contenido');
+  cont.dataset.id = id;
   cont.innerHTML = `
     <h2></h2>
     <dl>${campos.map(([k]) => `<div class="campo"><dt>${k}</dt><dd data-c="${k}"></dd></div>`).join('')}</dl>
     <h4>Por qué ha entrado</h4>
     <div class="motivo" id="p-motivo"></div>
+    <div id="p-consulta" hidden></div>
     <h4>Triaje</h4>
     <div class="acciones" id="p-acciones"></div>
     <textarea id="p-notas" placeholder="Notas: con quién hablar, qué preguntar, decisión tomada…"></textarea>
@@ -2991,6 +3192,8 @@ async function abrirPanel(id) {
     p.textContent = d.descripcion;
     $('p-motivo').after(p);
   }
+
+  pintarEnlacesConsulta(d);
 
   // Acciones de triaje
   const actual = d.estado_revision || 'nuevo';
@@ -3067,6 +3270,107 @@ async function abrirPanel(id) {
   ).join('') || '<li>Solo se ha visto una versión.</li>';
 
   abrirCajon();
+}
+
+// --- Consulta previa ↔ licitación ------------------------------------------
+//
+// PLACSP no dice qué pliego sale de cada consulta previa: lo deduce el radar (ver
+// `radar/enlaces.py`) y lo enseña con su nivel de confianza, para que lo cierre una
+// persona con «Es esta» o «No es esta».
+
+const TEXTO_NIVEL = {
+  confirmada: 'Confirmada por ti',
+  segura: 'Segura: mismo órgano y mismo número de expediente',
+  probable: 'Probable: mismo órgano y objeto muy parecido',
+  posible: 'Posible: mismo órgano y objeto parecido. Compruébalo',
+};
+
+function pintarEnlacesConsulta(d) {
+  const caja = $('p-consulta');
+  caja.textContent = '';
+  caja.hidden = true;
+
+  if (d.licitaciones_de_la_consulta) {
+    const e = d.licitaciones_de_la_consulta;
+    caja.hidden = false;
+    caja.appendChild(crear('h4', '', '¿Se ha licitado ya?'));
+    if (e.preparando) {
+      caja.appendChild(crear('p', 'pista',
+        'Se calcula en la próxima búsqueda: hace falta un índice que crea ella.'));
+      return;
+    }
+    if (!e.candidatas.length) {
+      caja.appendChild(crear('p', 'pista',
+        'Todavía no. Este órgano no ha publicado nada que se le parezca desde la consulta. ' +
+        'El radar lo vuelve a mirar en cada búsqueda y, si la sigues, el icono de la ' +
+        'aplicación te avisa cuando salga.'));
+      return;
+    }
+    for (const c of e.candidatas) {
+      caja.appendChild(filaEnlace(c, {
+        nivel: c.nivel,
+        detalle: [c.publicada && `publicada ${fmtFecha(c.publicada)}`,
+                  c.importe && fmtImporte(c.importe), c.estado,
+                  c.adjudicatario && `ganó ${c.adjudicatario}`].filter(Boolean).join(' · '),
+        palabras: c.palabras,
+        decidir: { consulta_id: d.id, licitacion_id: c.licitacion_id, decision: c.decision },
+      }));
+    }
+    return;
+  }
+
+  const origen = d.consultas_previas || [];
+  if (!origen.length) return;
+  caja.hidden = false;
+  caja.appendChild(crear('h4', '', 'Viene de una consulta previa'));
+  for (const c of origen) {
+    caja.appendChild(filaEnlace(c, {
+      nivel: c.nivel,
+      detalle: c.fecha_publicacion ? `consulta del ${fmtFecha(c.fecha_publicacion)}` : '',
+      decidir: { consulta_id: c.id, licitacion_id: c.licitacion_id, decision: c.decision },
+    }));
+  }
+}
+
+function filaEnlace(c, { nivel, detalle, palabras, decidir }) {
+  const fila = crear('div', `enlace-consulta${decidir.decision === 'no' ? ' rechazada' : ''}`);
+  const cab = crear('div', 'enlace-cabecera');
+  cab.appendChild(pildora(nivel, { clase: `nivel-${nivel}`, titulo: TEXTO_NIVEL[nivel] }));
+  const titulo = crear('button', 'enlace-titulo', c.objeto || '(sin objeto)');
+  titulo.title = 'Abrir esta ficha';
+  titulo.addEventListener('click', () => abrirPanel(c.id));
+  cab.appendChild(titulo);
+  fila.appendChild(cab);
+  if (detalle) fila.appendChild(crear('div', 'pista', detalle));
+  if (palabras) fila.appendChild(crear('div', 'pista', `En común: ${palabras}`));
+
+  const acciones = crear('div', 'enlace-acciones');
+  const boton = (texto, decision) => {
+    const b = crear('button', 'boton-sec', texto);
+    b.addEventListener('click', async () => {
+      try {
+        await pedirJSON('/api/enlace', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...decidir, decision }),
+        });
+      } catch { return; }
+      abrirPanel(Number($('panel-contenido').dataset.id) || decidir.consulta_id);
+      if (vistaActual === 'bandeja') cargarLista();
+      if (vistaActual === 'siguiendo') cargarSiguiendo();
+      cargarResumen();
+    });
+    acciones.appendChild(b);
+  };
+  if (decidir.decision) {
+    acciones.appendChild(crear('span', 'pista',
+      decidir.decision === 'si' ? 'Confirmada.' : 'Descartada.'));
+    boton('Deshacer', null);
+  } else {
+    boton('Es esta', 'si');
+    boton('No es esta', 'no');
+  }
+  fila.appendChild(acciones);
+  return fila;
 }
 
 async function guardar(id, cambios) {

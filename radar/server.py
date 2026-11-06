@@ -8,6 +8,8 @@ Escucha solo en 127.0.0.1. No es un servicio multiusuario ni pretende serlo.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import re
@@ -17,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import busqueda, categorias, consultas, db, pipeline, rutas
+from . import busqueda, categorias, consultas, db, enlaces, pipeline, rutas
 from .db import ESTADOS_REVISION
 from .sources.base import NUTS2_CCAA
 
@@ -89,6 +91,21 @@ class Manejador(BaseHTTPRequestHandler):
 
     def _error(self, mensaje: str, codigo: int = 400) -> None:
         self._json({"error": mensaje}, codigo)
+
+    def _csv(self, columnas: list, filas: list, nombre: str) -> None:
+        """Una descarga CSV. Con `attachment`, que es lo que hace que la ventana de macOS
+        la guarde en Descargas en lugar de intentar enseñarla."""
+        buffer = io.StringIO()
+        escritor = csv.writer(buffer)
+        escritor.writerow(columnas)
+        escritor.writerows(filas)
+        cuerpo = buffer.getvalue().encode("utf-8-sig")  # BOM para que Excel respete acentos
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.end_headers()
+        self.wfile.write(cuerpo)
 
     def _estatico(self, ruta: str) -> None:
         nombre = "index.html" if ruta in ("/", "") else ruta.lstrip("/")
@@ -197,7 +214,9 @@ class Manejador(BaseHTTPRequestHandler):
                 meses = max(1, min(int(params.get("meses", 6)), 60))
             except ValueError:
                 return self._error("meses no válido")
-            self._json(consultas.vencimientos(self.con, meses=meses))
+            self._json(consultas.vencimientos(
+                self.con, meses=meses, perfil=params.get("perfil") or None,
+                ver_descartados=params.get("descartados") == "1"))
 
         elif partes.path == "/api/adjudicatarios":
             try:
@@ -373,12 +392,15 @@ class Manejador(BaseHTTPRequestHandler):
             d.pop("raw", None)
             d["historial"] = consultas.historial(self.con, lic_id)
             d["categorias"] = consultas.categorias_de(self.con, lic_id)
+            # De una consulta previa, qué pliego ha salido de ella; de un pliego, de qué
+            # consulta viene. Ver `enlaces.py`.
+            if d.get("fuente") == enlaces.FUENTE_CONSULTAS:
+                d["licitaciones_de_la_consulta"] = enlaces.de_consulta(self.con, lic_id)
+            else:
+                d["consultas_previas"] = enlaces.de_licitacion(self.con, lic_id)
             self._json(d)
 
         elif partes.path == "/api/export.csv":
-            import csv
-            import io
-
             columnas, filas = consultas.para_csv(
                 self.con,
                 perfil=params.get("perfil") or None,
@@ -388,17 +410,16 @@ class Manejador(BaseHTTPRequestHandler):
                 con_plazo=params.get("con_plazo") == "1",
                 sin_vencidas=params.get("sin_vencidas") == "1",
             )
-            buffer = io.StringIO()
-            escritor = csv.writer(buffer)
-            escritor.writerow(columnas)
-            escritor.writerows(filas)
-            cuerpo = buffer.getvalue().encode("utf-8-sig")  # BOM para que Excel respete acentos
-            self.send_response(200)
-            self.send_header("Content-Type", "text/csv; charset=utf-8")
-            self.send_header("Content-Disposition", 'attachment; filename="licitaciones.csv"')
-            self.send_header("Content-Length", str(len(cuerpo)))
-            self.end_headers()
-            self.wfile.write(cuerpo)
+            self._csv(columnas, filas, "licitaciones.csv")
+
+        elif partes.path == "/api/prospeccion.csv":
+            try:
+                meses = max(1, min(int(params.get("meses", 6)), 60))
+            except ValueError:
+                return self._error("meses no válido")
+            columnas, filas = consultas.prospeccion_csv(
+                self.con, meses=meses, perfil=params.get("perfil") or None)
+            self._csv(columnas, filas, "prospeccion.csv")
 
         else:
             self._estatico(partes.path)
@@ -465,6 +486,30 @@ class Manejador(BaseHTTPRequestHandler):
             self.con.commit()
             self._json({"ok": True})
 
+        elif partes.path == "/api/enlace":
+            # «Es esta» / «no es esta» sobre la licitación que ha salido de una consulta
+            # previa. `decision: null` deshace.
+            try:
+                consulta_id = int(cuerpo["consulta_id"])
+                licitacion_id = int(cuerpo["licitacion_id"])
+            except (KeyError, ValueError, TypeError):
+                return self._error("faltan consulta_id y licitacion_id")
+            try:
+                enlaces.decidir(self.con, consulta_id, licitacion_id, cuerpo.get("decision"))
+            except ValueError as exc:
+                return self._error(str(exc))
+            self._json({"ok": True})
+
+        elif partes.path == "/api/prospeccion":
+            # En qué punto está la prospección de un contrato que vence (Vencimientos).
+            try:
+                fila = consultas.fijar_prospeccion(
+                    self.con, str(cuerpo.get("clave") or ""),
+                    estado=cuerpo.get("estado"), nota=cuerpo.get("nota"))
+            except ValueError as exc:
+                return self._error(str(exc))
+            self._json({"ok": True, **fila})
+
         elif partes.path == "/api/revision/lote":
             # «Limpiar sin revisar…»: pasa a «vista» un criterio entero de una vez. Devuelve
             # los ids, que son lo que la pantalla manda de vuelta si se pulsa «Deshacer».
@@ -529,6 +574,9 @@ class Manejador(BaseHTTPRequestHandler):
                     dias=cuerpo.get("dias"),
                     primera_carga=bool(cuerpo.get("primera_carga")),
                     etapas=etapas,
+                    # La base de ESTE servidor. Sin esto, un `serve --bd otra.db` buscaba
+                    # en la base por defecto y la pantalla enseñaba otra.
+                    bd=None if self.ruta_bd == db.BD_POR_DEFECTO else self.ruta_bd,
                 )
             except RuntimeError as exc:
                 # 409: no es un error del usuario, es que ya se está haciendo.

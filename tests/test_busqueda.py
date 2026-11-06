@@ -41,6 +41,13 @@ class TestArgumentos(unittest.TestCase):
         self.assertEqual(orden[-1], "ingest")
         self.assertIn("-u", orden)  # sin esto el registro llega a ráfagas
 
+    def test_otra_base_va_antes_del_subcomando(self):
+        """`--bd` es una opción general de la CLI: detrás de `ingest` no se entiende."""
+        orden = self._orden(bd="/tmp/otra.db")
+        self.assertEqual(orden[orden.index("--bd"):orden.index("ingest") + 1],
+                         ["--bd", "/tmp/otra.db", "ingest"])
+        self.assertNotIn("--bd", self._orden())
+
     def test_primera_carga_con_etapas(self):
         orden = self._orden(primera_carga=True, etapas=[2, 3, 4])
         self.assertEqual(orden[orden.index("ingest") + 1:],

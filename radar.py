@@ -30,7 +30,7 @@ import webbrowser
 from datetime import date
 from pathlib import Path
 
-from radar import categorias, consultas, db, pipeline, progreso, rutas, vigilante
+from radar import categorias, consultas, db, enlaces, pipeline, progreso, rutas, vigilante
 from radar.matching import cargar_perfiles, reevaluar
 
 RAIZ = Path(__file__).resolve().parent
@@ -153,6 +153,24 @@ def _evaluar_perfiles(con, perfiles, *, incremental: bool = False) -> None:
         clas = categorias.asegurar_al_dia(con)
         if clas:
             _imprimir_temas(clas, progreso.imprimir)
+
+    _enlazar_consultas(con)
+
+
+def _enlazar_consultas(con) -> None:
+    """Qué pliego ha salido de cada consulta previa (ver `radar/enlaces.py`).
+
+    Después de evaluar los perfiles, igual que la clasificación: solo trabaja con los
+    órganos que han publicado algo desde la última vez, salvo la primera vez —o tras
+    cambiar la forma de puntuar—, que recorre todos y tarda unos veinte segundos.
+    """
+    if enlaces.necesita_pasada_completa(con):
+        progreso.imprimir("\nEnlazando consultas previas con sus licitaciones "
+                          "(solo esta vez, unos segundos)...")
+    r = enlaces.actualizar(con)
+    if r.get("completo"):
+        progreso.imprimir(f"  {r['enlazadas']} de {r['consultas']} consultas previas "
+                          "con alguna licitación que puede salir de ellas")
 
 
 def _imprimir_temas(clas: dict, imprimir) -> None:
