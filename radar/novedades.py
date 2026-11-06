@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+import time
 
 from . import __version__, actualizacion, net
 from .actualizacion import REPO, _tupla
@@ -157,6 +158,65 @@ def bloques(markdown: str) -> list[dict]:
     return salida
 
 
+def _traer(timeout: int) -> tuple[list[dict], str | None]:
+    """Las releases publicadas de GitHub (sin borradores ni previas), o el error."""
+    try:
+        datos = net.descargar_json(API_RELEASES, timeout=timeout, intentos=1)
+    except (net.ErrorRed, ValueError, TypeError) as exc:
+        return [], f"No se han podido traer las novedades de GitHub: {exc}"
+    if not isinstance(datos, list):
+        return [], "GitHub no ha devuelto la lista de versiones."
+    return [r for r in datos
+            if isinstance(r, dict) and r.get("tag_name")
+            and not r.get("draft") and not r.get("prerelease")], None
+
+
+def _version(r: dict) -> dict:
+    return {
+        "version": r["tag_name"].lstrip("vV"),
+        "titulo": _titulo(r),
+        "fecha": (r.get("published_at") or "")[:10] or None,
+        "url": r.get("html_url"),
+        "bloques": bloques(r.get("body") or ""),
+    }
+
+
+# El historial se pide cada vez que se abre su vista, y la API de GitHub sin cuenta
+# admite 60 preguntas por hora y por IP —compartidas con el actualizador—. Las releases
+# cambian una vez cada varios días: con diez minutos de memoria basta.
+SEGUNDOS_MEMORIA_HISTORIAL = 600
+_memoria_historial: dict = {}
+
+
+def historial(*, timeout: int = 10, ahora: float | None = None) -> dict:
+    """Todas las versiones publicadas, de la más nueva a la más antigua, con sus notas.
+
+    Es lo que enseña «Historial de versiones», al pie de la barra lateral. Marca cuál es
+    la que corre ahora y si hay alguna más nueva todavía sin instalar. Nunca lanza: sin
+    red se dice, con el enlace a la página de versiones.
+    """
+    ahora = time.monotonic() if ahora is None else ahora
+    guardado = _memoria_historial.get("respuesta")
+    if guardado and ahora - _memoria_historial["cuando"] < SEGUNDOS_MEMORIA_HISTORIAL:
+        return guardado
+
+    releases, error = _traer(timeout)
+    releases.sort(key=lambda r: _tupla(r["tag_name"]), reverse=True)
+    actual = _tupla(__version__)
+    versiones = []
+    for r in releases:
+        v = _version(r)
+        v["instalada"] = _tupla(r["tag_name"]) == actual
+        v["sin_instalar"] = _tupla(r["tag_name"]) > actual
+        versiones.append(v)
+    respuesta = {"version": __version__, "versiones": versiones, "error": error,
+                 "url": PAGINA_RELEASES}
+    # Un fallo no se recuerda: en cuanto vuelva la red, se tiene que poder ver.
+    if not error:
+        _memoria_historial.update(respuesta=respuesta, cuando=ahora)
+    return respuesta
+
+
 def notas(desde: str | None, hasta: str, *, timeout: int = 10) -> dict:
     """Las releases posteriores a `desde` y hasta `hasta`, la más nueva primero.
 
@@ -165,25 +225,16 @@ def notas(desde: str | None, hasta: str, *, timeout: int = 10) -> dict:
     se ha actualizado y enlaza a la página de las releases.
     """
     respuesta = {"versiones": [], "mas_antiguas": 0, "error": None, "url": PAGINA_RELEASES}
-    try:
-        datos = net.descargar_json(API_RELEASES, timeout=timeout, intentos=1)
-    except (net.ErrorRed, ValueError, TypeError) as exc:
-        respuesta["error"] = f"No se han podido traer las novedades de GitHub: {exc}"
-        return respuesta
-    if not isinstance(datos, list):
-        respuesta["error"] = "GitHub no ha devuelto la lista de versiones."
+    datos, error = _traer(timeout)
+    if error:
+        respuesta["error"] = error
         return respuesta
 
     techo = _tupla(hasta)
     suelo = _tupla(desde) if desde else None
     elegidas = []
     for r in datos:
-        if not isinstance(r, dict) or r.get("draft") or r.get("prerelease"):
-            continue
-        etiqueta = r.get("tag_name") or ""
-        if not etiqueta:
-            continue
-        v = _tupla(etiqueta)
+        v = _tupla(r["tag_name"])
         if v > techo:
             continue
         if suelo is None:
@@ -195,16 +246,7 @@ def notas(desde: str | None, hasta: str, *, timeout: int = 10) -> dict:
     elegidas.sort(key=lambda r: _tupla(r["tag_name"]), reverse=True)
 
     respuesta["mas_antiguas"] = max(0, len(elegidas) - MAXIMO_VERSIONES)
-    respuesta["versiones"] = [
-        {
-            "version": r["tag_name"].lstrip("vV"),
-            "titulo": _titulo(r),
-            "fecha": (r.get("published_at") or "")[:10] or None,
-            "url": r.get("html_url"),
-            "bloques": bloques(r.get("body") or ""),
-        }
-        for r in elegidas[:MAXIMO_VERSIONES]
-    ]
+    respuesta["versiones"] = [_version(r) for r in elegidas[:MAXIMO_VERSIONES]]
     return respuesta
 
 

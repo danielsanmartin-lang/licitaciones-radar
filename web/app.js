@@ -1537,6 +1537,88 @@ function subtituloNovedades(n, buscando) {
 
 // Tras una actualización, o la primera vez que se abre (`bienvenida`): en las dos se
 // cuenta qué trae la versión, y en las dos «Continuar» la da por vista.
+// Una versión con sus notas: número, título, fecha y los bloques que ya ha preparado el
+// servidor (`novedades.bloques`). La usan la pantalla de arranque y el historial.
+function seccionVersion(v) {
+  const sec = document.createElement('section');
+  sec.className = 'novedades-version';
+  const h = document.createElement('h3');
+  const num = document.createElement('span');
+  num.className = 'novedades-num';
+  num.textContent = `v${v.version}`;
+  h.appendChild(num);
+  if (v.titulo) h.appendChild(document.createTextNode(' ' + v.titulo));
+  sec.appendChild(h);
+  if (v.fecha) {
+    const f = document.createElement('p');
+    f.className = 'novedades-fecha';
+    f.textContent = 'publicada el ' + fmtFecha(v.fecha);
+    sec.appendChild(f);
+  }
+  let ul = null;
+  for (const b of v.bloques || []) {
+    if (b.tipo === 'punto') {
+      if (!ul) {
+        ul = document.createElement('ul');
+        sec.appendChild(ul);
+      }
+      ul.appendChild(textoConFormato(document.createElement('li'), b.texto));
+      continue;
+    }
+    ul = null;
+    const el = document.createElement(b.tipo === 'titulo' ? 'h4' : 'p');
+    sec.appendChild(textoConFormato(el, b.texto));
+  }
+  return sec;
+}
+
+// --- Historial de versiones ------------------------------------------------
+//
+// Al pie de la barra lateral: todas las versiones publicadas, con sus notas. La que tienes
+// instalada va marcada, y si hay una más nueva sin instalar se dice, con la forma de
+// traerla: se instala sola al abrir la aplicación.
+async function cargarVersiones() {
+  const carga = empezarCarga('lista-versiones');
+  $('versiones-estado').textContent = '';
+  let d;
+  try {
+    d = await pedirJSON('/api/historial-versiones');
+  } catch {
+    d = { versiones: [], error: 'No se ha podido hablar con el radar.' };
+  }
+  if (!carga.terminar()) return;
+  const lista = $('lista-versiones');
+  lista.textContent = '';
+
+  const estado = $('versiones-estado');
+  const pendientes = (d.versiones || []).filter((v) => v.sin_instalar);
+  estado.textContent = d.version ? `Tienes la versión ${d.version}.` : '';
+  if (pendientes.length) {
+    estado.textContent += ` Hay ${pendientes.length === 1 ? 'una más nueva' :
+      `${pendientes.length} más nuevas`} sin instalar: se instala sola la próxima vez ` +
+      'que abras la aplicación.';
+  }
+
+  if (!(d.versiones || []).length) {
+    const p = crear('p', 'vacio',
+      (d.error ? 'No se han podido traer las versiones ahora mismo. ' : '') + 'Puedes verlas en ');
+    if (d.url) p.appendChild(enlaceExterno(d.url, 'la página de versiones'));
+    p.appendChild(document.createTextNode('.'));
+    lista.appendChild(p);
+    return;
+  }
+  for (const v of d.versiones) {
+    const sec = seccionVersion(v);
+    if (v.instalada || v.sin_instalar) {
+      sec.classList.add(v.instalada ? 'instalada' : 'sin-instalar');
+      sec.querySelector('h3').appendChild(
+        pildora(v.instalada ? 'la tuya' : 'sin instalar',
+                { clase: v.instalada ? 'version-tuya' : 'version-nueva' }));
+    }
+    lista.appendChild(sec);
+  }
+}
+
 function pintarNovedades(n) {
   $('arranque-caja').classList.add('con-novedades');
   $('arranque-novedades').hidden = false;
@@ -1547,38 +1629,7 @@ function pintarNovedades(n) {
 
   const lista = $('novedades-lista');
   lista.textContent = '';
-  for (const v of n.versiones || []) {
-    const sec = document.createElement('section');
-    sec.className = 'novedades-version';
-    const h = document.createElement('h3');
-    const num = document.createElement('span');
-    num.className = 'novedades-num';
-    num.textContent = `v${v.version}`;
-    h.appendChild(num);
-    if (v.titulo) h.appendChild(document.createTextNode(' ' + v.titulo));
-    sec.appendChild(h);
-    if (v.fecha) {
-      const f = document.createElement('p');
-      f.className = 'novedades-fecha';
-      f.textContent = 'publicada el ' + fmtFecha(v.fecha);
-      sec.appendChild(f);
-    }
-    let ul = null;
-    for (const b of v.bloques || []) {
-      if (b.tipo === 'punto') {
-        if (!ul) {
-          ul = document.createElement('ul');
-          sec.appendChild(ul);
-        }
-        ul.appendChild(textoConFormato(document.createElement('li'), b.texto));
-        continue;
-      }
-      ul = null;
-      const el = document.createElement(b.tipo === 'titulo' ? 'h4' : 'p');
-      sec.appendChild(textoConFormato(el, b.texto));
-    }
-    lista.appendChild(sec);
-  }
+  for (const v of n.versiones || []) lista.appendChild(seccionVersion(v));
 
   // Sin red no hay notas, pero la actualización sí ha ocurrido: se dice y se enlaza.
   const pie = document.createElement('p');
@@ -2997,7 +3048,7 @@ let vistaActual = 'bandeja';
 
 // El orden de la barra lateral, que es también el de los atajos ⌘1…⌘9.
 const VISTAS = ['bandeja', 'resumen', 'otras', 'siguiendo', 'vencimientos', 'adjudicatarios',
-                'organismos', 'analitica', 'ajustes'];
+                'organismos', 'analitica', 'ajustes', 'versiones'];
 // Las fichas: vistas sin entrada en la barra lateral, a las que se llega desde un nombre.
 // Mientras se mira una, la barra lateral resalta la lista de la que es.
 const VISTAS_DETALLE = { organismo: 'organismos', competidor: 'adjudicatarios' };
@@ -3088,6 +3139,7 @@ function mostrarVista(vista, { conservarPila = false } = {}) {
     competidor: cargarFicha,
     analitica: cargarAnalitica,
     ajustes: cargarAjustes,
+    versiones: cargarVersiones,
   };
   return cargas[vista] ? cargas[vista]() : Promise.resolve();
 }

@@ -96,6 +96,53 @@ class TestNotas(unittest.TestCase):
         self.assertTrue(n["url"].endswith("/releases"))
 
 
+class TestHistorial(unittest.TestCase):
+    """«Historial de versiones», al pie de la barra lateral."""
+
+    def setUp(self):
+        novedades._memoria_historial.clear()
+        self.addCleanup(novedades._memoria_historial.clear)
+        parche = mock.patch.object(novedades, "__version__", "1.7.0")
+        parche.start()
+        self.addCleanup(parche.stop)
+
+    def historial(self, lista=LISTA, **kw):
+        with mock.patch.object(net, "descargar_json", return_value=lista) as m:
+            return novedades.historial(**kw), m
+
+    def test_todas_las_publicadas_de_la_mas_nueva_a_la_mas_antigua(self):
+        h, _ = self.historial()
+        self.assertEqual([v["version"] for v in h["versiones"]],
+                         ["1.8.0", "1.7.0", "1.6.0", "1.5.0"])
+        self.assertEqual(h["versiones"][0]["titulo"], "Algo nuevo")
+        self.assertEqual(h["versiones"][0]["bloques"][0]["tipo"], "titulo")
+
+    def test_marca_la_instalada_y_las_que_faltan(self):
+        h, _ = self.historial()
+        por_version = {v["version"]: v for v in h["versiones"]}
+        self.assertTrue(por_version["1.7.0"]["instalada"])
+        self.assertTrue(por_version["1.8.0"]["sin_instalar"])
+        self.assertFalse(por_version["1.6.0"]["instalada"] or por_version["1.6.0"]["sin_instalar"])
+        self.assertEqual(h["version"], "1.7.0")
+
+    def test_se_recuerda_un_rato_para_no_gastar_la_api_de_github(self):
+        self.historial(ahora=1000.0)
+        _, m = self.historial(ahora=1000.0 + novedades.SEGUNDOS_MEMORIA_HISTORIAL - 1)
+        m.assert_not_called()
+        _, m = self.historial(ahora=1000.0 + novedades.SEGUNDOS_MEMORIA_HISTORIAL + 1)
+        m.assert_called_once()
+
+    def test_sin_red_no_lanza_y_no_se_recuerda_el_fallo(self):
+        with mock.patch.object(net, "descargar_json", side_effect=net.ErrorRed("caída")):
+            h = novedades.historial(ahora=5.0)
+        self.assertEqual(h["versiones"], [])
+        self.assertTrue(h["error"])
+        self.assertTrue(h["url"].endswith("/releases"))
+        h, m = self.historial(ahora=6.0)
+        m.assert_called_once()
+        self.assertTrue(h["versiones"])
+
+
 class TestRecienActualizada(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()

@@ -1489,6 +1489,29 @@ progress:not([value]) { opacity: .7; }
 }
 .novedades-pie { margin-top: var(--e-3); }
 
+/* El historial de versiones: las mismas secciones que la pantalla de arranque, cada una
+   en su tarjeta y a lo ancho de la vista, sin la caja con scroll propio. */
+.versiones-lista {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e-3);
+  max-width: 78ch;
+  font-size: var(--txt-md);
+  line-height: 1.55;
+}
+.versiones-lista .novedades-version {
+  margin: 0;
+  padding: var(--e-3) var(--e-4);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-lg);
+}
+.versiones-lista .novedades-version + .novedades-version { margin-top: 0; border-top: 1px solid var(--borde); }
+.versiones-lista .novedades-version.instalada { border-color: var(--acento-borde); background: var(--acento-tenue); }
+.versiones-lista h3 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 var(--e-1); }
+.versiones-lista h3 .pill { margin-left: var(--e-1); align-self: center; }
+.pill.version-tuya { background: var(--acento); color: #fff; font-weight: 600; }
+.pill.version-nueva { background: var(--verde-tenue); color: var(--verde); font-weight: 600; }
+
 /* Cuando la búsqueda se alarga: se dice que sigue y por qué tarda, y se deja entrar. En
    ámbar tenue y no en rojo: no ha fallado nada, solo va despacio. */
 .arranque-lenta {

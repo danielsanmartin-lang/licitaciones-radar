@@ -216,6 +216,8 @@
       <div class="lateral-pie">
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-ajustes"
                 data-vista="ajustes"><span class="tab-ico tono-gris"><svg class="ico" aria-hidden="true"><use href="#ico-ajustes"/></svg></span><span class="tab-txt">Términos de búsqueda</span></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-versiones"
+                data-vista="versiones"><span class="tab-ico tono-gris"><svg class="ico" aria-hidden="true"><use href="#ico-reloj"/></svg></span><span class="tab-txt">Historial de versiones</span></button>
         <!-- El estado del radar, que antes ocupaba la cabecera y el pie de página: cuándo
              fue la última búsqueda (o por dónde va la que está en marcha), cómo fue cada
              fuente y en qué versión estás. -->
@@ -512,6 +514,17 @@
               </div>
               <p class="total-ventana" id="analitica-resumen"></p>
               <div id="analitica" class="analitica"></div>
+            </section>
+
+            <section id="vista-versiones" role="tabpanel" hidden data-titulo="Historial de versiones"
+                     data-icono="ico-reloj" data-tono="gris">
+              <p class="intro">
+                Qué ha traído cada versión del radar, de la más nueva a la más antigua. Son
+                las notas de cada versión publicada en GitHub, las mismas que salen al
+                actualizarse.
+              </p>
+              <p id="versiones-estado" class="contador"></p>
+              <div id="lista-versiones" class="versiones-lista"></div>
             </section>
 
             <section id="vista-ajustes" role="tabpanel" hidden data-titulo="Términos de búsqueda"
