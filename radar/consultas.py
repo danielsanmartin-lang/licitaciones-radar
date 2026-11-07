@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from . import categorias, db, enlaces
-from .model import ESTADOS_VIVOS, normalizar
+from .model import (ESTADOS_VIVOS, ORIGEN_FIN_APROXIMADA, ORIGEN_FIN_ESTIMADA,
+                    ORIGEN_FIN_PUBLICADA, normalizar)
 
 ORDENES = {
     # "Cierran antes" tiene que poner primero lo que cierra pronto y AÚN está
@@ -730,8 +731,10 @@ def limpiar_sin_revisar(con, criterio: str) -> dict:
 
 # --- Siguiendo -------------------------------------------------------------------
 #
-# Lo que sigues o has presentado, en su propia vista y en dos grupos: lo que todavía está
-# en plazo y lo que ya no. De lo segundo interesa sobre todo quién se lo llevó.
+# Lo que sigues o has presentado, en su propia vista y en tres grupos: lo que todavía está
+# en plazo, lo que ya no —de eso interesa sobre todo quién se lo llevó— y los contratos
+# que sigues desde Vencimientos para llegar antes de la renovación, que van aparte porque
+# no son pliegos con plazo sino contratos en curso.
 
 
 def _clave_expediente(it: dict) -> str:
@@ -739,8 +742,39 @@ def _clave_expediente(it: dict) -> str:
 
 
 def _siguiendo_en_plazo(con) -> int:
-    """Cuántos de «Siguiendo» siguen en plazo. La misma regla que su grupo «En plazo»."""
-    return sum(contar(con, solo_vivas=True, estado_revision=e) for e in ESTADOS_PROTEGIDOS)
+    """Cuántos de «Siguiendo» siguen en plazo: su grupo «En plazo» más los contratos que
+    sigues desde Vencimientos y aún no han vencido (o no se sabe cuándo vencen)."""
+    return (sum(contar(con, solo_vivas=True, estado_revision=e) for e in ESTADOS_PROTEGIDOS)
+            + _vencimientos_seguidos_vigentes(con))
+
+
+def _vencimientos_seguidos_vigentes(con) -> int:
+    """Los expedientes en «siguiendo» de Vencimientos que no han vencido todavía (o de
+    los que no se sabe cuándo vencen). Con la misma lista que su grupo, para que el
+    número y el grupo no puedan discrepar; sin nada seguido no se calcula nada."""
+    if not con.execute("SELECT 1 FROM prospeccion WHERE estado = 'siguiendo' LIMIT 1").fetchone():
+        return 0
+    hoy = con.execute("SELECT date('now')").fetchone()[0]
+    return sum(1 for e in _expedientes_prospeccion(con, None)
+               if e["prospeccion"]["estado"] == "siguiendo"
+               and (not e["fecha_fin"] or e["fecha_fin"][:10] >= hoy))
+
+
+def vencimientos_seguidos(con) -> list[dict]:
+    """Los expedientes que sigues desde Vencimientos, con su fecha de fin y su nota.
+
+    Primero los que tienen fecha, del que vence antes al que vence después (los ya
+    vencidos, arriba: son los más urgentes); al final, los que no tienen fecha.
+    """
+    expedientes = _expedientes_prospeccion(con, None)
+    _marcar_renovaciones(expedientes)
+    hoy = date.fromisoformat(con.execute("SELECT date('now')").fetchone()[0])
+    seguidos = [e for e in expedientes if e["prospeccion"]["estado"] == "siguiendo"]
+    for e in seguidos:
+        e["dias_para_vencer"] = ((date.fromisoformat(e["fecha_fin"][:10]) - hoy).days
+                                 if e["fecha_fin"] else None)
+    seguidos.sort(key=lambda e: (e["fecha_fin"] is None, e["fecha_fin"] or "", e["id"]))
+    return seguidos
 
 
 def _adjudicacion(con, it: dict) -> dict | None:
@@ -777,8 +811,13 @@ def siguiendo(con) -> dict:
     for estado in ESTADOS_PROTEGIDOS:
         en_plazo += bandeja(con, estado_revision=estado, solo_vivas=True, limite=1000)["items"]
         todas += bandeja(con, estado_revision=estado, solo_vivas=False, limite=1000)["items"]
+    contratos = vencimientos_seguidos(con)
+    # Lo que se sigue desde Vencimientos sale solo en su grupo, aunque también se haya
+    # seguido su pliego en el triaje: es un contrato en curso, no un plazo vencido.
+    de_vencimientos = {e["clave"] for e in contratos}
     vivos = {_clave_expediente(it) for it in en_plazo}
-    vencidas = [it for it in todas if _clave_expediente(it) not in vivos]
+    vencidas = [it for it in todas if _clave_expediente(it) not in vivos
+                and _clave_expediente(it) not in de_vencimientos]
 
     en_plazo.sort(key=lambda it: (it["dias_restantes"] is None, it["dias_restantes"] or 0))
     vencidas.sort(key=lambda it: it.get("fecha_limite_presentacion") or "", reverse=True)
@@ -786,8 +825,8 @@ def siguiendo(con) -> dict:
         ganador = _adjudicacion(con, it)
         if ganador:
             it.update(ganador)
-    return {"en_plazo": en_plazo, "vencidas": vencidas,
-            "total": len(en_plazo) + len(vencidas)}
+    return {"en_plazo": en_plazo, "vencidas": vencidas, "vencimientos": contratos,
+            "total": len(en_plazo) + len(vencidas) + len(contratos)}
 
 
 def cobertura(con) -> dict:
@@ -1356,17 +1395,37 @@ def motivos_descarte(con: sqlite3.Connection) -> list[dict]:
     ]
 
 
-# Ventana de vencimiento. La columna se compara DESNUDA a propósito: envolverla en
-# `substr(..., 1, 10)` —como estaba— impide que SQLite use `idx_lic_fin` y convierte
-# cada consulta en un recorrido completo de las 450.000 licitaciones (4,7 s la lista
-# y 19,2 s las cuatro ventanas, medido). El `+1 day` del extremo superior es lo que
-# conserva la semántica que daba el substr, porque las fechas pueden traer hora:
-# '2027-02-11T10:00' vence el 11 de febrero y tiene que entrar en la ventana que
-# acaba ese día. El `>= date('now')` descarta además los nulos por sí solo.
+# Ventana de vencimiento. La fecha de fin es la publicada o, si no hay, la estimada (ver
+# `model.fin_estimado`): es lo que hace que un contrato del feed de plataformas agregadas
+# —que no publica la adjudicación— entre en las ventanas.
+#
+# Sin `substr()`: el `+1 day` del extremo superior es lo que conserva su semántica,
+# porque las fechas pueden traer hora: '2027-02-11T10:00' vence el 11 de febrero y tiene
+# que entrar en la ventana que acaba ese día. El `>= date('now')` descarta además los
+# nulos por sí solo.
+#
+# Antes la columna se comparaba desnuda para que SQLite usara `idx_lic_fin`: cuando las
+# ventanas se contaban sobre la tabla entera, envolverla costaba 4,7 s la lista y 19,2 s
+# las cuatro ventanas. Hoy las dos consultas que usan la ventana entran por `matches` o
+# `categorias` (ver `_entrada_expedientes`) y la comprueban fila a fila sobre unos miles,
+# así que el COALESCE no cuesta nada: 1 ms medido sobre la base real, igual que desnuda.
+FIN_SQL = "COALESCE(l.fecha_fin_prevista, l.fecha_fin_estimada)"
+ORIGEN_FIN_SQL = (f"CASE WHEN l.fecha_fin_prevista IS NOT NULL THEN '{ORIGEN_FIN_PUBLICADA}'"
+                  " ELSE l.fin_origen END")
+BASE_FIN_SQL = "CASE WHEN l.fecha_fin_prevista IS NULL THEN l.fin_base END"
 EN_VENTANA = (
-    "l.fecha_fin_prevista >= date('now')"
-    " AND l.fecha_fin_prevista < date('now', ?, '+1 day')"
+    f"{FIN_SQL} >= date('now')"
+    f" AND {FIN_SQL} < date('now', ?, '+1 day')"
 )
+
+# Cuánto se fía uno de cada fecha de fin: dentro de un expediente manda la publicada
+# sobre la estimada, y la estimada sobre la aproximada, aunque sean más tempranas.
+_RANGO_ORIGEN_FIN = {ORIGEN_FIN_PUBLICADA: 0, ORIGEN_FIN_ESTIMADA: 1, ORIGEN_FIN_APROXIMADA: 2}
+
+
+def _clave_mejor_fin(a) -> tuple:
+    """Para `max()`: la fecha más fiable y, a igual fiabilidad, la más tardía."""
+    return (-_RANGO_ORIGEN_FIN.get(a["fin_origen"], 3), a["fecha_fin"] or "", a["id"])
 
 
 # Las ventanas de los botones de Vencimientos, en meses.
@@ -1374,12 +1433,14 @@ VENTANAS_VENCIMIENTO = (3, 6, 12, 24)
 # «Vencidos hace poco»: lo que acabó en estos últimos meses. Si nadie ha visto todavía el
 # pliego de la renovación, es el cliente más caliente de la lista.
 MESES_VENCIDOS = 6
-# «Sin fecha de fin»: adjudicaciones de estos últimos años cuya fuente no dice cuándo
-# acaban. No se les inventa una fecha; se listan aparte, de la más antigua a la más
+# «Sin fecha de fin»: adjudicaciones de estos últimos años de las que no se sabe ni
+# estimar cuándo acaban, porque la fuente no da la duración (o no da ninguna fecha de la
+# que partir). No se les inventa una; se listan aparte, de la más antigua a la más
 # reciente, que es lo más parecido a «la que antes toca renovar» sin adivinar.
 ANIOS_SIN_FECHA = 4
 LIMITE_SECCION_PROSPECCION = 100
-ESTADOS_PROSPECCION = ("pendiente", "contactado", "reunion", "descartado")
+# «siguiendo» lleva el expediente al apartado «Vencimientos que sigues» de Siguiendo.
+ESTADOS_PROSPECCION = ("pendiente", "siguiendo", "descartado")
 
 
 def _expedientes_prospeccion(con: sqlite3.Connection, perfil: str | None) -> list[dict]:
@@ -1399,7 +1460,10 @@ def _expedientes_prospeccion(con: sqlite3.Connection, perfil: str | None) -> lis
         f"""SELECT {_GRUPO} AS clave, l.id, l.objeto, l.organo, l.nif_organo, l.ccaa,
                    l.fuente, l.url_detalle, l.adjudicatario, l.fecha_adjudicacion,
                    l.duracion_meses, l.fecha_inicio_ejecucion, l.fecha_fin_prevista,
-                   l.fecha_publicacion,
+                   {FIN_SQL} AS fecha_fin, {ORIGEN_FIN_SQL} AS fin_origen,
+                   {BASE_FIN_SQL} AS fin_base,
+                   l.fecha_publicacion, l.expediente, l.cpv, l.tipo_contrato,
+                   l.procedimiento, l.descripcion,
                    COALESCE(l.importe_adjudicacion, l.importe_referencia) AS importe,
                    group_concat(DISTINCT m.perfil) AS perfil,
                    COALESCE(r.estado, 'nuevo') AS revision
@@ -1421,12 +1485,11 @@ def _expedientes_prospeccion(con: sqlite3.Connection, perfil: str | None) -> lis
         # descartado, el expediente lo está.
         if any(a["revision"] == "descartado" for a in anuncios):
             continue
-        con_fin = [a for a in anuncios if a["fecha_fin_prevista"]]
+        con_fin = [a for a in anuncios if a["fecha_fin"]]
         por_adjudicacion = sorted(
             anuncios, key=lambda a: (a["fecha_adjudicacion"] or "", a["fecha_publicacion"] or "",
                                      a["id"]), reverse=True)
-        base = (max(con_fin, key=lambda a: (a["fecha_fin_prevista"], a["id"]))
-                if con_fin else por_adjudicacion[0])
+        base = max(con_fin, key=_clave_mejor_fin) if con_fin else por_adjudicacion[0]
         e = dict(base)
         e.pop("revision")
         e["clave"] = clave
@@ -1474,21 +1537,25 @@ def _marcar_renovaciones(expedientes: list[dict]) -> None:
 
 
 def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
-                 perfil: str | None = None, ver_descartados: bool = False) -> dict:
+                 perfil: str | None = None, ver_descartados: bool = False,
+                 limite_apartados: int | None = LIMITE_SECCION_PROSPECCION) -> dict:
     """La lista de prospección: contratos ya adjudicados que vencen pronto.
 
     Es la lista para llamar ANTES de que salga el pliego, cuando el incumbente aún no
     ha renovado. Tres apartados:
 
-    - `items`: los que vencen en los próximos `meses`. Solo los que tienen fecha de fin
-      conocida: si la fuente no la publica y no se puede deducir de la duración, no
-      entran aquí en lugar de entrar con una fecha inventada.
+    - `items`: los que vencen en los próximos `meses`. Con fecha de fin publicada o, si
+      la fuente no la da, estimada a partir de la duración (`fin_origen` dice cuál y
+      `fin_base` desde qué fecha). Sin duración no hay estimación: van a `sin_fecha`.
     - `vencidos`: los que acabaron en los últimos MESES_VENCIDOS meses.
     - `sin_fecha`: adjudicados en los últimos ANIOS_SIN_FECHA años sin fecha de fin.
 
-    Cada uno lleva su estado de prospección (pendiente, contactado, reunión,
-    descartado). Los descartados en la prospección se cuentan pero no se listan, salvo
-    con `ver_descartados`.
+    `vencidos` y `sin_fecha` se recortan a `limite_apartados` (None, enteros: la
+    exportación los lleva todos).
+
+    Cada uno lleva su estado de prospección (pendiente, siguiendo o descartado). Los
+    descartados en la prospección se cuentan pero no se listan, salvo con
+    `ver_descartados`.
     """
     expedientes = _expedientes_prospeccion(con, perfil)
     _marcar_renovaciones(expedientes)
@@ -1511,7 +1578,7 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
 
     futuros, vencidos, sin_fecha = [], [], []
     for e in expedientes:
-        fin = e["fecha_fin_prevista"]
+        fin = e["fecha_fin"]
         if fin:
             if fin[:10] >= hoy:
                 e["dias_para_vencer"] = dias(fin)
@@ -1526,7 +1593,7 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
     def descartado(e: dict) -> bool:
         return e["prospeccion"]["estado"] == "descartado"
 
-    en_ventana = [e for e in futuros if e["fecha_fin_prevista"][:10] <= limites[meses]]
+    en_ventana = [e for e in futuros if e["fecha_fin"][:10] <= limites[meses]]
     # Lo descartado en la prospección se cuenta, para poder decir «3 descartados» y
     # ofrecer verlos, pero no se lista.
     ocultos = sum(descartado(e) for e in en_ventana + vencidos + sin_fecha)
@@ -1536,8 +1603,8 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
         vencidos = [e for e in vencidos if not descartado(e)]
         sin_fecha = [e for e in sin_fecha if not descartado(e)]
 
-    en_ventana.sort(key=lambda e: (e["fecha_fin_prevista"], -(e["importe"] or 0), e["id"]))
-    vencidos.sort(key=lambda e: (e["fecha_fin_prevista"], e["id"]), reverse=True)
+    en_ventana.sort(key=lambda e: (e["fecha_fin"], -(e["importe"] or 0), e["id"]))
+    vencidos.sort(key=lambda e: (e["fecha_fin"], e["id"]), reverse=True)
     sin_fecha.sort(key=lambda e: ((e["fecha_adjudicacion"] or e["primera_publicacion"] or ""),
                                   e["id"]))
 
@@ -1551,16 +1618,16 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
         # selección una por una. Sale de la misma lista, así que no puede descuadrar.
         "por_ventana": [
             {"meses": m,
-             "total": sum(1 for e in futuros if e["fecha_fin_prevista"][:10] <= limites[m]),
+             "total": sum(1 for e in futuros if e["fecha_fin"][:10] <= limites[m]),
              "importe": sum(e["importe"] or 0 for e in futuros
-                            if e["fecha_fin_prevista"][:10] <= limites[m])}
+                            if e["fecha_fin"][:10] <= limites[m])}
             for m in VENTANAS_VENCIMIENTO
         ],
         "por_mes": vencimientos_por_mes(con, Ambito.de(perfil=perfil) if perfil else None),
-        "vencidos": vencidos[:LIMITE_SECCION_PROSPECCION],
+        "vencidos": vencidos[:limite_apartados],
         "vencidos_total": len(vencidos),
         "meses_vencidos": MESES_VENCIDOS,
-        "sin_fecha": sin_fecha[:LIMITE_SECCION_PROSPECCION],
+        "sin_fecha": sin_fecha[:limite_apartados],
         "sin_fecha_total": len(sin_fecha),
         "anios_sin_fecha": ANIOS_SIN_FECHA,
         "descartados_ocultos": 0 if ver_descartados else ocultos,
@@ -1595,36 +1662,98 @@ def fijar_prospeccion(con: sqlite3.Connection, clave: str, *, estado: str | None
             "nota": fila["nota"] if fila else None}
 
 
-COLUMNAS_PROSPECCION = [
-    "Apartado", "Órgano", "Objeto", "Incumbente", "Importe (€)", "Fin previsto",
-    "Días", "Adjudicada", "Duración (meses)", "Comunidad", "Perfil", "Estado",
-    "Nota", "Publicado después por el órgano", "Ficha oficial",
-]
+_NOMBRE_BASE_FIN = {
+    "formalizacion": "formalización del contrato",
+    "anuncio_adjudicacion": "anuncio de adjudicación",
+    "publicacion": "publicación de la licitación",
+}
 
 
-def prospeccion_csv(con: sqlite3.Connection, *, meses: int = 6,
-                    perfil: str | None = None) -> tuple[list[str], list[list]]:
-    """La lista de prospección entera, para llevarla a una hoja de cálculo."""
-    v = vencimientos(con, meses=meses, perfil=perfil, limite=10_000, ver_descartados=True)
-    filas = []
-    apartados = (
-        (f"Vence en {meses} meses", v["items"]),
-        (f"Vencido en los últimos {v['meses_vencidos']} meses", v["vencidos"]),
-        ("Sin fecha de fin publicada", v["sin_fecha"]),
-    )
-    for nombre, lista in apartados:
-        for e in lista:
-            filas.append([
-                nombre, e["organo"], e["objeto"], e["adjudicatario"],
-                round(e["importe"], 2) if e["importe"] else None,
-                (e["fecha_fin_prevista"] or "")[:10] or None, e.get("dias_para_vencer"),
-                (e["fecha_adjudicacion"] or "")[:10] or None,
-                round(e["duracion_meses"]) if e["duracion_meses"] else None,
-                e["ccaa"], e["perfil"].replace(",", " · "), e["prospeccion"]["estado"],
-                e["prospeccion"]["nota"],
-                (e["renovacion"] or {}).get("objeto"), e["url_detalle"],
-            ])
-    return COLUMNAS_PROSPECCION, filas
+def _dd_mm_aaaa(iso: str | None) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso and len(iso) >= 10 else ""
+
+
+def explicar_fin(e: dict) -> str:
+    """De dónde sale la fecha de fin de un expediente, en una frase para el Excel."""
+    from .model import _sumar_meses
+
+    fin, origen, dur = e.get("fecha_fin"), e.get("fin_origen"), e.get("duracion_meses")
+    if not fin:
+        return "Sin fecha: la fuente no publica la duración del contrato"
+    meses = f"{round(dur)} meses" if dur else ""
+    if origen == ORIGEN_FIN_PUBLICADA:
+        for nombre, base in (("Inicio de ejecución", e.get("fecha_inicio_ejecucion")),
+                             ("Adjudicación", e.get("fecha_adjudicacion"))):
+            if base and dur and _sumar_meses(base, dur) == fin[:10]:
+                return f"{nombre} ({_dd_mm_aaaa(base)}) + {meses}"
+        return "Publicada por la fuente"
+    tipo, _, base = (e.get("fin_base") or "").partition(":")
+    texto = f"{_NOMBRE_BASE_FIN.get(tipo, tipo).capitalize()} ({_dd_mm_aaaa(base)}) + {meses}"
+    if origen == ORIGEN_FIN_APROXIMADA:
+        texto += ". Se adelanta a la real lo que tardó la adjudicación (suelen ser 2-6 meses)"
+    return texto
+
+
+_ETIQUETA_ORIGEN_FIN = {ORIGEN_FIN_PUBLICADA: "Publicada", ORIGEN_FIN_ESTIMADA: "Estimada",
+                        ORIGEN_FIN_APROXIMADA: "Aproximada"}
+_ETIQUETA_SEGUIMIENTO = {"pendiente": "Pendiente", "siguiendo": "Siguiendo",
+                         "descartado": "Descartado"}
+
+
+def _columnas_prospeccion():
+    from .excel import ENLACE, ENTERO, EUROS, FECHA, Columna
+
+    return [
+        Columna("Vence", FECHA, 11), Columna("Días", ENTERO, 7),
+        Columna("Fecha de fin", ancho=11), Columna("Cómo se ha calculado", ancho=46),
+        Columna("Objeto", ancho=60), Columna("Descripción", ancho=60),
+        Columna("Órgano", ancho=40), Columna("NIF del órgano", ancho=13),
+        Columna("Comunidad", ancho=16), Columna("Incumbente", ancho=36),
+        Columna("Importe (€)", EUROS, 14), Columna("Duración (meses)", ENTERO, 9),
+        Columna("Adjudicada", FECHA, 11), Columna("Primera publicación", FECHA, 11),
+        Columna("Expediente", ancho=18), Columna("Tipo de contrato", ancho=14),
+        Columna("Procedimiento", ancho=16), Columna("CPV", ancho=14),
+        Columna("Perfil", ancho=20), Columna("Fuente", ancho=16),
+        Columna("Publicado después por el órgano", ancho=40),
+        Columna("Seguimiento", ancho=11), Columna("Nota", ancho=30),
+        Columna("Ficha oficial", ENLACE, 40),
+    ]
+
+
+def _fila_prospeccion(e: dict) -> list:
+    renovacion = e.get("renovacion") or {}
+    return [
+        e.get("fecha_fin"), e.get("dias_para_vencer"),
+        _ETIQUETA_ORIGEN_FIN.get(e.get("fin_origen"), ""), explicar_fin(e),
+        e["objeto"], e.get("descripcion"), e["organo"], e.get("nif_organo"), e["ccaa"],
+        e["adjudicatario"], round(e["importe"], 2) if e["importe"] else None,
+        round(e["duracion_meses"]) if e["duracion_meses"] else None,
+        e["fecha_adjudicacion"], e.get("primera_publicacion"), e.get("expediente"),
+        e.get("tipo_contrato"), e.get("procedimiento"), e.get("cpv"),
+        e["perfil"].replace(",", " · "), e["fuente"],
+        (f"{renovacion['objeto']} ({_dd_mm_aaaa(renovacion.get('publicada'))})"
+         if renovacion.get("objeto") else None),
+        _ETIQUETA_SEGUIMIENTO.get(e["prospeccion"]["estado"], e["prospeccion"]["estado"]),
+        e["prospeccion"]["nota"], e["url_detalle"],
+    ]
+
+
+def prospeccion_excel(con: sqlite3.Connection, *, meses: int = 6, perfil: str | None = None,
+                      ver_descartados: bool = False) -> bytes:
+    """La lista de Vencimientos en un `.xlsx`: la ventana elegida, lo vencido hace poco y
+    lo que no tiene fecha, cada cosa en su hoja y entera, sin el recorte de la pantalla."""
+    from .excel import Hoja, libro
+
+    v = vencimientos(con, meses=meses, perfil=perfil, limite=100_000,
+                     ver_descartados=ver_descartados, limite_apartados=None)
+    columnas = _columnas_prospeccion()
+    hojas = [
+        Hoja(f"Vencen en {meses} meses", columnas, [_fila_prospeccion(e) for e in v["items"]]),
+        Hoja(f"Vencidos ({v['meses_vencidos']} meses)", columnas,
+             [_fila_prospeccion(e) for e in v["vencidos"]]),
+        Hoja("Sin fecha", columnas, [_fila_prospeccion(e) for e in v["sin_fecha"]]),
+    ]
+    return libro(hojas)
 
 
 MESES_CALENDARIO_RENOVACIONES = 12
@@ -1644,7 +1773,7 @@ def vencimientos_por_mes(con: sqlite3.Connection, ambito: "Ambito | None" = None
     entrada, params = _entrada_expedientes(ambito)
     filas = con.execute(
         f"SELECT g, MAX(fin) AS fin, MAX(inc) AS inc FROM ("
-        f"  SELECT {_GRUPO} AS g, substr(l.fecha_fin_prevista, 1, 7) AS fin,"
+        f"  SELECT {_GRUPO} AS g, substr({FIN_SQL}, 1, 7) AS fin,"
         "          l.adjudicatario AS inc"
         f"  {entrada} AND {EN_VENTANA}) GROUP BY g",
         params + [f"+{int(meses)} months"],
@@ -3112,6 +3241,8 @@ def _anuncios_del_ambito(con, ambito: Ambito | None, condicion: str = "",
         " l.fecha_publicacion, l.fecha_limite_presentacion, l.adjudicatario,"
         " l.importe_adjudicacion, l.importe_referencia, l.importe_sin_iva,"
         " l.fecha_adjudicacion, l.fecha_fin_prevista,"
+        f" {FIN_SQL} AS fecha_fin, {ORIGEN_FIN_SQL} AS fin_origen,"
+        f" {BASE_FIN_SQL} AS fin_base, l.duracion_meses,"
         f" CASE WHEN {viva} THEN 1 ELSE 0 END AS viva"
         f"{entrada}{condicion}",
         [*p_viva, *p_entrada, *params],
@@ -3190,19 +3321,20 @@ def _vencen(anuncios, meses: int = MESES_RENOVACION_FICHA) -> list[dict]:
                 min(hoy.day, 28))
     elegidos: dict = {}
     for f in anuncios:
-        fin = _a_fecha(f["fecha_fin_prevista"])
+        fin = _a_fecha(f["fecha_fin"])
         if not f["adjudicatario"] or fin is None or not (hoy <= fin < tope):
             continue
         previo = elegidos.get(f["g"])
-        if previo is None or (f["fecha_fin_prevista"] or "") > (previo["fecha_fin_prevista"] or ""):
+        if previo is None or _clave_mejor_fin(f) > _clave_mejor_fin(previo):
             elegidos[f["g"]] = f
     return sorted(
         ({"id": f["id"], "objeto": f["objeto"], "organo": f["organo"],
           "adjudicatario": f["adjudicatario"], "importe": _importe(f),
-          "fecha_fin_prevista": f["fecha_fin_prevista"],
-          "dias_para_vencer": (_a_fecha(f["fecha_fin_prevista"]) - hoy).days}
+          "fecha_fin": f["fecha_fin"], "fin_origen": f["fin_origen"], "fin_base": f["fin_base"],
+          "duracion_meses": f["duracion_meses"],
+          "dias_para_vencer": (_a_fecha(f["fecha_fin"]) - hoy).days}
          for f in elegidos.values()),
-        key=lambda v: (v["fecha_fin_prevista"], v["id"]),
+        key=lambda v: (v["fecha_fin"], v["id"]),
     )
 
 

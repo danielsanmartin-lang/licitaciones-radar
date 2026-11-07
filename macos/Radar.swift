@@ -927,17 +927,27 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         return nil
     }
 
-    /// El CSV. `/api/export.csv` se sirve con `Content-Disposition: attachment`, así que
-    /// WebKit lo trata como descarga en lugar de como navegación; sin delegado, pulsar
-    /// «Exportar CSV» no hace absolutamente nada y no hay error que lo explique.
+    /// Las exportaciones (el CSV de la Bandeja y el Excel de Vencimientos) se sirven con
+    /// `Content-Disposition: attachment` y se descargan (ver `decidePolicyFor` abajo); sin
+    /// delegado, pulsar «Exportar» no hace absolutamente nada y no hay error que lo explique.
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
                  didBecome download: WKDownload) {
         download.delegate = self
     }
 
+    /// Se descarga lo que el servidor manda como `attachment` y lo que WebKit no sabe
+    /// enseñar. Mirar solo `canShowMIMEType` no bastaba: un CSV es texto, WebKit sabe
+    /// enseñarlo, y «Exportar CSV» pintaba todas las líneas en la ventana —que no tiene
+    /// botón de atrás— en lugar de guardar el fichero.
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationResponse: WKNavigationResponse,
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if let http = navigationResponse.response as? HTTPURLResponse,
+           let disposicion = http.value(forHTTPHeaderField: "Content-Disposition"),
+           disposicion.lowercased().hasPrefix("attachment") {
+            decisionHandler(.download)
+            return
+        }
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
     }
 
@@ -969,7 +979,7 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
     func download(_ download: WKDownload, didFailWithError error: Error,
                   resumeData: Data?) {
-        simpleAlerta("No se ha podido guardar el CSV", error.localizedDescription)
+        simpleAlerta("No se ha podido guardar el fichero", error.localizedDescription)
     }
 }
 

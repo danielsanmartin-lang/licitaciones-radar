@@ -45,6 +45,14 @@
         <path d="M14.5 9.5h3.2a.8.8 0 0 1 .8.8v10.2M3.5 20.5h17"/>
         <path d="M8.8 8h2M8.8 11.5h2M8.8 15h2"/>
       </symbol>
+      <symbol id="ico-copiar" viewBox="0 0 24 24">
+        <rect x="8.5" y="8.5" width="11" height="11" rx="2"/>
+        <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>
+      </symbol>
+      <symbol id="ico-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.5"/>
+        <path d="M12 11v5.2M12 7.8v.1"/>
+      </symbol>
       <symbol id="ico-reloj" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="8.5"/>
         <path d="M12 7.2V12l3.2 2"/>
@@ -216,6 +224,8 @@
       <div class="lateral-pie">
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-ajustes"
                 data-vista="ajustes"><span class="tab-ico tono-gris"><svg class="ico" aria-hidden="true"><use href="#ico-ajustes"/></svg></span><span class="tab-txt">Términos de búsqueda</span></button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="vista-cobertura"
+                data-vista="cobertura"><span class="tab-ico tono-gris"><svg class="ico" aria-hidden="true"><use href="#ico-info"/></svg></span><span class="tab-txt">Qué cubre y qué no</span></button>
         <button class="tab" role="tab" aria-selected="false" aria-controls="vista-versiones"
                 data-vista="versiones"><span class="tab-ico tono-gris"><svg class="ico" aria-hidden="true"><use href="#ico-reloj"/></svg></span><span class="tab-txt">Historial de versiones</span></button>
         <!-- El estado del radar, que antes ocupaba la cabecera y el pie de página: cuándo
@@ -286,14 +296,6 @@
                porque ese lo reescribe entero cada refresco de los contadores. -->
           <div id="aviso-version" class="avisos" hidden></div>
 
-          <!-- Qué cubre y qué no. Plegado de fábrica: es contexto permanente, no una alarma, y
-               un cartel fijo con seis puntos se deja de leer a la semana. Va fuera de #avisos
-               porque ese se reescribe entero cada refresco. El <details> abre y cierra solo, sin
-               JavaScript; lo único que pone el JS son las cifras y recordar si lo dejaste abierto. -->
-          <details id="cobertura" class="cobertura">
-            <summary id="cobertura-resumen">Qué cubre y qué no este radar</summary>
-            <ul id="cobertura-lista"></ul>
-          </details>
           <main>
             <section id="vista-bandeja" role="tabpanel" data-titulo="Bandeja" data-icono="ico-bandeja"
                      data-tono="acento">
@@ -329,7 +331,7 @@
                 <label class="check"><input type="checkbox" id="vivas" checked> Solo abiertas</label>
                 <label class="check"><input type="checkbox" id="con-plazo"> Ocultar sin plazo</label>
                 <button id="limpiar-abrir" class="boton-sec">Limpiar sin revisar…</button>
-                <a id="exportar" class="boton-sec" href="/api/export.csv">Exportar CSV</a>
+                <a id="exportar" class="boton-sec" href="/api/export.csv" download>Exportar CSV</a>
               </div>
               <!-- «Limpiar sin revisar…»: pasa a «vista» lo que no se va a mirar una a una.
                    Las tres opciones llevan su cifra y se aplican al pulsarlas; para eso está
@@ -407,31 +409,40 @@
               <button id="otras-mas" class="boton-sec mas" hidden>Cargar más</button>
             </section>
 
-            <!-- Lo que sigues y lo presentado, aunque ya no case con ningún perfil, en dos
-                 grupos. De lo que ya no está en plazo interesa quién se lo llevó. -->
+            <!-- Lo que sigues y lo presentado, aunque ya no case con ningún perfil, en tres
+                 grupos. De lo que ya no está en plazo interesa quién se lo llevó. El tercero
+                 son los contratos que sigues desde Vencimientos: no son pliegos con plazo,
+                 sino contratos en curso, y van aparte para no mezclarlos. -->
             <section id="vista-siguiendo" role="tabpanel" hidden data-titulo="Siguiendo"
                      data-icono="ico-ojo" data-tono="acento">
               <p class="intro">
-                Lo que sigues y lo que has presentado. Para añadir algo, ábrelo y pulsa
-                «Seguir».
+                Lo que sigues y lo que has presentado. Para añadir una licitación, ábrela y
+                pulsa «Seguir»; para un contrato que vence, pulsa «Seguir» en su tarjeta de
+                Vencimientos.
               </p>
               <h3 class="grupo-titulo">En plazo <span id="siguiendo-n-plazo" class="grupo-n"></span></h3>
               <div id="siguiendo-en-plazo" class="lista"></div>
               <h3 class="grupo-titulo">Plazo vencido o cerradas <span id="siguiendo-n-vencidas" class="grupo-n"></span></h3>
               <div id="siguiendo-vencidas" class="lista"></div>
+              <h3 class="grupo-titulo">Vencimientos que sigues <span id="siguiendo-n-vencimientos" class="grupo-n"></span></h3>
+              <div id="siguiendo-vencimientos" class="lista"></div>
             </section>
 
             <section id="vista-vencimientos" role="tabpanel" hidden data-titulo="Vencimientos"
                      data-icono="ico-calendario" data-tono="rojo">
               <p class="intro">
                 Tu lista de prospección: contratos ya adjudicados que vencen pronto, para
-                llamar <strong>antes</strong> de que salga el pliego. Apunta en cada uno en
-                qué punto estás; se guarda aquí y va en el CSV.
+                llamar <strong>antes</strong> de que salga el pliego. Pulsa «Seguir» en los
+                que te interesen y pasarán a Siguiendo. Cuando la fuente no publica la fecha
+                de fin, se estima con la duración y lo dice la etiqueta
+                <span class="pill fin-estimado"><span>estimada</span></span>
+                o <span class="pill fin-estimado fin-aproximado"><span>aproximada</span></span>;
+                pasa el ratón por encima para ver cómo se ha calculado.
               </p>
               <div class="filtros">
                 <select id="vencimientos-perfil" class="selector-ambito" aria-label="Perfil"></select>
                 <label class="check"><input type="checkbox" id="vencimientos-descartados"> Ver descartados</label>
-                <a id="vencimientos-exportar" class="boton-sec" href="/api/prospeccion.csv">Exportar CSV</a>
+                <a id="vencimientos-exportar" class="boton-sec" href="/api/vencimientos.xlsx" download>Exportar Excel</a>
               </div>
               <div id="calendario-vencimientos" class="analitica"></div>
               <div class="ventanas" id="ventanas"></div>
@@ -514,6 +525,17 @@
               </div>
               <p class="total-ventana" id="analitica-resumen"></p>
               <div id="analitica" class="analitica"></div>
+            </section>
+
+            <!-- Los límites de la herramienta: qué datos tiene y cuáles no. Las cifras las
+                 pone `pintarCobertura()` con cada resumen; el resto es prosa fija. -->
+            <section id="vista-cobertura" role="tabpanel" hidden data-titulo="Qué cubre y qué no"
+                     data-icono="ico-info" data-tono="gris">
+              <p class="intro">
+                Los límites de este radar: qué datos tiene y cuáles no, para saber cuánto
+                fiarse de cada cifra.
+              </p>
+              <ul id="cobertura-lista" class="cobertura-lista"></ul>
             </section>
 
             <section id="vista-versiones" role="tabpanel" hidden data-titulo="Historial de versiones"

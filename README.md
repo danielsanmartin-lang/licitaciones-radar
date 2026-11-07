@@ -274,12 +274,18 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 The views live in the **sidebar**, as in Zepo Desk: Bandeja (Inbox), Resumen (Summary)
 and Otras licitaciones (Other tenders) at the top; Siguiendo (Following), Vencimientos
 (Expiring contracts), Adjudicatarios (Winning bidders), Organismos (Contracting bodies) and
-Analítica (Analytics) under «Mercado» (Market); and Términos de búsqueda (Search terms) and
-Historial de versiones (Version history) at the bottom, next to the radar's status (last search, how the sources are doing and the
+Analítica (Analytics) under «Mercado» (Market); and Términos de búsqueda (Search terms),
+Qué cubre y qué no (What it covers) and Historial de versiones (Version history) at the
+bottom, next to the radar's status (last search, how the sources are doing and the
 version). **⌘1…⌘9** switch views in that same order.
 
 Clicking a tender **opens its record on the right** and the list narrows to make room,
 with the row highlighted; in a narrow window the record floats on top. Escape closes it.
+
+**Copiar ficha** (Copy record), under the title, copies the tender to paste into Slack or
+an email: the title, the same fields as the record as bullets, the description and the
+links, with bold and links wherever formatting is accepted. It leaves out «Por qué ha
+entrado», triage, notes and history.
 The app follows macOS light or dark mode.
 
 ### On opening: the search and the summary
@@ -371,11 +377,13 @@ latest deadline among its notices, and when it finishes a notice offers **«Desh
 ### Siguiendo (Following)
 
 What you have marked to follow and what you have submitted, even if it no longer matches
-any profile, in two groups: **en plazo** (open), by what closes first, and **plazo
-vencido o cerradas** (past deadline or closed), from most recent to oldest. Closed ones
-show **who won and for how much** — looking at every notice of the procurement file, not
-just the last one — or «adjudicación pendiente» (award pending) if it is not known yet.
-The figure in the sidebar is what is still open.
+any profile, in three groups: **en plazo** (open), by what closes first; **plazo vencido
+o cerradas** (past deadline or closed), from most recent to oldest; and **vencimientos que
+sigues** (contracts you follow), the ones you marked «Seguir» in Vencimientos, from the
+one that ends first. Closed ones show **who won and for how much** — looking at every
+notice of the procurement file, not just the last one — or «adjudicación pendiente»
+(award pending) if it is not known yet. The figure in the sidebar is what is still open
+plus the followed contracts that have not ended yet.
 
 ### Market consultations and their tender
 
@@ -553,19 +561,43 @@ Below the window, two more sections:
 
 - **Expired in the last six months.** They have already ended; if the renewal has not
   come out, the body is preparing it or has extended, and it is the moment to call.
-- **No published end date.** Awarded in the last four years by a source that does not say
-  when they end. No date is made up: they go from the oldest award to the most recent.
+- **No end date.** Awarded in the last four years whose end cannot even be estimated,
+  because the source does not publish the duration. No date is made up: they go from the
+  oldest award to the most recent.
 
-On each card you record **where you are**: Pendiente (pending), Contactado (contacted),
-Reunión (meeting) or Descartado (discarded), and a one-line note («spoke to Marta, call
-back in January»). It is stored per procurement file in your database. Discarded ones
-stop showing —the header says how many are hidden and «Ver descartados» shows them—. If
+**Estimated dates.** When the source does not publish the end date, it is computed from
+the contract duration and the award or start date. If those are missing too —PLACSP's
+feed of regional platforms never publishes the award date—, it is estimated, and the card
+says so with a tag and, on hover, how it was computed:
+
+- **estimada** (estimated): contract formalisation, or publication of the award notice,
+  plus the duration. Off by days.
+- **aproximada** (approximate): publication of the tender plus the duration, only when
+  there is already a winner. It runs early by however long the award took (usually 2-6
+  months), which for prospecting is the right side to err on.
+
+To estimate what was already in the database before this version, re-read the yearly ZIP
+files of regional platforms once (about three minutes with the cache downloaded):
+
+```bash
+python3 radar.py vencimientos --estimar 2024,2025,2026
+```
+
+On each card, **Seguir** (Follow) moves it to Siguiendo, into its «Vencimientos que
+sigues» group, and **Descartar** (Discard) removes it from the list; each one also takes
+a one-line note («spoke to Marta, call back in January»). It is stored per procurement
+file in your database. Discarded ones stop showing —the header says how many are hidden
+and «Ver descartados» shows them—. If
 the same body has published something later in your profiles, the card says so
 («después publicó: …»): it may be the renewal, and then it is no longer time to call but
 to bid.
 
-**Exportar CSV** takes all three sections, with the status and note of each contract, to
-work on them in a spreadsheet. The contracting body and the incumbent on each card lead
+**Exportar Excel** (Export to Excel) downloads an `.xlsx` with three sheets: the ones
+ending in the chosen window (3 months gives fewer rows than 6), the recently expired and
+the ones with no date. They go in full, without the on-screen cut, with what it takes to
+understand each contract —subject, description, body, incumbent, value, duration, dates,
+whether the end date is estimated and how, CPV, follow-up, note and the link to the
+official record— and they respect the profile and «Ver descartados». The contracting body and the incumbent on each card lead
 to their profile.
 
 ### Adjudicatarios (Winning bidders)
@@ -736,6 +768,7 @@ python3 radar.py match                        # reevalúa los perfiles sin desca
 python3 radar.py clasificar                   # reclasifica todo por temática (un minuto)
 python3 radar.py serve                        # abre la aplicación
 python3 radar.py vencimientos --meses 6       # contratos que vencen pronto
+python3 radar.py vencimientos --estimar 2024,2025,2026  # estimate end dates of stored data (once)
 python3 radar.py adjudicatarios               # quién gana estos contratos
 python3 radar.py export salida.csv            # exporta a CSV
 python3 radar.py programar                    # descarga automática cada mañana

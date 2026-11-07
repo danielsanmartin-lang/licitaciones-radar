@@ -265,10 +265,19 @@ class TestRutas(BaseEnlaces):
         self.assertEqual(enlaces.mejores(self.con)[self.c]["nivel"], "confirmada")
         self.assertEqual(self.pedir("/api/enlace", {"consulta_id": self.c})[0], 400)
 
-    def test_prospeccion_y_csv(self):
-        codigo, d = self.pedir("/api/prospeccion", {"clave": "g1", "estado": "reunion"})
-        self.assertEqual((codigo, d["estado"]), (200, "reunion"))
-        self.assertEqual(self.pedir("/api/prospeccion", {"clave": "g1", "estado": "x"})[0], 400)
-        codigo, texto = self.pedir("/api/prospeccion.csv?meses=12")
-        self.assertEqual(codigo, 200)
-        self.assertTrue(texto.startswith("Apartado,Órgano"))
+    def test_prospeccion_y_excel(self):
+        import io
+        import urllib.request
+        import zipfile
+        codigo, d = self.pedir("/api/prospeccion", {"clave": "g1", "estado": "siguiendo"})
+        self.assertEqual((codigo, d["estado"]), (200, "siguiendo"))
+        self.assertEqual(self.pedir("/api/prospeccion", {"clave": "g1", "estado": "reunion"})[0],
+                         400)
+        with urllib.request.urlopen(self.base + "/api/vencimientos.xlsx?meses=3",
+                                    timeout=5) as r:
+            # `attachment` es lo que hace que la app de Mac lo guarde en lugar de enseñarlo.
+            self.assertTrue(r.headers["Content-Disposition"].startswith("attachment;"))
+            self.assertIn("vencimientos-3-meses-", r.headers["Content-Disposition"])
+            self.assertIn("spreadsheetml", r.headers["Content-Type"])
+            libro = zipfile.ZipFile(io.BytesIO(r.read()))
+        self.assertIn("xl/worksheets/sheet3.xml", libro.namelist())

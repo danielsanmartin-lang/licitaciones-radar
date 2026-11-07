@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Iterator
 from xml.etree import ElementTree as ET
 
-from .. import net, progreso
+from .. import net, progreso, rutas
 from ..model import (
     ESTADO_ADJUDICADA, ESTADO_ANULADA, ESTADO_DESCONOCIDO, ESTADO_EVALUACION,
     ESTADO_PREVIO, ESTADO_PUBLICADA, ESTADO_RESUELTA, Licitacion, duracion_a_meses,
@@ -203,6 +203,26 @@ def _fecha_publicacion(cfs) -> str | None:
                 f = _txt(ref, "cbc:IssueDate")
                 if f:
                     fechas.append(f.split("+")[0])
+    return min(fechas) if fechas else None
+
+
+def _fecha_anuncio_adjudicacion(cfs) -> str | None:
+    """Cuándo se publicó el anuncio de adjudicación (`DOC_CAN_ADJ`), en cualquier medio.
+
+    El feed de plataformas agregadas no publica nunca `AwardDate`, pero sí este anuncio,
+    que sale pocos días después de adjudicar: con la duración, da una fecha de fin
+    estimada en lugar de ninguna.
+    """
+    fechas = []
+    for info in cfs.findall("cac-pe:ValidNoticeInfo", NS):
+        if (_txt(info, "cbc-pe:NoticeTypeCode") or "") != "DOC_CAN_ADJ":
+            continue
+        for ref in info.findall(
+                "cac-pe:AdditionalPublicationStatus/cac-pe:AdditionalPublicationDocumentReference",
+                NS):
+            f = _txt(ref, "cbc:IssueDate")
+            if f:
+                fechas.append(f.split("+")[0])
     return min(fechas) if fechas else None
 
 
@@ -390,6 +410,11 @@ def parsear_entry(entry, dataset: str) -> Licitacion | None:
         duracion_meses=meses,
         fecha_inicio_ejecucion=inicio,
         fecha_fin_prevista=fin,
+        # Solo sirven para estimar el fin cuando no hay adjudicación con que calcularlo.
+        fecha_formalizacion=(
+            (_txt(resultado, "cac:Contract/cbc:IssueDate") or "").split("+")[0] or None
+            if resultado is not None else None),
+        fecha_anuncio_adjudicacion=_fecha_anuncio_adjudicacion(cfs),
         raw={"lotes": lotes, "id_entry": id_entry} if lotes else {"id_entry": id_entry},
     )
 
@@ -468,7 +493,10 @@ class FuentePLACSP:
         self.nombre = f"placsp:{dataset}"
         self.max_paginas = max_paginas
         self.paginas_primera_vez = max(1, paginas_primera_vez)
-        self.dir_cache = dir_cache or (net.RAIZ / "data" / "cache")
+        # Donde dice `rutas`, no junto al código: en la app empaquetada el código está
+        # dentro del .app, y los ZIP anuales (más de 1 GB) acababan dentro del bundle,
+        # mientras `estado` y el diagnóstico los buscaban en Application Support.
+        self.dir_cache = dir_cache or rutas.CACHE
         self._cursor_nuevo: str | None = None
 
     @property

@@ -15,6 +15,7 @@ import logging
 import re
 import sqlite3
 import threading
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -92,20 +93,25 @@ class Manejador(BaseHTTPRequestHandler):
     def _error(self, mensaje: str, codigo: int = 400) -> None:
         self._json({"error": mensaje}, codigo)
 
+    def _descarga(self, cuerpo: bytes, tipo: str, nombre: str) -> None:
+        """Una descarga. Con `attachment`, que es lo que hace que la ventana de macOS la
+        guarde en Descargas en lugar de intentar enseñarla (ver `Radar.swift`)."""
+        self.send_response(200)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(cuerpo)
+
     def _csv(self, columnas: list, filas: list, nombre: str) -> None:
-        """Una descarga CSV. Con `attachment`, que es lo que hace que la ventana de macOS
-        la guarde en Descargas en lugar de intentar enseñarla."""
+        """Una descarga CSV."""
         buffer = io.StringIO()
         escritor = csv.writer(buffer)
         escritor.writerow(columnas)
         escritor.writerows(filas)
         cuerpo = buffer.getvalue().encode("utf-8-sig")  # BOM para que Excel respete acentos
-        self.send_response(200)
-        self.send_header("Content-Type", "text/csv; charset=utf-8")
-        self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
-        self.send_header("Content-Length", str(len(cuerpo)))
-        self.end_headers()
-        self.wfile.write(cuerpo)
+        self._descarga(cuerpo, "text/csv; charset=utf-8", nombre)
 
     def _estatico(self, ruta: str) -> None:
         nombre = "index.html" if ruta in ("/", "") else ruta.lstrip("/")
@@ -419,14 +425,17 @@ class Manejador(BaseHTTPRequestHandler):
             )
             self._csv(columnas, filas, "licitaciones.csv")
 
-        elif partes.path == "/api/prospeccion.csv":
+        elif partes.path == "/api/vencimientos.xlsx":
             try:
                 meses = max(1, min(int(params.get("meses", 6)), 60))
             except ValueError:
                 return self._error("meses no válido")
-            columnas, filas = consultas.prospeccion_csv(
-                self.con, meses=meses, perfil=params.get("perfil") or None)
-            self._csv(columnas, filas, "prospeccion.csv")
+            cuerpo = consultas.prospeccion_excel(
+                self.con, meses=meses, perfil=params.get("perfil") or None,
+                ver_descartados=params.get("descartados") == "1")
+            self._descarga(
+                cuerpo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                f"vencimientos-{meses}-meses-{date.today().isoformat()}.xlsx")
 
         else:
             self._estatico(partes.path)

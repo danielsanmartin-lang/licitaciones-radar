@@ -135,10 +135,58 @@ def _sumar_meses(fecha_iso: str | None, meses: float | None) -> str | None:
             return None
     total = base.month - 1 + int(round(meses))
     anio = base.year + total // 12
+    # Hay pliegos con duraciones imposibles (120.000 meses, una errata de unidades): sin
+    # esto, `date()` revienta y la ficha entera se daba por ilegible y no se guardaba.
+    if not 1 <= anio <= 9999:
+        return None
     mes = total % 12 + 1
     dia = min(base.day, [31, 29 if anio % 4 == 0 and (anio % 100 != 0 or anio % 400 == 0)
                          else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mes - 1])
     return date(anio, mes, dia).isoformat()
+
+
+# De dónde sale la fecha de fin que usa Vencimientos, de más a menos fiable.
+# «publicada» no se guarda: es la de `fecha_fin_prevista`, y las consultas la nombran así.
+ORIGEN_FIN_PUBLICADA = "publicada"    # la fuente la da, o adjudicación/inicio + duración
+ORIGEN_FIN_ESTIMADA = "estimada"      # formalización o anuncio de adjudicación + duración
+ORIGEN_FIN_APROXIMADA = "aproximada"  # publicación de la licitación + duración
+# Lo que se deriva de otros campos o solo sirve para estimar la fecha de fin. Fuera de la
+# huella: si entrara, la primera vez que se volviera a ver cada licitación pasaría a
+# «actualizada» y se re-evaluarían cientos de miles de filas por un dato que no cambia
+# nada de lo que se avisa.
+CAMPOS_FUERA_DE_HUELLA = frozenset({
+    "fecha_formalizacion", "fecha_anuncio_adjudicacion",
+    "fecha_fin_estimada", "fin_origen", "fin_base",
+})
+
+
+def fin_estimado(fin_prevista: str | None, duracion_meses: float | None,
+                 formalizacion: str | None, anuncio_adjudicacion: str | None,
+                 publicacion: str | None, adjudicatario: str | None
+                 ) -> tuple[str | None, str | None, str | None]:
+    """La fecha de fin estimada: (fecha, origen, base), o tres None si no hace falta o no
+    se puede.
+
+    Solo cuando no hay `fecha_fin_prevista` —publicada, o adjudicación/inicio más
+    duración—: entonces se estima a partir de la duración y, por este orden, la
+    formalización del contrato, el anuncio de adjudicación o, como último recurso y SOLO
+    si ya hay adjudicatario, la publicación de la licitación. Esta última se adelanta a la
+    real lo que tarde la adjudicación (meses), que en prospección es el lado bueno del
+    error: se llama antes de tiempo, no tarde. La base va con su nombre delante
+    («formalizacion:2025-12-31») para poder explicarlo en la tarjeta.
+    """
+    if fin_prevista or not duracion_meses:
+        return None, None, None
+    candidatas = (
+        ("formalizacion", formalizacion, ORIGEN_FIN_ESTIMADA),
+        ("anuncio_adjudicacion", anuncio_adjudicacion, ORIGEN_FIN_ESTIMADA),
+        ("publicacion", publicacion if adjudicatario else None, ORIGEN_FIN_APROXIMADA),
+    )
+    for nombre, base, origen in candidatas:
+        fin = _sumar_meses(base, duracion_meses)
+        if fin:
+            return fin, origen, f"{nombre}:{base[:10]}"
+    return None, None, None
 
 
 def _importe(valor) -> float | None:
@@ -222,6 +270,20 @@ class Licitacion:
     fecha_fin_prevista: str | None = None
     clave_grupo: str | None = None
 
+    # Cuando la fuente no da con qué calcular `fecha_fin_prevista` —el feed de
+    # plataformas agregadas de PLACSP no publica NUNCA la fecha de adjudicación—, estas
+    # dos fechas permiten estimarla: la de formalización del contrato y la de
+    # publicación del anuncio de adjudicación.
+    fecha_formalizacion: str | None = None
+    fecha_anuncio_adjudicacion: str | None = None
+    # La fecha estimada, solo cuando no hay `fecha_fin_prevista`, que no cambia de
+    # significado: va aparte para que una fecha estimada nunca pase por publicada.
+    # `fin_origen` es ORIGEN_FIN_ESTIMADA o _APROXIMADA y `fin_base`, la fecha de la que
+    # parte la estimación con su nombre delante. Ver `fin_estimado`.
+    fecha_fin_estimada: str | None = None
+    fin_origen: str | None = None
+    fin_base: str | None = None
+
     raw: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -252,6 +314,12 @@ class Licitacion:
         if not self.fecha_fin_prevista and self.duracion_meses:
             arranque = self.fecha_inicio_ejecucion or self.fecha_adjudicacion
             self.fecha_fin_prevista = _sumar_meses(arranque, self.duracion_meses)
+
+        self.fecha_formalizacion = _fecha_iso(self.fecha_formalizacion)
+        self.fecha_anuncio_adjudicacion = _fecha_iso(self.fecha_anuncio_adjudicacion)
+        self.fecha_fin_estimada, self.fin_origen, self.fin_base = fin_estimado(
+            self.fecha_fin_prevista, self.duracion_meses, self.fecha_formalizacion,
+            self.fecha_anuncio_adjudicacion, self.fecha_publicacion, self.adjudicatario)
 
         if not self.clave_grupo:
             self.clave_grupo = self._clave_grupo()
@@ -332,7 +400,7 @@ class Licitacion:
         relevante = {
             k: v
             for k, v in asdict(self).items()
-            if k not in {"raw", "fecha_actualizacion"}
+            if k not in {"raw", "fecha_actualizacion"} | CAMPOS_FUERA_DE_HUELLA
         }
         serializado = json.dumps(relevante, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(serializado.encode("utf-8")).hexdigest()

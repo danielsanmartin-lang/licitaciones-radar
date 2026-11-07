@@ -257,12 +257,17 @@ python3 radar.py ingest --primera-carga --etapas 2 3 4
 
 Las vistas están en la **barra lateral**, como en Zepo Desk: Bandeja, Resumen y Otras
 licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios, Organismos y Analítica en
-«Mercado»; y Términos de búsqueda e Historial de versiones al pie, junto al estado del
-radar (la última búsqueda, cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
+«Mercado»; y Términos de búsqueda, Qué cubre y qué no e Historial de versiones al pie,
+junto al estado del radar (la última búsqueda, cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
 
 Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
 dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
 la cierra. La aplicación sigue el modo claro u oscuro de macOS.
+
+**Copiar ficha**, bajo el título, copia la licitación para pegarla en Slack o en un
+correo: el título, los mismos campos de la ficha en viñetas, la descripción y los enlaces,
+con negritas y enlaces donde se admite formato. No se lleva «Por qué ha entrado», el
+triaje, las notas ni el historial.
 
 ### Al abrir: la búsqueda y el resumen
 
@@ -348,10 +353,13 @@ aviso con **«Deshacer»**.
 ### Siguiendo
 
 Lo que has marcado para seguir y lo que has presentado, aunque ya no case con ningún
-perfil, en dos grupos: **en plazo**, por lo que cierra antes, y **plazo vencido o
-cerradas**, de lo más reciente a lo más antiguo. En las cerradas sale **quién ganó y por
-cuánto** —mirando todos los anuncios del expediente, no solo el último— o «adjudicación
-pendiente» si todavía no se sabe. La cifra de la barra lateral es lo que sigue en plazo.
+perfil, en tres grupos: **en plazo**, por lo que cierra antes; **plazo vencido o
+cerradas**, de lo más reciente a lo más antiguo; y **vencimientos que sigues**, los
+contratos a los que has dado «Seguir» en Vencimientos, del que vence antes al que vence
+después. En las cerradas sale **quién ganó y por cuánto** —mirando todos los anuncios del
+expediente, no solo el último— o «adjudicación pendiente» si todavía no se sabe. La cifra
+de la barra lateral es lo que sigue en plazo más los contratos seguidos que aún no han
+vencido.
 
 ### Consultas previas y su pliego
 
@@ -515,19 +523,42 @@ Debajo de la ventana, dos apartados más:
 
 - **Vencidos en los últimos seis meses.** Ya han acabado; si la renovación no ha salido,
   el órgano la está preparando o ha prorrogado, y es el momento de llamar.
-- **Sin fecha de fin publicada.** Adjudicados en los últimos cuatro años cuya fuente no
-  dice cuándo acaban. No se inventa una fecha: van de la adjudicación más antigua a la más
-  reciente.
+- **Sin fecha de fin.** Adjudicados en los últimos cuatro años de los que no se puede ni
+  estimar cuándo acaban, porque la fuente no publica la duración. No se inventa una
+  fecha: van de la adjudicación más antigua a la más reciente.
 
-En cada tarjeta se apunta **en qué punto estás**: Pendiente, Contactado, Reunión o
-Descartado, y una nota de una línea («hablé con Marta, volver en enero»). Se guarda por
-expediente en tu base. Lo descartado deja de salir —la cabecera dice cuántos hay ocultos
-y «Ver descartados» los enseña—. Si el mismo órgano ha publicado algo después en tus
+**Fechas estimadas.** Cuando la fuente no publica la fecha de fin, se calcula con la
+duración del contrato a partir de la adjudicación o del inicio de ejecución. Si tampoco
+hay esas fechas —el feed de plataformas autonómicas de PLACSP no publica nunca la de
+adjudicación—, se estima, y la tarjeta lo dice con una etiqueta y, al pasar el ratón,
+cómo se ha calculado:
+
+- **estimada**: formalización del contrato, o publicación del anuncio de adjudicación, más
+  la duración. El error es de días.
+- **aproximada**: publicación de la licitación más la duración, solo si ya hay
+  adjudicatario. Se adelanta a la real lo que tardó la adjudicación (suelen ser 2-6
+  meses), que para prospectar es el lado bueno del error.
+
+Para estimar lo que ya estaba en la base antes de esta versión hay que releer una vez los
+ZIP anuales de plataformas autonómicas (unos tres minutos con la caché descargada):
+
+```bash
+python3 radar.py vencimientos --estimar 2024,2025,2026
+```
+
+En cada tarjeta, **Seguir** la lleva a Siguiendo, a su grupo «Vencimientos que sigues»,
+y **Descartar** la quita de la lista; cada una lleva además una nota de una línea («hablé
+con Marta, volver en enero»). Se guarda por expediente en tu base. Lo descartado deja de
+salir —la cabecera dice cuántos hay ocultos y «Ver descartados» los enseña—. Si el mismo órgano ha publicado algo después en tus
 perfiles, la tarjeta lo dice («después publicó: …»): puede ser la renovación, y entonces
 ya no toca llamar sino presentarse.
 
-**Exportar CSV** se lleva los tres apartados, con el estado y la nota de cada contrato,
-para trabajarlos en una hoja de cálculo. El órgano y el incumbente de cada tarjeta llevan
+**Exportar Excel** baja un `.xlsx` con tres hojas: los que vencen en la ventana elegida
+(con 3 meses, menos filas que con 6), los vencidos hace poco y los que no tienen fecha.
+Van enteros, sin el recorte de la pantalla, con lo necesario para entender cada contrato
+—objeto, descripción, órgano, incumbente, importe, duración, fechas, si la de fin es
+estimada y cómo, CPV, el seguimiento, la nota y el enlace a la ficha oficial— y respetan
+el perfil y «Ver descartados». El órgano y el incumbente de cada tarjeta llevan
 a su ficha.
 
 ### Adjudicatarios
@@ -688,6 +719,7 @@ python3 radar.py match                        # reevalúa los perfiles sin desca
 python3 radar.py clasificar                   # reclasifica todo por temática (un minuto)
 python3 radar.py serve                        # abre la aplicación
 python3 radar.py vencimientos --meses 6       # contratos que vencen pronto
+python3 radar.py vencimientos --estimar 2024,2025,2026  # estima el fin de lo ya guardado (una vez)
 python3 radar.py adjudicatarios               # quién gana estos contratos
 python3 radar.py export salida.csv            # exporta a CSV
 python3 radar.py programar                    # descarga automática cada mañana
