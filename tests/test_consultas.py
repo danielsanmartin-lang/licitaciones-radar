@@ -97,6 +97,84 @@ class TestBandeja(unittest.TestCase):
         self.assertEqual(len(filas), 5)
 
 
+class TestSinPlazoCaduca(unittest.TestCase):
+    """Lo vivo sin fecha límite deja de estar «en plazo» a los DIAS_ABIERTA_SIN_PLAZO.
+
+    Sin tope lo estaba para siempre: había una ficha en Siguiendo, «en plazo», publicada
+    hace 683 días. La regla tiene que ser la misma en la lista, en los contadores de la
+    cabecera, en Siguiendo y en la Analítica.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.con = db.conectar(Path(self.dir.name) / "t.db")
+        self.addCleanup(self.con.close)
+        consultas._MEMO.clear()
+        self.addCleanup(consultas._MEMO.clear)
+        tope = consultas.DIAS_ABIERTA_SIN_PLAZO
+        for nombre, hace in (("reciente", 30), ("en-el-tope", tope),
+                             ("pasado-el-tope", tope + 1), ("de-hace-683", 683)):
+            self._guardar(nombre, hace)
+
+    def _guardar(self, nombre, publicada_hace, *, estado="previo", limite=None):
+        publicada = (date.today() - timedelta(days=publicada_hace)).isoformat()
+        db.guardar(self.con, Licitacion(
+            fuente="prueba", id_externo=nombre, expediente=f"E/{nombre}",
+            objeto=f"Concienciación en ciberseguridad {nombre}", organo="Órgano",
+            estado=estado, fecha_publicacion=publicada,
+            fecha_limite_presentacion=limite))
+        lic = self.con.execute(
+            "SELECT id FROM licitaciones WHERE id_externo = ?", (nombre,)).fetchone()["id"]
+        self.con.execute(
+            "INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)"
+            " VALUES (?, 'p', 3.0, 'm', ?)", (lic, db.ahora()))
+        self.con.commit()
+        return lic
+
+    def _ids(self, **kw):
+        return sorted(it["id_externo"]
+                      for it in consultas.bandeja(self.con, limite=500, **kw)["items"])
+
+    def test_sin_fecha_limite_caduca_a_los_dias_del_tope(self):
+        self.assertEqual(self._ids(solo_vivas=True), ["en-el-tope", "reciente"])
+        self.assertEqual(len(self._ids(solo_vivas=False)), 4, "siguen en «ver todas»")
+
+    def test_con_fecha_limite_la_antiguedad_no_cuenta(self):
+        """El tope es solo para lo que no publica fecha: un plazo largo y real se respeta."""
+        self._guardar("plazo-largo", 400, estado="publicada",
+                      limite=(date.today() + timedelta(days=10)).isoformat())
+        self.assertIn("plazo-largo", self._ids(solo_vivas=True))
+
+    def test_sin_vencer_aplica_el_mismo_tope(self):
+        self.assertEqual(self._ids(solo_vivas=False, sin_vencidas=True),
+                         ["en-el-tope", "reciente"])
+
+    def test_los_contadores_cuadran_con_la_lista(self):
+        r = consultas.resumen(self.con)
+        self.assertEqual(r["en_plazo"], 2)
+        self.assertEqual(r["sin_vencer"], 2)
+        self.assertEqual(r["coincidencias"], 4)
+
+    def test_siguiendo_la_pasa_a_vencidas(self):
+        """El caso real: la de hace 683 días salía en Siguiendo como «en plazo»."""
+        for nombre in ("reciente", "de-hace-683"):
+            lic = self.con.execute("SELECT id FROM licitaciones WHERE id_externo = ?",
+                                   (nombre,)).fetchone()["id"]
+            db.fijar_revision(self.con, lic, estado="siguiendo")
+        self.con.commit()
+        d = consultas.siguiendo(self.con)
+        self.assertEqual([it["id_externo"] for it in d["en_plazo"]], ["reciente"])
+        self.assertEqual([it["id_externo"] for it in d["vencidas"]], ["de-hace-683"])
+        self.assertEqual(consultas.resumen(self.con)["siguiendo_en_plazo"], 1)
+
+    def test_la_analitica_cuenta_lo_mismo_que_la_cabecera(self):
+        cartera = consultas.analitica(self.con)["cartera"]
+        self.assertEqual(cartera["con_plazo_abierto"],
+                         consultas.contar(self.con, solo_vivas=True))
+        self.assertEqual(cartera["con_plazo_abierto"], 2)
+
+
 class TestElTriajeProtegeLaFicha(unittest.TestCase):
     """Lo que sigues no se pierde al estrechar los perfiles.
 
@@ -371,8 +449,10 @@ class TestCoherenciaContadores(unittest.TestCase):
     # El filtro que aplica cada contador de la cabecera. Debe coincidir con KPIS
     # en web/app.js.
     FILTROS = {
+        # Todo: el denominador de «15 de 412 coincidencias» de la lista.
+        "coincidencias": dict(solo_vivas=False),
         # Sin lo de plazo vencido: lo que todavía se puede mirar.
-        "coincidencias": dict(solo_vivas=False, sin_vencidas=True),
+        "sin_vencer": dict(solo_vivas=False, sin_vencidas=True),
         "en_plazo": dict(solo_vivas=True),
         "cierran_7_dias": dict(solo_vivas=True, cierran_en_dias=7),
         "sin_revisar": dict(solo_vivas=False, estado_revision="nuevo"),
@@ -396,8 +476,9 @@ class TestCoherenciaContadores(unittest.TestCase):
         self.assertEqual(anuncios, 4)
         self.assertEqual(consultas.contar(self.con, solo_vivas=False), 3,
                          "EXP/1 debe contar una sola vez")
-        # Y el contador, además, deja fuera EXP/3, que tiene el plazo vencido.
-        self.assertEqual(r["coincidencias"], 2)
+        self.assertEqual(r["coincidencias"], 3)
+        # Y «sin vencer», además, deja fuera EXP/3, que tiene el plazo vencido.
+        self.assertEqual(r["sin_vencer"], 2)
 
     def test_sigue_coincidiendo_tras_triar(self):
         lic_id = self.con.execute(
@@ -430,6 +511,18 @@ class TestCoherenciaContadores(unittest.TestCase):
         self.assertEqual(d["total_sin_filtros"], 3)
         self.assertLess(d["total"], d["total_sin_filtros"])
 
+    def test_coincidencias_es_una_sola_cifra(self):
+        """La tarjeta «coincidencias» decía 108 y la lista «15 de 412 coincidencias»: la
+        misma palabra para dos cifras. Ahora la tarjeta de 108 es «sin vencer», y
+        «coincidencias» es siempre el denominador de la lista."""
+        r = consultas.resumen(self.con)
+        for filtros in (dict(solo_vivas=True), dict(solo_vivas=False, sin_vencidas=True),
+                        dict(solo_vivas=False)):
+            with self.subTest(**filtros):
+                self.assertEqual(r["coincidencias"],
+                                 consultas.bandeja(self.con, **filtros)["total_sin_filtros"])
+        self.assertLess(r["sin_vencer"], r["coincidencias"])
+
 
 class TestResumen(unittest.TestCase):
     def setUp(self):
@@ -443,6 +536,7 @@ class TestResumen(unittest.TestCase):
     def test_resumen_con_base_vacia_no_revienta(self):
         r = consultas.resumen(self.con)
         self.assertEqual(r["coincidencias"], 0)
+        self.assertEqual(r["sin_vencer"], 0)
         self.assertEqual(r["en_plazo"], 0)
         self.assertEqual(r["sin_revisar"], 0)
         self.assertEqual(r["fuentes"], [])

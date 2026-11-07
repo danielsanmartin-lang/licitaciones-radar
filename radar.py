@@ -579,6 +579,7 @@ def cmd_estado(args) -> int:
     # aplicación. No se lista el total descargado: es un número que no se puede
     # consultar en ninguna vista y solo despista.
     print(f"Coincidencias        : {r['coincidencias']:,}")
+    print(f"Sin vencer           : {r['sin_vencer']:,}")
     print(f"Abiertas (en plazo)  : {r['en_plazo']:,}")
     print(f"Cierran en 7 días    : {r['cierran_7_dias']:,}")
     print(f"Sin revisar          : {r['sin_revisar']:,}")

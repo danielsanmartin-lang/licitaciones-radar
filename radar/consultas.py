@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from . import categorias, db, enlaces
 from .model import (ESTADOS_VIVOS, ORIGEN_FIN_APROXIMADA, ORIGEN_FIN_ESTIMADA,
@@ -113,6 +113,28 @@ _VISIBLE = (
 )
 
 
+# Cuánto tiempo se da por abierta una licitación viva que NO publica fecha límite.
+#
+# Sin tope, «en plazo» lo era para siempre: en la base real había una en Siguiendo
+# publicada hace 683 días, y de las 13 coincidencias vivas sin fecha límite, 11 tenían
+# más de medio año —anuncios previos de TED, sobre todo, que nadie cierra—. Medio año es
+# lo mismo que ya se daba a una consulta preliminar de mercado sin fecha de cierre en la
+# Analítica, y holgado para cualquier plazo de presentación real.
+DIAS_ABIERTA_SIN_PLAZO = 180
+
+# «El plazo no ha pasado»: la fecha límite es hoy o después, o no la hay y la ficha es de
+# los últimos DIAS_ABIERTA_SIN_PLAZO días (sin fecha de publicación tampoco, se deja
+# abierta: no hay con qué decir que no). Una sola expresión para la Bandeja, sus
+# contadores y la Analítica, por lo mismo que `_condiciones()`: cuando cada sitio escribía
+# la suya, acababan contando cosas distintas.
+_PLAZO_SIN_VENCER = (
+    "(substr(l.fecha_limite_presentacion, 1, 10) >= date('now')"
+    " OR (l.fecha_limite_presentacion IS NULL"
+    "     AND (l.fecha_publicacion IS NULL"
+    f"         OR substr(l.fecha_publicacion, 1, 10) >= date('now', '-{DIAS_ABIERTA_SIN_PLAZO} day'))))"
+)
+
+
 # Cuántos días luce la etiqueta «Nueva». Una semana es lo que tarda alguien en dar una
 # vuelta a la bandeja sin sentir que se le ha escapado algo, y coincide con el plazo más
 # corto que publica esta administración.
@@ -179,14 +201,12 @@ def _condiciones(
     if solo_vivas:
         # "Abierta" son dos condiciones, no una: que el estado siga vivo Y que el
         # plazo no haya pasado. Hay licitaciones catalanas en estado "publicada"
-        # con fecha límite de hace cuatro años; filtrar solo por estado las colaba.
+        # con fecha límite de hace cuatro años; filtrar solo por estado las colaba. Y
+        # lo que no publica fecha límite caduca a los DIAS_ABIERTA_SIN_PLAZO.
         marcas = ", ".join("?" * len(ESTADOS_VIVOS))
         where.append(f"l.estado IN ({marcas})")
         params.extend(sorted(ESTADOS_VIVOS))
-        where.append(
-            "(l.fecha_limite_presentacion IS NULL"
-            " OR substr(l.fecha_limite_presentacion, 1, 10) >= date('now'))"
-        )
+        where.append(_PLAZO_SIN_VENCER)
     if cierran_en_dias is not None:
         where.append(
             "substr(l.fecha_limite_presentacion, 1, 10) "
@@ -199,13 +219,10 @@ def _condiciones(
         where.append("l.fecha_limite_presentacion IS NOT NULL")
     if sin_vencidas:
         # La mitad del plazo de `solo_vivas`, sin la del estado: lo que publica fecha y ya
-        # la ha pasado fuera, y lo que no publica fecha se queda. Es lo que cuenta el
-        # contador «coincidencias», que con lo vencido decía 412 donde había 101 que
-        # todavía se podían mirar.
-        where.append(
-            "(l.fecha_limite_presentacion IS NULL"
-            " OR substr(l.fecha_limite_presentacion, 1, 10) >= date('now'))"
-        )
+        # la ha pasado fuera, y lo que no publica fecha se queda mientras no tenga más de
+        # DIAS_ABIERTA_SIN_PLAZO. Es lo que cuenta el contador «sin vencer», que con lo
+        # vencido decía 412 donde había 101 que todavía se podían mirar.
+        where.append(_PLAZO_SIN_VENCER)
     if ccaa:
         where.append("l.ccaa = ?")
         params.append(ccaa)
@@ -614,10 +631,13 @@ def resumen(con: sqlite3.Connection, *, en_marcha: bool = False,
 
     por_plazo = sin_revisar_por_plazo(con)
     return {
-        # Las coincidencias que todavía se pueden mirar: todas menos las de plazo
-        # vencido. El denominador de «57 de 668» sigue siendo el total sin filtros
-        # (`bandeja()["total_sin_filtros"]`), que es lo que sale al pulsar «ver todas».
-        "coincidencias": contar(con, solo_vivas=False, sin_vencidas=True),
+        # «Coincidencias» es una sola cifra en toda la aplicación: todo lo que ha casado
+        # (y lo que sigues), el denominador de «15 de 412 coincidencias» de la lista y lo
+        # que sale al pulsar «ver todas». La tarjeta de la cabecera que deja fuera lo de
+        # plazo vencido se llamaba también así, con otra cifra (108 contra 412), y es
+        # `sin_vencer`.
+        "coincidencias": contar(con, solo_vivas=False),
+        "sin_vencer": contar(con, solo_vivas=False, sin_vencidas=True),
         "en_plazo": contar(con, solo_vivas=True),
         "cierran_7_dias": contar(con, solo_vivas=True, cierran_en_dias=7),
         "sin_revisar": contar(con, solo_vivas=False, estado_revision="nuevo"),
@@ -803,8 +823,9 @@ def siguiendo(con) -> dict:
     """Lo que sigues y lo presentado, en «en plazo» y «plazo vencido o cerradas».
 
     «En plazo» es la misma regla que el contador «abiertas» (estado vivo y plazo sin
-    vencer, o sin fecha), ordenado por lo que cierra antes. El resto, de la fecha límite
-    más reciente a la más antigua, con el adjudicatario cuando se conoce.
+    vencer, o sin fecha y de los últimos DIAS_ABIERTA_SIN_PLAZO), ordenado por lo que
+    cierra antes. El resto, de la fecha límite más reciente a la más antigua, con el
+    adjudicatario cuando se conoce.
     """
     en_plazo: list[dict] = []
     todas: list[dict] = []
@@ -1316,6 +1337,20 @@ def competencia(con: sqlite3.Connection, *, ambito: Ambito | None = None,
     nombre de aquí se quedó del original y no lo ve nadie desde fuera. Con `ambito` se
     mira un perfil concreto o una temática del mercado en lugar de todos los perfiles.
     """
+    return adjudicatarios(con, ambito=ambito, limite=limite)["items"]
+
+
+def adjudicatarios(con: sqlite3.Connection, *, ambito: Ambito | None = None,
+                   q: str | None = None, limite: int = 20) -> dict:
+    """El ranking de `competencia`, con buscador y con cuántas empresas hay.
+
+    La pestaña Organismos tenía buscador y Adjudicatarios no, y el ranking enseña las
+    treinta primeras: una empresa con dos contratos no había forma de encontrarla. Se
+    busca sin acentos ni mayúsculas, como en Organismos, sobre el nombre que se enseña
+    y sobre la razón social ya normalizada, para que «s2 grupo slu» encuentre «S2 GRUPO
+    SOLUCIONES DE SEGURIDAD, S.L.U.». El puesto y las cifras son los del ranking entero:
+    buscar filtra, no recalcula.
+    """
     # Deduplicar por licitación no es opcional: sin ello, una que casa con dos
     # perfiles se contaba dos veces y el ranking no cuadraba con su propio
     # desglose (Vodafone salía con 6 contratos y al abrirlo mostraba 4). Se hace
@@ -1334,7 +1369,15 @@ def competencia(con: sqlite3.Connection, *, ambito: Ambito | None = None,
             WHERE l.adjudicatario IS NOT NULL""",
         params,
     ).fetchall()
-    return _ranking_empresas(filas, limite)[0]
+    todas, distintas = _ranking_empresas(filas, len(filas))
+    buscado = _normalizar_busqueda(q)
+    clave_buscada = normalizar_empresa(q) if buscado else None
+    elegidas = [
+        e for e in todas
+        if not buscado or buscado in _normalizar_busqueda(e["empresa"])
+        or (clave_buscada and clave_buscada in (normalizar_empresa(e["empresa"]) or ""))
+    ]
+    return {"total": len(elegidas), "distintos": distintas, "items": elegidas[:limite]}
 
 
 def contratos_de(con: sqlite3.Connection, empresa: str, *,
@@ -1952,12 +1995,7 @@ def _condicion_viva() -> tuple[str, list]:
     distinta de la cabecera: es justo el fallo que `_condiciones` existe para no repetir.
     """
     marcas = ", ".join("?" * len(ESTADOS_VIVOS))
-    return (
-        f"l.estado IN ({marcas})"
-        " AND (l.fecha_limite_presentacion IS NULL"
-        "      OR substr(l.fecha_limite_presentacion, 1, 10) >= date('now'))",
-        sorted(ESTADOS_VIVOS),
-    )
+    return f"l.estado IN ({marcas}) AND {_PLAZO_SIN_VENCER}", sorted(ESTADOS_VIVOS)
 
 
 @dataclass(frozen=True)
@@ -2176,6 +2214,25 @@ DIVISIONES_CPV = {
 }
 
 
+def _corte_de_datos(con) -> str | None:
+    """Hasta qué día llegan los datos: la publicación más reciente de TODA la base.
+
+    De toda la base y no de lo que casa con los perfiles, que es lo que hacía antes: el 7
+    de noviembre, con la base al día, el calendario decía «oct en curso, datos hasta el 14
+    oct», porque lo último que había casado era del 14. Eso no es cuánto mes falta por
+    descargar sino cuánto hace que no sale nada de lo tuyo, y dos meses que mezclan las
+    dos cosas no se pueden comparar. Lo descargado llega hasta donde llega para todos los
+    ámbitos a la vez.
+
+    Lo que viene con fecha de más allá de mañana se ignora: sería una errata de la fuente,
+    y una sola bastaría para dar por «en curso» un mes que no ha empezado. Entra por el
+    índice de `fecha_publicacion`, así que no cuesta nada.
+    """
+    return con.execute(
+        "SELECT MAX(fecha_publicacion) FROM licitaciones"
+        " WHERE fecha_publicacion <= date('now', '+1 day')").fetchone()[0]
+
+
 def _bloque_calendario(con, ambito, desde, hasta) -> dict:
     """En qué meses sale el trabajo. El bloque más sólido de la pestaña.
 
@@ -2183,9 +2240,9 @@ def _bloque_calendario(con, ambito, desde, hasta) -> dict:
     expedientes de media). Eso es lo que decide cuándo hay que estar preparado, y sale
     del mes de PRIMERA publicación del expediente, no del último anuncio.
 
-    El corte de cobertura sale de `MAX(fecha_publicacion)` y NO de `date('now')`: si el
-    usuario no ingesta durante una semana, el número de días con datos baja solo y la
-    pestaña lo confiesa sin que nadie tenga que programarlo.
+    El corte de cobertura sale de `_corte_de_datos` y NO de `date('now')`: si el usuario no
+    ingesta durante una semana, el número de días con datos baja solo y la pestaña lo
+    confiesa sin que nadie tenga que programarlo.
     """
     base, params = _expedientes(ambito, desde, hasta)
     meses = [
@@ -2194,9 +2251,7 @@ def _bloque_calendario(con, ambito, desde, hasta) -> dict:
             f"SELECT mes, COUNT(*) AS expedientes FROM ({base})"
             " WHERE mes IS NOT NULL GROUP BY mes ORDER BY mes", params)
     ]
-    entrada, p_entrada = _entrada_expedientes(ambito)
-    corte = con.execute(
-        f"SELECT MAX(l.fecha_publicacion){entrada}", p_entrada).fetchone()[0]
+    corte = _corte_de_datos(con)
 
     por_anio: dict = {}
     for m in meses:
@@ -2870,8 +2925,6 @@ ESTACIONALIDAD_ORGANOS = 10
 FUENTE_CONSULTAS = "placsp:consultas_previas"
 TRAMOS_CONSULTA = (30, 90, 180, 365)
 CONSULTAS_ABIERTAS = 10
-# Lo que dura «abierta» una consulta que no publica fecha de cierre.
-MESES_CONSULTA_SIN_FECHA = 6
 
 # La expresión del índice `idx_lic_nif_exp`. Tiene que ser literalmente la misma para
 # que SQLite lo use.
@@ -3030,18 +3083,16 @@ def _bloque_consultas(con, ambito) -> dict:
             dias.append(d)
     dias.sort()
 
-    # Las del ámbito que siguen abiertas y no tienen pliego todavía.
+    # Las del ámbito que siguen abiertas y no tienen pliego todavía. Una consulta sin fecha
+    # de cierre cuenta como abierta DIAS_ABIERTA_SIN_PLAZO, que ya va en `_condicion_viva`.
     viva, p_viva = _condicion_viva()
     entrada, p_entrada = _entrada_expedientes(ambito)
-    corte = date.today() - timedelta(days=30 * MESES_CONSULTA_SIN_FECHA)
     abiertas = [
         f for f in con.execute(
             f"SELECT l.id, {_GRUPO} AS g, l.fecha_publicacion, l.fecha_limite_presentacion"
             f"{entrada} AND l.fuente = ? AND {viva}",
             [*p_entrada, FUENTE_CONSULTAS, *p_viva])
         if f["id"] not in enlazadas
-        and (f["fecha_limite_presentacion"]
-             or (f["fecha_publicacion"] or "")[:10] >= corte.isoformat())
     ]
     abiertas.sort(key=lambda f: (f["fecha_publicacion"] or ""), reverse=True)
     del_ambito = con.execute(

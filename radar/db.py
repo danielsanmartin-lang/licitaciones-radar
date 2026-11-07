@@ -18,8 +18,9 @@ Dos tablas cargan el peso del diseño:
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import rutas
@@ -405,10 +406,11 @@ def completar_fechas_para_estimar(con: sqlite3.Connection, licitaciones) -> int:
     """Escribe en lo ya guardado SOLO la formalización y el anuncio de adjudicación.
 
     Es para releer los ZIP anuales y sacar de ellos esas dos fechas, que antes no se
-    leían. No vale `ingest --backfill` para esto: guarda la ficha entera, y el ZIP del año
-    en curso llega hasta el mes pasado, así que las fichas actualizadas después por el
-    feed diario volvían a su versión anterior (285 de 188.000 en la base real, medido).
-    Aquí nada más se toca, y nunca se borra una fecha que ya estaba.
+    leían. Se escribió cuando `ingest --backfill` devolvía a su versión anterior las
+    fichas que el feed diario había actualizado después del ZIP (285 de 188.000 en la
+    base real); `guardar()` ya no lo hace (ver `_es_anterior`), pero esto sigue siendo lo
+    más barato: no reescribe la ficha, no la reevalúa y no versiona nada. Aquí nada más
+    se toca, y nunca se borra una fecha que ya estaba.
     """
     filas = [(l.fecha_formalizacion, l.fecha_anuncio_adjudicacion, l.fuente, l.id_externo)
              for l in licitaciones if l.fecha_formalizacion or l.fecha_anuncio_adjudicacion]
@@ -563,6 +565,11 @@ def fusionar_grupos_ted(con: sqlite3.Connection) -> dict:
     importes redondos (400.000, 660.000, 380.000). Por eso, cuando el grupo contiene
     más de un expediente de PLACSP **no se fusiona nada** y se cuenta como ambiguo,
     en vez de elegir uno a ojo.
+
+    Lo que esta regla no puede unir —TED sin importe, o un importe ambiguo— pasa después
+    por una segunda, de órgano, día de cierre y título, que une también con Cataluña:
+    ver `parejas_ted_por_organo`. `anuncios_fusionados` cuenta los de las dos, y
+    `por_organo` los de la segunda.
     """
     grupos = con.execute(
         """SELECT l.importe_referencia AS importe,
@@ -595,8 +602,138 @@ def fusionar_grupos_ted(con: sqlite3.Connection) -> dict:
             (clave, importe, limite, clave),
         )
         fusionadas += cur.rowcount
+
+    # Después de la primera regla, nunca antes: solo mira lo que esa no ha podido unir.
+    parejas, ambiguos_organo = parejas_ted_por_organo(con)
+    con.executemany("UPDATE licitaciones SET clave_grupo = ? WHERE id = ?",
+                    [(clave, ted_id) for ted_id, clave in parejas])
+    fusionadas += len(parejas)
     con.commit()
-    return {"grupos": len(cambios), "anuncios_fusionados": fusionadas, "ambiguos": ambiguos}
+    return {"grupos": len(cambios), "anuncios_fusionados": fusionadas, "ambiguos": ambiguos,
+            "por_organo": len(parejas), "ambiguos_por_organo": ambiguos_organo}
+
+
+# Raíces que salen en el título de casi cualquier contrato y no dicen cuál es: «servicio»
+# y «servei», «contrato» y «contracte», «acuerdo marco»… Contarlas como coincidencia
+# daría por iguales dos contratos que solo comparten ser contratos.
+_RAICES_GENERICAS = frozenset((
+    "serv", "cont", "sumi", "subm", "acue", "acor", "marc", "obje", "pres", "proc",
+    "medi", "mitj", "trav", "entr", "lote", "part", "espa",
+))
+
+# Qué parte del título de TED tiene que aparecer en el texto del expediente candidato.
+# Medido sobre la base real con los 113 anuncios que la regla del órgano encontraba: por
+# debajo de la mitad, casi todos eran otro contrato del mismo órgano que cerraba el
+# mismo día («Desarrollo de aplicaciones Java» contra unas obras en la sede); de la mitad
+# para arriba, casi todos eran el mismo contrato, muchos traducidos del catalán. Subirlo
+# a 0,7 para quitar el único error que quedaba costaba ocho parejas buenas.
+UMBRAL_TITULO_TED = 0.5
+
+
+def _raices(texto: str | None) -> set[str]:
+    """Las cuatro primeras letras de cada palabra de cinco o más, sin acentos.
+
+    Cuatro letras porque el título de TED llega traducido al castellano y el de PLACSP o
+    Cataluña a menudo en catalán, y las raíces aguantan la traducción: «formación» y
+    «formació», «homologación» y «homologació», «ciberseguridad» y «ciberseguretat».
+    """
+    from .model import normalizar
+
+    return {p[:4] for p in re.findall(r"[a-z0-9]{5,}", normalizar(texto))} - _RAICES_GENERICAS
+
+
+def _organo_comparable(organo: str | None) -> str:
+    """El nombre del órgano sin acentos, espacios ni signos, como en `clave_grupo`."""
+    from .model import normalizar
+
+    return re.sub(r"[^a-z0-9]+", "", normalizar(organo))[:40]
+
+
+def parejas_ted_por_organo(con: sqlite3.Connection) -> tuple[list[tuple[int, str]], int]:
+    """Los anuncios de TED que la regla del importe no ha unido, con el grupo al que van.
+
+    Devuelve `([(id del anuncio de TED, clave_grupo de destino)], ambiguos)` y no escribe
+    nada, para poder medirla contra una base sin tocarla.
+
+    Hace falta porque TED no siempre publica el importe: la homologación de formación
+    del Ens d'Abastament d'Aigua Ter-Llobregat salía dos veces en la Bandeja, el anuncio
+    catalán y el de TED en castellano, y su importe en TED es NULL. En la base real, 1.024
+    de los 8.472 anuncios de TED no traen importe. Extender la regla del importe a
+    `catalunya` no habría unido ninguno —medido: cero—, porque lo que se publica en
+    Cataluña también está en las plataformas agregadas de PLACSP y ya comparte grupo con
+    él; lo que faltaba era una regla que no dependiera del importe.
+
+    La clave es **mismo órgano + mismo día de cierre + título parecido** contra cualquier
+    fuente que no sea TED (PLACSP o Cataluña). El órgano y el día solos no bastan: sobre
+    la base real eran 113 parejas y casi la mitad, otro contrato del mismo órgano que
+    cerraba el mismo día; de ahí el título (`UMBRAL_TITULO_TED`). Con las tres salen 132
+    parejas y 11 ambiguas; revisadas a mano, una sola era otro contrato —dos
+    mantenimientos de equipos del mismo hospital que cerraban el mismo día—. Si más de
+    un expediente pasa el umbral, no se elige: se cuenta como ambiguo y se deja como
+    está, igual que la regla del importe.
+    """
+    from .model import titulo_util_ted
+
+    pendientes = con.execute(
+        """SELECT t.id, t.organo, t.objeto,
+                  substr(t.fecha_limite_presentacion, 1, 10) AS dia
+             FROM licitaciones t
+            WHERE t.fuente = 'ted' AND t.fecha_limite_presentacion IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM licitaciones h
+                               WHERE h.clave_grupo = t.clave_grupo AND h.fuente != 'ted')"""
+    ).fetchall()
+    por_dia: dict[str, list] = {}
+    for t in pendientes:
+        por_dia.setdefault(t["dia"], []).append(t)
+
+    # Los nombres de órgano se repiten muchísimo —unas 660 fichas cierran cada día, de
+    # unos pocos cientos de órganos— y normalizarlos era el 80 % del tiempo.
+    comparables: dict = {}
+
+    def organo(nombre):
+        if nombre not in comparables:
+            comparables[nombre] = _organo_comparable(nombre)
+        return comparables[nombre]
+
+    parejas: list[tuple[int, str]] = []
+    ambiguos = 0
+    for dia, anuncios in por_dia.items():
+        try:
+            siguiente = (date.fromisoformat(dia) + timedelta(days=1)).isoformat()
+        except ValueError:
+            continue
+        # Por rango y no con `substr(...) = ?`, para que entre por `idx_lic_limite`. Y
+        # primero solo el órgano: el texto se lee únicamente de los que pueden ser.
+        candidatos: dict[str, list] = {}
+        for h in con.execute(
+            """SELECT id, organo, clave_grupo FROM licitaciones
+                WHERE fecha_limite_presentacion >= ? AND fecha_limite_presentacion < ?
+                  AND fuente != 'ted' AND clave_grupo IS NOT NULL""", (dia, siguiente)):
+            candidatos.setdefault(organo(h["organo"]), []).append(h)
+        for t in anuncios:
+            del_organo = candidatos.get(organo(t["organo"]))
+            # Sin las palabras del nombre del órgano, que los dos textos comparten por ser
+            # del mismo órgano y no por ser el mismo contrato: «Soporte informático a los
+            # centros de MC MUTUAL» casaba por «mutual» con una auditoría de MC Mutual.
+            raices_ted = _raices(titulo_util_ted(t["objeto"])) - _raices(t["organo"])
+            if not del_organo or not raices_ted:
+                continue
+            ids = [h["id"] for h in del_organo]
+            texto_por_clave: dict[str, set] = {}
+            for f in con.execute(
+                f"""SELECT clave_grupo, objeto, descripcion, lote_desc FROM licitaciones
+                     WHERE id IN ({", ".join("?" * len(ids))})""", ids):
+                texto = " ".join(p for p in (f["objeto"], f["descripcion"], f["lote_desc"]) if p)
+                texto_por_clave.setdefault(f["clave_grupo"], set()).update(_raices(texto))
+            buenas = [
+                clave for clave, raices in texto_por_clave.items()
+                if len(raices_ted & raices) / len(raices_ted) >= UMBRAL_TITULO_TED
+            ]
+            if len(buenas) == 1:
+                parejas.append((t["id"], buenas[0]))
+            elif len(buenas) > 1:
+                ambiguos += 1
+    return parejas, ambiguos
 
 
 def migrar(con: sqlite3.Connection) -> list[str]:
@@ -640,7 +777,7 @@ def migrar(con: sqlite3.Connection) -> list[str]:
             aplicadas.append(f"claves de grupo recalculadas ({n} filas)")
             if fusion["anuncios_fusionados"]:
                 aplicadas.append(
-                    f"anuncios de TED unidos a su expediente de PLACSP "
+                    f"anuncios de TED unidos a su expediente de PLACSP o Cataluña "
                     f"({fusion['anuncios_fusionados']})"
                 )
             # Detrás del reagrupamiento: los anuncios que acaban de cambiar de grupo
@@ -698,17 +835,62 @@ CAMPOS = (
 CAMPOS_HISTORIAL = ("estado", "adjudicatario", "importe_referencia", "importe_adjudicacion")
 
 
+def _instante(valor: str | None) -> datetime | None:
+    """`fecha_actualizacion` como instante comparable. None si no hay o no se lee.
+
+    No vale comparar el texto: PLACSP publica `<updated>` con su zona horaria, «+02:00»
+    en verano y «+01:00» en invierno, y como cadenas las 09:30+01:00 van delante de las
+    10:00+02:00 aunque sean media hora después. Lo que llega sin zona —Cataluña— se toma
+    como UTC: dentro de una misma ficha la fuente es siempre la misma, así que las dos
+    fechas que se comparan se leen igual.
+    """
+    if not valor:
+        return None
+    try:
+        instante = datetime.fromisoformat(valor)
+    except ValueError:
+        return None
+    return instante if instante.tzinfo else instante.replace(tzinfo=timezone.utc)
+
+
+def _es_anterior(llega: str | None, guardada: str | None) -> bool:
+    """Si la ficha que llega es una versión ANTERIOR a la que ya está en la base.
+
+    Solo cuando las dos traen fecha y la que llega es estrictamente más antigua. Sin
+    fecha en cualquiera de las dos —TED no publica ninguna, y en Cataluña solo la llevan
+    las adjudicadas— no hay manera de saber cuál es más nueva, y se escribe como siempre:
+    es lo que se hacía y lo que espera cada fuente que no la tiene. Con la misma fecha
+    también se escribe, porque entonces lo que cambia es cómo la LEE el radar —un campo
+    nuevo en el modelo— y releer los ficheros descargados para rellenarlo es justo lo que
+    se busca.
+    """
+    a, b = _instante(llega), _instante(guardada)
+    return a is not None and b is not None and a < b
+
+
 def guardar(con: sqlite3.Connection, lic) -> str:
-    """Inserta o actualiza una licitación. Devuelve 'nueva', 'actualizada' o 'igual'.
+    """Inserta o actualiza una licitación. Devuelve 'nueva', 'actualizada', 'igual' o
+    'anterior'.
 
     Solo escribe una versión nueva en el historial cuando la huella cambia, que es
     lo que evita el ruido de las republicaciones de PLACSP.
+
+    'anterior' es una ficha MÁS VIEJA que la guardada (ver `_es_anterior`), y no se
+    escribe. Pasaba con `ingest --backfill` sobre una base con datos: el ZIP anual del
+    año en curso llega hasta el mes pasado, y guardarlo entero devolvía a su versión de
+    entonces lo que el feed diario ya había actualizado, con lo que una adjudicación
+    podía volver a «publicada». Medido en la base real: 285 de las 188.000 fichas de
+    `placsp:agregadas` tenían una `fecha_actualizacion` más antigua que la que ya se
+    había visto. También cubre el feed diario, que se recorre de la página más nueva a
+    la más vieja: si una ficha se republica dos veces en el tramo que se lee, la
+    versión vieja llega después de la buena.
     """
     fila = lic.a_fila()
     momento = ahora()
 
     prev = con.execute(
-        f"""SELECT id, huella, {", ".join(CAMPOS_HISTORIAL)}
+        f"""SELECT id, huella, fecha_actualizacion, fecha_formalizacion,
+                   fecha_anuncio_adjudicacion, {", ".join(CAMPOS_HISTORIAL)}
               FROM licitaciones WHERE fuente = ? AND id_externo = ?""",
         (fila["fuente"], fila["id_externo"]),
     ).fetchone()
@@ -728,6 +910,13 @@ def guardar(con: sqlite3.Connection, lic) -> str:
         return "nueva"
 
     lic_id = prev["id"]
+    # Antes que la rama «igual», y no solo cuando cambia la huella: esa rama reescribe
+    # `CAMPOS_FIN`, que están fuera de la huella, y una versión vieja con la misma huella
+    # puede no traer todavía la fecha de formalización que la nueva sí trae.
+    if _es_anterior(fila["fecha_actualizacion"], prev["fecha_actualizacion"]):
+        _completar_desde_anterior(con, lic_id, prev, fila, momento)
+        return "anterior"
+
     if prev["huella"] == fila["huella"]:
         con.execute(
             f"UPDATE licitaciones SET {', '.join(f'{c} = ?' for c in CAMPOS_FIN)},"
@@ -749,6 +938,41 @@ def guardar(con: sqlite3.Connection, lic) -> str:
     if any(prev[c] != fila[c] for c in CAMPOS_HISTORIAL):
         _guardar_version(con, lic_id, fila, prev["estado"], momento)
     return "actualizada"
+
+
+def _completar_desde_anterior(con, lic_id: int, prev, fila: dict, momento: str) -> None:
+    """Lo único que se aprovecha de una versión anterior a la guardada.
+
+    `visto_ultima_vez`, porque la ficha se ha visto. Y las dos fechas de las que sale el
+    fin estimado, pero SOLO si la guardada no las tiene: así una relectura del ZIP sigue
+    sirviendo para rellenar lo que una versión vieja del radar no leía (como
+    `completar_fechas_para_estimar`), sin que la versión vieja borre ni cambie nada. No
+    se copian `CAMPOS_FIN` tal cual, como hace la rama «igual»: el fin estimado de una
+    versión todavía sin adjudicar es «ninguno», y pisaría el de la buena.
+    """
+    nuevas = {
+        c: prev[c] or fila[c]
+        for c in ("fecha_formalizacion", "fecha_anuncio_adjudicacion")
+    }
+    if all(nuevas[c] == prev[c] for c in nuevas):
+        con.execute("UPDATE licitaciones SET visto_ultima_vez = ? WHERE id = ?",
+                    (momento, lic_id))
+        return
+
+    from .model import fin_estimado
+
+    g = con.execute(
+        "SELECT fecha_fin_prevista, duracion_meses, fecha_publicacion, adjudicatario"
+        " FROM licitaciones WHERE id = ?", (lic_id,)).fetchone()
+    fin, origen, base = fin_estimado(
+        g["fecha_fin_prevista"], g["duracion_meses"], nuevas["fecha_formalizacion"],
+        nuevas["fecha_anuncio_adjudicacion"], g["fecha_publicacion"], g["adjudicatario"])
+    con.execute(
+        "UPDATE licitaciones SET fecha_formalizacion = ?, fecha_anuncio_adjudicacion = ?,"
+        " fecha_fin_estimada = ?, fin_origen = ?, fin_base = ?, visto_ultima_vez = ?"
+        " WHERE id = ?",
+        (nuevas["fecha_formalizacion"], nuevas["fecha_anuncio_adjudicacion"], fin, origen,
+         base, momento, lic_id))
 
 
 # Campos que se conservan en el snapshot de cada versión. Antes se guardaba una

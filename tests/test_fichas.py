@@ -165,6 +165,40 @@ class TestOrganismos(Base):
                           ["items"]], ["Diputación de Ávila"])
 
 
+class TestAdjudicatarios(Base):
+    """La pestaña tenía el ranking de las 30 primeras y ningún buscador: una empresa con
+    dos contratos no había forma de encontrarla. Organismos sí lo tenía."""
+
+    def setUp(self):
+        super().setUp()
+        self.alta("s2", adjudicatario="S2 GRUPO SOLUCIONES DE SEGURIDAD, S.L.U.",
+                  importe_adjudicacion=100_000.0)
+        self.alta("s2-bis", adjudicatario="S2 Grupo Soluciones de Seguridad S.L.",
+                  importe_adjudicacion=50_000.0)
+        self.alta("otra", adjudicatario="Telefónica Soluciones SA",
+                  importe_adjudicacion=5_000.0)
+
+    def test_busca_sin_acentos_ni_razon_social(self):
+        d = consultas.adjudicatarios(self.con, q="telefonica")
+        self.assertEqual([e["empresa"] for e in d["items"]], ["Telefónica Soluciones SA"])
+        self.assertEqual((d["total"], d["distintos"]), (1, 2))
+        d = consultas.adjudicatarios(self.con, q="s2 grupo slu")
+        self.assertEqual(len(d["items"]), 1)
+        self.assertEqual(d["items"][0]["contratos"], 2, "las dos razones sociales juntas")
+
+    def test_buscar_no_cambia_las_cifras_del_ranking(self):
+        sin = {e["empresa"]: e for e in consultas.adjudicatarios(self.con)["items"]}
+        con = consultas.adjudicatarios(self.con, q="soluciones")["items"]
+        self.assertEqual(len(con), 2)
+        for e in con:
+            self.assertEqual(e, sin[e["empresa"]])
+        self.assertEqual(consultas.adjudicatarios(self.con, q="nadie")["items"], [])
+
+    def test_competencia_sigue_devolviendo_la_lista(self):
+        self.assertEqual(consultas.competencia(self.con, limite=1),
+                         consultas.adjudicatarios(self.con, limite=1)["items"])
+
+
 class TestRutas(Base):
     def setUp(self):
         super().setUp()
@@ -190,6 +224,12 @@ class TestRutas(Base):
         self.assertEqual((codigo, d["cifras"]["expedientes"]), (200, 1))
         codigo, d = self.pedir("/api/competidor?empresa=Ganadora%20S.L.")
         self.assertEqual((codigo, d["cifras"]["ganados"]), (200, 1))
+
+    def test_adjudicatarios_con_buscador(self):
+        codigo, d = self.pedir("/api/adjudicatarios?q=ganadora")
+        self.assertEqual((codigo, [e["empresa"] for e in d["items"]], d["distintos"]),
+                         (200, ["Ganadora SL"], 1))
+        self.assertEqual(self.pedir("/api/adjudicatarios?q=nadie")[1]["items"], [])
 
     def test_sin_nombre_400_y_sin_datos_404(self):
         self.assertEqual(self.pedir("/api/organismo")[0], 400)

@@ -56,6 +56,107 @@ class TestGuardar(unittest.TestCase):
         estado = db.guardar(self.con, lic(fecha_actualizacion="2026-08-05T18:30:00"))
         self.assertEqual(estado, "igual")
 
+    def _fila(self, *columnas):
+        return self.con.execute(
+            f"SELECT {', '.join(columnas)} FROM licitaciones WHERE id_externo = 'X1'"
+        ).fetchone()
+
+    def test_una_version_anterior_no_pisa_la_guardada(self):
+        """`ingest --backfill` sobre una base con datos: el ZIP del año en curso llega
+        hasta el mes pasado y devolvía a «publicada» lo que el feed diario ya había visto
+        adjudicado. 285 de 188.000 fichas en la base real."""
+        db.guardar(self.con, lic(estado="adjudicada", adjudicatario="Empresa SA",
+                                 importe_adjudicacion=99000,
+                                 fecha_actualizacion="2026-10-20T10:00:00+02:00"))
+        self.con.execute("UPDATE licitaciones SET visto_ultima_vez = '2000-01-01'")
+        versiones = self.con.execute(
+            "SELECT COUNT(*) FROM licitaciones_versiones").fetchone()[0]
+
+        estado = db.guardar(self.con, lic(fecha_actualizacion="2026-09-01T10:00:00+02:00"))
+
+        self.assertEqual(estado, "anterior")
+        f = self._fila("estado", "adjudicatario", "fecha_actualizacion", "visto_ultima_vez")
+        self.assertEqual((f["estado"], f["adjudicatario"]), ("adjudicada", "Empresa SA"))
+        self.assertTrue(f["fecha_actualizacion"].startswith("2026-10-20"))
+        self.assertNotEqual(f["visto_ultima_vez"], "2000-01-01", "la ficha sí se ha visto")
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM licitaciones_versiones").fetchone()[0],
+            versiones, "una versión vieja no es un cambio que anotar en el historial")
+
+    def test_una_version_posterior_si_se_escribe(self):
+        db.guardar(self.con, lic(fecha_actualizacion="2026-09-01T10:00:00+02:00"))
+        estado = db.guardar(self.con, lic(estado="adjudicada", adjudicatario="Empresa SA",
+                                          fecha_actualizacion="2026-10-20T10:00:00+02:00"))
+        self.assertEqual(estado, "actualizada")
+        self.assertEqual(self._fila("estado")["estado"], "adjudicada")
+
+    def test_compara_instantes_y_no_texto(self):
+        """Las 09:30+01:00 son las 08:30 UTC, media hora DESPUÉS de las 10:00+02:00, y
+        como texto van delante. PLACSP cambia de zona dos veces al año."""
+        db.guardar(self.con, lic(estado="adjudicada", adjudicatario="Empresa SA",
+                                 fecha_actualizacion="2026-10-25T09:30:00+01:00"))
+        estado = db.guardar(self.con, lic(fecha_actualizacion="2026-10-25T10:00:00+02:00"))
+        self.assertEqual(estado, "anterior")
+        self.assertEqual(self._fila("estado")["estado"], "adjudicada")
+
+    def test_sin_fecha_de_actualizacion_se_escribe_como_siempre(self):
+        """TED no publica ninguna y Cataluña solo en lo adjudicado: sin las dos fechas no
+        se puede saber cuál es más nueva, y se hace lo de siempre."""
+        for guardada, llega in ((None, "2026-01-01T00:00:00"),
+                                ("2026-12-01T00:00:00", None)):
+            with self.subTest(guardada=guardada, llega=llega):
+                self.con.execute("DELETE FROM licitaciones")
+                self.con.execute("DELETE FROM licitaciones_fts")
+                db.guardar(self.con, lic(fecha_actualizacion=guardada))
+                estado = db.guardar(self.con, lic(estado="adjudicada",
+                                                  fecha_actualizacion=llega))
+                self.assertEqual(estado, "actualizada")
+                self.assertEqual(self._fila("estado")["estado"], "adjudicada")
+
+    def test_la_misma_fecha_se_escribe(self):
+        """Releer un fichero ya visto con un radar que lee un campo más es como se
+        rellenan los campos nuevos: con la misma `<updated>` tiene que escribirse."""
+        db.guardar(self.con, lic(fecha_actualizacion="2026-09-01T10:00:00+02:00"))
+        estado = db.guardar(self.con, lic(lugar="Madrid",
+                                          fecha_actualizacion="2026-09-01T10:00:00+02:00"))
+        self.assertEqual(estado, "actualizada")
+
+    def test_la_version_anterior_solo_rellena_las_fechas_que_faltan(self):
+        """La formalización de una versión vieja vale si la guardada no la tiene (la leyó
+        un radar que aún no la leía), y con ella se recalcula el fin estimado. Lo que la
+        guardada sí tiene no se toca."""
+        sin_formalizar = dict(estado="adjudicada", adjudicatario="Empresa SA",
+                              duracion_meses=12, fecha_publicacion="2025-06-01")
+        db.guardar(self.con, lic(**sin_formalizar,
+                                 fecha_actualizacion="2026-10-20T10:00:00+02:00"))
+        self.con.execute("UPDATE licitaciones SET fecha_formalizacion = NULL,"
+                         " fecha_fin_estimada = NULL, fin_origen = NULL, fin_base = NULL")
+
+        estado = db.guardar(self.con, lic(**sin_formalizar,
+                                          fecha_formalizacion="2025-09-15",
+                                          fecha_actualizacion="2026-09-01T10:00:00+02:00"))
+        self.assertEqual(estado, "anterior")
+        f = self._fila("fecha_formalizacion", "fecha_fin_estimada", "fin_base")
+        self.assertTrue(f["fecha_formalizacion"].startswith("2025-09-15"))
+        self.assertTrue(f["fecha_fin_estimada"].startswith("2026-09-15"))
+        self.assertEqual(f["fin_base"], "formalizacion:2025-09-15")
+
+        # Una segunda versión vieja, con otra formalización: la que ya hay se queda.
+        db.guardar(self.con, lic(**sin_formalizar, fecha_formalizacion="2025-01-01",
+                                 fecha_actualizacion="2026-08-01T10:00:00+02:00"))
+        self.assertTrue(self._fila("fecha_formalizacion")[0].startswith("2025-09-15"))
+
+    def test_la_version_anterior_no_borra_el_fin_estimado(self):
+        """Con la misma huella, la rama «igual» copia `CAMPOS_FIN` de lo que llega. Una
+        versión vieja sin adjudicatario no tiene fin estimado, y lo borraba."""
+        db.guardar(self.con, lic(estado="adjudicada", adjudicatario="Empresa SA",
+                                 duracion_meses=12, fecha_formalizacion="2025-09-15",
+                                 fecha_actualizacion="2026-10-20T10:00:00+02:00"))
+        self.assertIsNotNone(self._fila("fecha_fin_estimada")[0])
+        db.guardar(self.con, lic(duracion_meses=12,
+                                 fecha_actualizacion="2026-03-01T10:00:00+01:00"))
+        self.assertIsNotNone(self._fila("fecha_fin_estimada")[0])
+
     def test_cambio_real_crea_version_con_transicion(self):
         db.guardar(self.con, lic())
         estado = db.guardar(self.con, lic(estado="adjudicada", adjudicatario="Empresa X",
@@ -445,6 +546,116 @@ class TestFusionTedPlacsp(unittest.TestCase):
             valor_estimado=None, importe_sin_iva=None, importe_adjudicacion=None,
             fecha_limite_presentacion=None))
         self.assertEqual(db.fusionar_grupos_ted(self.con)["anuncios_fusionados"], 0)
+
+
+class TestFusionTedPorOrgano(unittest.TestCase):
+    """La segunda regla: TED sin importe, unido por órgano, día de cierre y título.
+
+    El caso real: la homologación de formación del Ens d'Abastament d'Aigua Ter-Llobregat
+    salía dos veces en la Bandeja, el anuncio catalán y el de TED en castellano. TED no
+    publica su importe, así que la regla del importe no podía unirlos.
+    """
+
+    ATL = "Ens d'Abastament d'Aigua Ter-Llobregat (ATL)"
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.con = db.conectar(Path(self.dir.name) / "t.db")
+
+    def tearDown(self):
+        self.con.close()
+        self.dir.cleanup()
+
+    def _grupo(self, id_externo):
+        return self.con.execute(
+            "SELECT clave_grupo FROM licitaciones WHERE id_externo = ?", (id_externo,)
+        ).fetchone()["clave_grupo"]
+
+    def _ted(self, objeto, *, organo=ATL, limite="2029-05-06T13:00:00+01:00", ident="T1"):
+        db.guardar(self.con, lic(
+            fuente="ted", id_externo=ident, expediente=f"{ident}-2026", organo=organo,
+            objeto=f"España – Servicios de formación en materia de seguridad – {objeto}",
+            valor_estimado=None, importe_sin_iva=None, importe_adjudicacion=None,
+            fecha_limite_presentacion=limite))
+
+    def _de_casa(self, ident, objeto, *, fuente="catalunya", organo=ATL,
+                 expediente="2025RTSE0300", limite="2029-05-06T13:00:00", **kw):
+        db.guardar(self.con, lic(
+            fuente=fuente, id_externo=ident, expediente=expediente, organo=organo,
+            objeto=objeto, fecha_limite_presentacion=limite, **kw))
+
+    def test_une_el_anuncio_de_ted_sin_importe_con_el_catalan(self):
+        self._de_casa("C1", "Homologació de proveïdors pel servei de formació pel personal"
+                            " de l'Ens d'Abastament Ter-Llobregat en matèries recurrents i"
+                            " necessitats formatives específiques", lote_num="3")
+        self._de_casa("P1", "Tramitación del Sistema Dinámico de Adquisición para la"
+                            " homologación de proveedores de formación",
+                      fuente="placsp:agregadas", valor_estimado=1_100_000)
+        self._ted("Homologación de proveedores para el servicio de formación para el"
+                  " personal del Ens d'Abastament Ter-Llobregat en materias recurrentes y"
+                  " necesidades formativas específicas")
+        self.assertEqual(self._grupo("C1"), self._grupo("P1"), "ya compartían expediente")
+        self.assertNotEqual(self._grupo("T1"), self._grupo("C1"))
+
+        stats = db.fusionar_grupos_ted(self.con)
+        self.assertEqual(stats["por_organo"], 1)
+        self.assertEqual(stats["anuncios_fusionados"], 1)
+        self.assertEqual(self._grupo("T1"), self._grupo("C1"))
+        # Idempotente.
+        self.assertEqual(db.fusionar_grupos_ted(self.con)["anuncios_fusionados"], 0)
+
+    def test_no_une_otro_contrato_del_mismo_organo_que_cierra_el_mismo_dia(self):
+        """Medido: con solo el órgano y el día, casi la mitad de las 113 parejas eran
+        otro contrato. «Desarrollo de aplicaciones Java» contra unas obras en la sede."""
+        self._de_casa("P1", "Obras de adecuación del edificio de la sede",
+                      fuente="placsp:licitaciones")
+        self._ted("Servicios de desarrollo de aplicaciones Java")
+        antes = self._grupo("T1")
+        self.assertEqual(db.fusionar_grupos_ted(self.con)["anuncios_fusionados"], 0)
+        self.assertEqual(self._grupo("T1"), antes)
+
+    def test_no_cuenta_las_palabras_del_nombre_del_organo(self):
+        """«Soporte informático a los centros de MC MUTUAL» se unía por «mutual» con una
+        auditoría de MC Mutual que cerraba el mismo día."""
+        mutua = "Dirección General de la Mutual Midat Cyclops, Mutua Colaboradora"
+        self._de_casa("P1", "Servicio de auditoría externa de las certificaciones"
+                            " existentes en los centros de MC MUTUAL",
+                      fuente="placsp:licitaciones", organo=mutua)
+        self._ted("Servicio de Soporte Informático a los centros de MC MUTUAL.",
+                  organo=mutua)
+        self.assertEqual(db.fusionar_grupos_ted(self.con)["anuncios_fusionados"], 0)
+
+    def test_otro_organo_o_otro_dia_no_se_une(self):
+        titulo = "Homologación de proveedores de formación del personal"
+        self._de_casa("P1", titulo, fuente="placsp:licitaciones", organo="Otro órgano")
+        self._de_casa("P2", titulo, fuente="placsp:licitaciones", expediente="E2",
+                      limite="2029-05-07T13:00:00")
+        self._ted(titulo)
+        self.assertEqual(db.fusionar_grupos_ted(self.con)["anuncios_fusionados"], 0)
+
+    def test_si_dos_expedientes_se_parecen_no_elige(self):
+        titulo = "Homologación de proveedores de formación del personal"
+        self._de_casa("P1", titulo, fuente="placsp:licitaciones", expediente="E1")
+        self._de_casa("P2", titulo + " técnico", fuente="placsp:licitaciones",
+                      expediente="E2")
+        self._ted(titulo)
+        antes = self._grupo("T1")
+        stats = db.fusionar_grupos_ted(self.con)
+        self.assertEqual(stats["anuncios_fusionados"], 0)
+        self.assertEqual(stats["ambiguos_por_organo"], 1)
+        self.assertEqual(self._grupo("T1"), antes)
+
+    def test_lo_que_ya_unio_el_importe_no_se_vuelve_a_mirar(self):
+        """Solo entra lo que la primera regla ha dejado suelto."""
+        self._de_casa("P1", "Homologación de proveedores de formación",
+                      fuente="placsp:licitaciones", valor_estimado=50_000)
+        db.guardar(self.con, lic(
+            fuente="ted", id_externo="T1", expediente="T1-2026", organo=self.ATL,
+            objeto="España – Servicios – Homologación de proveedores de formación",
+            valor_estimado=50_000, fecha_limite_presentacion="2029-05-06T13:00:00"))
+        stats = db.fusionar_grupos_ted(self.con)
+        self.assertEqual((stats["anuncios_fusionados"], stats["por_organo"]), (1, 0))
+        self.assertEqual(db.parejas_ted_por_organo(self.con), ([], 0))
 
 
 if __name__ == "__main__":

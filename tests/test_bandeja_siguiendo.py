@@ -150,14 +150,16 @@ class TestContadores(Base):
         self.alta("abierta", limite=3)
         self.alta("cerrada-sin-fecha", estado="adjudicada")
 
-    def test_coincidencias_no_cuenta_lo_vencido_y_su_filtro_tampoco(self):
+    def test_sin_vencer_no_cuenta_lo_vencido_y_su_filtro_tampoco(self):
         r = consultas.resumen(self.con)
-        self.assertEqual(r["coincidencias"], 3)
+        self.assertEqual(r["sin_vencer"], 3)
         lista = consultas.bandeja(self.con, solo_vivas=False, sin_vencidas=True)
         self.assertEqual(lista["total"], 3)
         self.assertEqual(len(lista["items"]), 3)
-        # El denominador de «3 de 4» sigue siendo todo.
+        # El denominador de «3 de 4 coincidencias» es todo, y es el contador
+        # «coincidencias»: una palabra, una cifra.
         self.assertEqual(lista["total_sin_filtros"], 4)
+        self.assertEqual(r["coincidencias"], 4)
 
     def test_ocultar_sin_plazo(self):
         lista = consultas.bandeja(self.con, solo_vivas=False, con_plazo=True)

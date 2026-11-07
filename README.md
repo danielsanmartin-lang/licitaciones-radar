@@ -348,15 +348,16 @@ all count **procurement files**, not notices, just like the list.
 
 | Counter | What it is |
 |---|---|
-| abiertas (open) | passed the filter, still live and the deadline has not passed |
+| abiertas (open) | passed the filter, still live and the deadline has not passed (what publishes no deadline counts as open for 180 days after publication) |
 | cierran ≤7d (closing ≤7d) | of those, the ones that close this week |
-| coincidencias (matches) | everything that passed the filter except what is past its deadline: what can still be looked at |
+| sin vencer (not expired) | everything that passed the filter except what is past its deadline (with the same 180-day cap for what publishes no deadline): what can still be looked at |
 | sin revisar (not reviewed) | you have marked them neither Seguir (Follow), nor Descartar (Discard), nor seen |
 
 What you follow no longer has a counter here: it has its own view, **Siguiendo**
 (Following, below).
 
-Under the list it says «110 de 2.716 coincidencias» (110 of 2,716 matches) and which
+Under the list it says «110 de 2.716 coincidencias» (110 of 2,716 matches) —«coincidencias»
+is always all of them, what «ver todas» shows— and which
 filters are applied, because the triage drop-down and the **«Solo abiertas» (Open only)
 checkbox combine**: choosing «todo menos descartadas» (everything except discarded)
 without unticking the box still shows only the open ones. «Ver todas» (see all) clears
@@ -503,7 +504,8 @@ Everything the radar downloads that does **not** match your profiles. The radar 
 the whole of PLACSP — about 700,000 records including the history — and the profiles
 keep a few hundred; the rest of the IT market was sitting in the database with no way of
 seeing it. Here you can see it, organised by **topic**, chosen with multi-select chips
-(none selected means "all"). The quoted terms are matched in Spanish, as written in the
+(none selected means "all"; the first time it opens with every IT topic ticked and
+«Resto» unticked, which would otherwise be nine records out of ten). The quoted terms are matched in Spanish, as written in the
 tenders:
 
 | Topic | How it is recognised |
