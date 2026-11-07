@@ -449,10 +449,10 @@ class TestProspeccion(unittest.TestCase):
     def test_el_estado_y_la_nota_se_guardan_por_expediente(self):
         self._añadir("a", fin=self._fecha("+1 months"))
         clave = consultas.vencimientos(self.con)["items"][0]["clave"]
-        consultas.fijar_prospeccion(self.con, clave, estado="contactado")
+        consultas.fijar_prospeccion(self.con, clave, estado="siguiendo")
         consultas.fijar_prospeccion(self.con, clave, nota="Llamar a Marta en enero")
         p = consultas.vencimientos(self.con)["items"][0]["prospeccion"]
-        self.assertEqual((p["estado"], p["nota"]), ("contactado", "Llamar a Marta en enero"))
+        self.assertEqual((p["estado"], p["nota"]), ("siguiendo", "Llamar a Marta en enero"))
 
     def test_lo_descartado_en_la_prospeccion_se_cuenta_pero_no_se_lista(self):
         self._añadir("a", fin=self._fecha("+1 months"))
@@ -468,17 +468,18 @@ class TestProspeccion(unittest.TestCase):
         """Cambiar de estado justo después de escribir la nota manda las dos peticiones
         a la vez; con lectura y escritura de la fila entera, la del estado pisaba la nota."""
         consultas.fijar_prospeccion(self.con, "k", nota="Llamar en diciembre")
-        consultas.fijar_prospeccion(self.con, "k", estado="contactado")
+        consultas.fijar_prospeccion(self.con, "k", estado="siguiendo")
         self.assertEqual(consultas.fijar_prospeccion(self.con, "k"),
-                         {"clave": "k", "estado": "contactado", "nota": "Llamar en diciembre"})
+                         {"clave": "k", "estado": "siguiendo", "nota": "Llamar en diciembre"})
         consultas.fijar_prospeccion(self.con, "k", nota="  ")
         self.assertIsNone(consultas.fijar_prospeccion(self.con, "k")["nota"])
 
     def test_estado_no_valido(self):
+        for viejo in ("ganado", "contactado", "reunion"):
+            with self.assertRaises(ValueError):
+                consultas.fijar_prospeccion(self.con, "x", estado=viejo)
         with self.assertRaises(ValueError):
-            consultas.fijar_prospeccion(self.con, "x", estado="ganado")
-        with self.assertRaises(ValueError):
-            consultas.fijar_prospeccion(self.con, "", estado="contactado")
+            consultas.fijar_prospeccion(self.con, "", estado="siguiendo")
 
     def test_avisa_de_lo_que_el_organo_publico_despues(self):
         self._añadir("viejo", fin=self._fecha("+1 months"), publicada="2023-01-10")
@@ -488,14 +489,175 @@ class TestProspeccion(unittest.TestCase):
         v = consultas.vencimientos(self.con)
         self.assertEqual(v["items"][0]["renovacion"]["id"], nuevo)
 
-    def test_el_csv_lleva_los_tres_apartados(self):
-        self._añadir("futuro", fin=self._fecha("+1 months"))
+    def _hojas_excel(self, **kw) -> dict:
+        """{nombre de hoja: número de filas de datos} del Excel de Vencimientos."""
+        import io
+        import re
+        import zipfile
+        libro = zipfile.ZipFile(io.BytesIO(consultas.prospeccion_excel(self.con, **kw)))
+        nombres = re.findall(r'<sheet name="([^"]+)"', libro.read("xl/workbook.xml").decode())
+        return {n: libro.read(f"xl/worksheets/sheet{i}.xml").decode().count("<row ") - 1
+                for i, n in enumerate(nombres, start=1)}
+
+    def test_el_excel_lleva_la_ventana_elegida_y_los_otros_dos_apartados(self):
+        self._añadir("en-2-meses", fin=self._fecha("+2 months"))
+        self._añadir("en-5-meses", fin=self._fecha("+5 months"))
         self._añadir("vencido", fin=self._fecha("-1 months"))
         self._añadir("sin-fin", adjudicada=self._fecha("-1 years"))
-        columnas, filas = consultas.prospeccion_csv(self.con)
-        self.assertEqual(len(filas), 3)
-        self.assertEqual(len(columnas), len(filas[0]))
-        self.assertEqual(len({f[0] for f in filas}), 3)
+        self.assertEqual(self._hojas_excel(meses=3),
+                         {"Vencen en 3 meses": 1, "Vencidos (6 meses)": 1, "Sin fecha": 1})
+        self.assertEqual(self._hojas_excel(meses=6)["Vencen en 6 meses"], 2)
+
+    def test_el_excel_no_recorta_a_cien_ni_lleva_lo_descartado_salvo_que_se_pida(self):
+        for i in range(consultas.LIMITE_SECCION_PROSPECCION + 5):
+            self._añadir(f"sin-fin-{i}", adjudicada=self._fecha("-1 years"))
+        self.assertEqual(len(consultas.vencimientos(self.con)["sin_fecha"]),
+                         consultas.LIMITE_SECCION_PROSPECCION)
+        self.assertEqual(self._hojas_excel()["Sin fecha"],
+                         consultas.LIMITE_SECCION_PROSPECCION + 5)
+        clave = consultas.vencimientos(self.con)["sin_fecha"][0]["clave"]
+        consultas.fijar_prospeccion(self.con, clave, estado="descartado")
+        self.assertEqual(self._hojas_excel()["Sin fecha"], consultas.LIMITE_SECCION_PROSPECCION + 4)
+        self.assertEqual(self._hojas_excel(ver_descartados=True)["Sin fecha"],
+                         consultas.LIMITE_SECCION_PROSPECCION + 5)
+
+    def test_contactado_y_reunion_pasan_a_siguiendo_al_abrir_la_base(self):
+        """Vencimientos dejó de tener «Contactado» y «Reunión»: lo que estaba en marcha se
+        sigue, con su nota."""
+        self.con.execute("INSERT INTO prospeccion (clave, estado, nota, actualizado_en)"
+                         " VALUES ('a', 'contactado', 'Llamar', 'x'), ('b', 'reunion', NULL, 'x'),"
+                         " ('c', 'descartado', NULL, 'x')")
+        self.con.commit()
+        db.migrar(self.con)
+        self.assertEqual(
+            dict(self.con.execute("SELECT clave, estado FROM prospeccion").fetchall()),
+            {"a": "siguiendo", "b": "siguiendo", "c": "descartado"})
+        self.assertEqual(consultas.fijar_prospeccion(self.con, "a")["nota"], "Llamar")
+
+    def test_lo_seguido_va_a_su_grupo_de_siguiendo(self):
+        self._añadir("vence", fin=self._fecha("+2 months"))
+        self._añadir("otro", fin=self._fecha("+3 months"))
+        clave = consultas.vencimientos(self.con)["items"][0]["clave"]
+        self.assertEqual(consultas.siguiendo(self.con)["vencimientos"], [])
+        consultas.fijar_prospeccion(self.con, clave, estado="siguiendo")
+        d = consultas.siguiendo(self.con)
+        self.assertEqual([e["objeto"] for e in d["vencimientos"]], ["Concienciación vence"])
+        self.assertEqual((d["en_plazo"], d["vencidas"], d["total"]), ([], [], 1))
+        self.assertEqual(consultas.resumen(self.con)["siguiendo_en_plazo"], 1)
+
+
+class TestFechaFinEstimada(unittest.TestCase):
+    """Cuando la fuente no da con qué calcular el fin, se estima con la duración y se
+    dice cómo. Nunca pasa por publicada: `fecha_fin_prevista` sigue vacía."""
+
+    def _lic(self, **kw) -> Licitacion:
+        base = dict(fuente="prueba", id_externo="x", duracion_meses=18,
+                    adjudicatario="Incumbente SL", fecha_publicacion="2024-06-11")
+        base.update(kw)
+        return Licitacion(**base)
+
+    def test_con_fecha_publicada_no_se_estima(self):
+        l = self._lic(fecha_adjudicacion="2024-07-01", fecha_formalizacion="2024-08-01")
+        self.assertEqual(l.fecha_fin_prevista, "2026-01-01")
+        self.assertEqual((l.fecha_fin_estimada, l.fin_origen, l.fin_base), (None, None, None))
+
+    def test_formalizacion_antes_que_anuncio_de_adjudicacion(self):
+        l = self._lic(fecha_formalizacion="2024-08-01", fecha_anuncio_adjudicacion="2024-07-20")
+        self.assertIsNone(l.fecha_fin_prevista)
+        self.assertEqual((l.fecha_fin_estimada, l.fin_origen, l.fin_base),
+                         ("2026-02-01", "estimada", "formalizacion:2024-08-01"))
+
+    def test_anuncio_de_adjudicacion(self):
+        l = self._lic(fecha_anuncio_adjudicacion="2024-07-20")
+        self.assertEqual((l.fecha_fin_estimada, l.fin_origen, l.fin_base),
+                         ("2026-01-20", "estimada", "anuncio_adjudicacion:2024-07-20"))
+
+    def test_publicacion_solo_si_ya_hay_adjudicatario(self):
+        l = self._lic()
+        self.assertEqual((l.fecha_fin_estimada, l.fin_origen, l.fin_base),
+                         ("2025-12-11", "aproximada", "publicacion:2024-06-11"))
+        # Una licitación todavía abierta no tiene contrato que venza.
+        self.assertIsNone(self._lic(adjudicatario=None).fecha_fin_estimada)
+
+    def test_una_duracion_imposible_no_tumba_la_ficha(self):
+        """Una entrada real de 2025 traía 120.000 meses: sumar daba el año 12025 y la
+        ficha entera se saltaba por ilegible."""
+        l = self._lic(duracion_meses=120_000, fecha_formalizacion="2025-01-01")
+        self.assertEqual((l.fecha_fin_estimada, l.fin_origen), (None, None))
+
+    def test_sin_duracion_no_se_estima(self):
+        l = self._lic(duracion_meses=None, fecha_formalizacion="2024-08-01")
+        self.assertEqual((l.fecha_fin_estimada, l.fin_origen, l.fin_base), (None, None, None))
+
+    def test_la_estimacion_no_cambia_la_huella(self):
+        """Si cambiara, la primera ingesta tras actualizar daría por modificadas cientos de
+        miles de licitaciones y re-evaluaría todos los perfiles."""
+        sin = self._lic()
+        con = self._lic(fecha_formalizacion="2024-08-01", fecha_anuncio_adjudicacion="2024-07-20")
+        self.assertEqual(sin.huella(), con.huella())
+
+    def test_releer_lo_ya_guardado_rellena_la_estimacion(self):
+        """Lo que permite rellenarla volviendo a leer los ficheros descargados: la huella
+        es la misma, así que es «igual», pero las columnas de la estimación se escriben."""
+        with tempfile.TemporaryDirectory() as d:
+            con = db.conectar(Path(d) / "t.db")
+            self.assertEqual(db.guardar(con, self._lic()), "nueva")
+            self.assertEqual(db.guardar(con, self._lic(fecha_formalizacion="2024-08-01")), "igual")
+            fila = con.execute("SELECT fecha_fin_estimada, fin_origen, fecha_fin_prevista,"
+                               " fecha_formalizacion FROM licitaciones").fetchone()
+            self.assertEqual(tuple(fila), ("2026-02-01", "estimada", None, "2024-08-01T00:00:00"))
+            con.close()
+
+    def test_la_busqueda_calcula_la_estimada_de_lo_que_ya_habia(self):
+        with tempfile.TemporaryDirectory() as d:
+            con = db.conectar(Path(d) / "t.db")
+            db.guardar(con, self._lic())
+            con.execute("UPDATE licitaciones SET fecha_fin_estimada = NULL, fin_origen = NULL")
+            db.escribir_preferencia(con, "version_fin_estimado", "0")
+            con.commit()
+            db.migrar(con)  # al abrir no se toca: va con la búsqueda
+            self.assertIsNone(con.execute("SELECT fecha_fin_estimada FROM licitaciones")
+                              .fetchone()[0])
+            self.assertEqual(db.rellenar_fin_estimado_si_toca(con), 1)
+            self.assertIsNone(db.rellenar_fin_estimado_si_toca(con))
+            self.assertEqual(
+                tuple(con.execute("SELECT fecha_fin_estimada, fin_origen FROM licitaciones")
+                      .fetchone()), ("2025-12-11", "aproximada"))
+            con.close()
+
+    def test_releer_un_zip_viejo_solo_completa_las_fechas_y_no_pisa_nada_mas(self):
+        """`ingest --backfill` guarda la ficha entera, y el ZIP anual puede traer una
+        versión anterior a la guardada. Para estimar solo hacen falta dos fechas."""
+        with tempfile.TemporaryDirectory() as d:
+            con = db.conectar(Path(d) / "t.db")
+            db.guardar(con, self._lic(estado="adjudicada", fecha_anuncio_adjudicacion="2024-07-20"))
+            vieja = self._lic(estado="publicada", adjudicatario=None,
+                              fecha_formalizacion="2024-08-01")
+            self.assertEqual(db.completar_fechas_para_estimar(con, [vieja]), 1)
+            db.rellenar_fin_estimado(con)
+            fila = con.execute("SELECT estado, adjudicatario, fecha_formalizacion,"
+                               " fecha_anuncio_adjudicacion, fin_origen FROM licitaciones"
+                               ).fetchone()
+            self.assertEqual(tuple(fila), ("adjudicada", "Incumbente SL", "2024-08-01T00:00:00",
+                                           "2024-07-20T00:00:00", "estimada"))
+            con.close()
+
+    def test_vencimientos_prefiere_la_publicada_y_explica_la_estimada(self):
+        with tempfile.TemporaryDirectory() as d:
+            con = db.conectar(Path(d) / "t.db")
+            hoy = date.today()
+            formalizada = date(hoy.year - 1, hoy.month, 1).isoformat()
+            db.guardar(con, self._lic(id_externo="est", expediente="E", organo="O",
+                                      fecha_publicacion=formalizada,
+                                      fecha_formalizacion=formalizada, duracion_meses=14))
+            lic = con.execute("SELECT id FROM licitaciones").fetchone()[0]
+            con.execute("INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo,"
+                        " creado_en) VALUES (?, 'p', 3.0, 'm', ?)", (lic, db.ahora()))
+            con.commit()
+            e = consultas.vencimientos(con, meses=6)["items"][0]
+            self.assertEqual(e["fin_origen"], "estimada")
+            self.assertTrue(consultas.explicar_fin(e).startswith("Formalización del contrato ("))
+            con.close()
 
 
 if __name__ == "__main__":

@@ -171,19 +171,14 @@ function query(extra = {}) {
 
 // --- Qué cubre y qué no ----------------------------------------------------
 //
-// Los límites de la herramienta, siempre a mano y plegados. Las cifras salen del dato y
-// no escritas a mano —si TED empezara a publicar región, el número baja solo—; el resto
-// es prosa fija porque no depende de la base. Ningún porcentaje cableado aquí: eso
-// envejece en silencio y acaba mintiendo.
-const COBERTURA_ABIERTA = 'cobertura-abierta';
-
+// Los límites de la herramienta, en su vista al pie de la barra lateral. Las cifras salen
+// del dato y no escritas a mano —si TED empezara a publicar región, el número baja
+// solo—; el resto es prosa fija porque no depende de la base. Ningún porcentaje cableado
+// aquí: eso envejece en silencio y acaba mintiendo.
 function pintarCobertura(c) {
   if (!c) return;
-  const caja = $('cobertura');
   const sinCom = c.sin_comunidad.toLocaleString('es-ES');
   const total = c.expedientes.toLocaleString('es-ES');
-  $('cobertura-resumen').textContent =
-    `Qué cubre y qué no este radar · ${sinCom} de ${total} expedientes sin comunidad`;
 
   const desde = {};
   for (const f of c.fuentes || []) desde[f.fuente] = f.desde;
@@ -217,20 +212,6 @@ function pintarCobertura(c) {
     li.querySelector('b').textContent = fuerte;
     li.querySelector('span').textContent = resto;
     lista.appendChild(li);
-  }
-
-  // Se pinta una vez y se recuerda cómo lo dejaste. El listener se pone solo la primera
-  // vez: `cargarResumen()` corre cada 12 s durante una búsqueda y si no, se acumularían.
-  if (!caja.dataset.listo) {
-    try {
-      caja.open = localStorage.getItem(COBERTURA_ABIERTA) === '1';
-    } catch { /* sin almacén, plegado y ya está */ }
-    caja.addEventListener('toggle', () => {
-      try {
-        localStorage.setItem(COBERTURA_ABIERTA, caja.open ? '1' : '0');
-      } catch { /* nada que hacer: se plegará al recargar */ }
-    });
-    caja.dataset.listo = '1';
   }
 }
 
@@ -2104,13 +2085,16 @@ let perfilVencimiento = '';
 
 // --- Siguiendo -----------------------------------------------------------------
 //
-// Lo que sigues y lo presentado, en dos grupos. Las tarjetas son las de la Bandeja: abren
-// la misma ficha, y «ganó X» ya sale cuando el expediente está adjudicado.
+// Lo que sigues y lo presentado, en tres grupos. Las de los dos primeros son tarjetas de la
+// Bandeja: abren la misma ficha, y «ganó X» ya sale cuando el expediente está adjudicado.
+// El tercero son los contratos que sigues desde Vencimientos, con su tarjeta de allí.
 async function cargarSiguiendo() {
   const carga = empezarCarga('siguiendo-en-plazo');
   $('siguiendo-vencidas').textContent = '';
+  $('siguiendo-vencimientos').textContent = '';
   $('siguiendo-n-plazo').textContent = '';
   $('siguiendo-n-vencidas').textContent = '';
+  $('siguiendo-n-vencimientos').textContent = '';
   let d;
   try {
     d = await pedirJSON('/api/siguiendo');
@@ -2125,6 +2109,22 @@ async function cargarSiguiendo() {
     'Nada de lo que sigues está en plazo ahora mismo.', false);
   pintarGrupoSiguiendo('siguiendo-vencidas', 'siguiendo-n-vencidas', d.vencidas,
     'Todavía no se ha cerrado nada de lo que sigues.', true);
+  const contratos = d.vencimientos || [];
+  $('siguiendo-n-vencimientos').textContent =
+    contratos.length ? contratos.length.toLocaleString('es-ES') : '';
+  const lista = $('siguiendo-vencimientos');
+  if (!contratos.length) {
+    lista.appendChild(crear('p', 'vacio',
+      'Ningún contrato. Pulsa «Seguir» en una tarjeta de Vencimientos para traerlo aquí.'));
+  }
+  for (const it of contratos) lista.appendChild(tarjetaProspecto(it, tipoProspecto(it)));
+}
+
+// El apartado de una tarjeta de prospección suelta, por sus días: lo que hace falta en
+// Siguiendo, donde se mezclan los que vencen, los vencidos y los que no tienen fecha.
+function tipoProspecto(it) {
+  if (it.dias_para_vencer == null) return 'sin-fecha';
+  return it.dias_para_vencer < 0 ? 'vencido' : 'vence';
 }
 
 function pintarGrupoSiguiendo(idLista, idCifra, items, vacio, cerradas) {
@@ -2167,7 +2167,8 @@ async function cargarVencimientos() {
     for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
     return p.toString();
   };
-  $('vencimientos-exportar').href = '/api/prospeccion.csv?' + params();
+  $('vencimientos-exportar').href = '/api/vencimientos.xlsx?' + params({
+    descartados: $('vencimientos-descartados').checked ? '1' : '' });
 
   const cont = $('lista-vencimientos');
   let d;
@@ -2230,9 +2231,10 @@ async function cargarVencimientos() {
     'Ya han acabado. Si el órgano no ha publicado todavía la renovación, es el momento ' +
     'de llamar: o la está preparando, o ha prorrogado.', 'vencido');
   pintarApartadoProspeccion('prospeccion-sin-fecha', d.sin_fecha, d.sin_fecha_total,
-    'Sin fecha de fin publicada',
-    `Adjudicados en los últimos ${d.anios_sin_fecha} años cuya fuente no dice cuándo ` +
-    'acaban. No se inventa la fecha: van de la adjudicación más antigua a la más reciente.',
+    'Sin fecha de fin',
+    `Adjudicados en los últimos ${d.anios_sin_fecha} años de los que no se puede ni ` +
+    'estimar cuándo acaban, porque la fuente no publica la duración del contrato. No se ' +
+    'inventa: van de la adjudicación más antigua a la más reciente.',
     'sin-fecha');
 }
 
@@ -2258,16 +2260,49 @@ function pintarApartadoProspeccion(idCaja, items, total, titulo, pista, tipo) {
   caja.querySelector('.apartado-titulo').textContent =
     `${titulo} · ${total.toLocaleString('es-ES')}`;
   caja.querySelector('.apartado-pista').textContent =
-    pista + (total > items.length ? ` Salen los ${items.length} primeros; el CSV los lleva todos.` : '');
+    pista + (total > items.length ? ` Salen los ${items.length} primeros; el Excel los lleva todos.` : '');
   for (const it of items) lista.appendChild(tarjetaProspecto(it, tipo));
 }
 
+// «Seguir» lleva el contrato a Siguiendo, a su grupo «Vencimientos que sigues».
 const ESTADOS_PROSPECCION = [
   ['pendiente', 'Pendiente'],
-  ['contactado', 'Contactado'],
-  ['reunion', 'Reunión'],
-  ['descartado', 'Descartado'],
+  ['siguiendo', 'Seguir'],
+  ['descartado', 'Descartar'],
 ];
+
+// De dónde sale una fecha de fin que no publica la fuente. `fin_base` llega como
+// «formalizacion:2025-12-31». Para la publicada no hay nada que explicar: null.
+const BASE_FIN = {
+  formalizacion: ['formalización', 'Se formalizó el contrato el'],
+  anuncio_adjudicacion: ['anuncio de adjudicación', 'Se publicó la adjudicación el'],
+  publicacion: ['publicación', 'Se publicó la licitación el'],
+};
+function explicacionFin(it) {
+  if (!it.fin_origen || it.fin_origen === 'publicada' || !it.fin_base) return null;
+  const [tipo, fecha] = it.fin_base.split(':');
+  const [corto, largo] = BASE_FIN[tipo] || [tipo, 'Fecha de partida:'];
+  const meses = it.duracion_meses ? Math.round(it.duracion_meses) : null;
+  const duracion = meses ? ` + ${meses} ${meses === 1 ? 'mes' : 'meses'}` : '';
+  const aproximada = it.fin_origen === 'aproximada';
+  return {
+    aproximada,
+    corto: `${aproximada ? 'aproximada' : 'estimada'} · ${corto}${duracion}`,
+    largo: `Fecha ${aproximada ? 'aproximada' : 'estimada'}: la fuente no publica cuándo ` +
+      `acaba. ${largo} ${fmtFecha(fecha)} y la duración publicada es de ${meses || '?'} ` +
+      `${meses === 1 ? 'mes' : 'meses'}.` +
+      (aproximada ? ' Tiende a adelantarse a la real, porque la adjudicación suele llegar ' +
+        '2–6 meses después de publicar la licitación.' : ''),
+  };
+}
+
+// La píldora que dice que una fecha de fin es estimada y por qué. Null si es publicada.
+function pildoraOrigenFin(it) {
+  const e = explicacionFin(it);
+  if (!e) return null;
+  return pildora(e.corto, { clase: e.aproximada ? 'fin-estimado fin-aproximado' : 'fin-estimado',
+                            titulo: e.largo });
+}
 
 // Una tarjeta de la prospección: el contrato, su incumbente y, debajo, en qué punto está
 // la llamada. `tipo` es el apartado: «vence», «vencido» o «sin-fecha».
@@ -2308,14 +2343,19 @@ function tarjetaProspecto(it, tipo) {
     : document.createTextNode('no publicado'));
   meta.appendChild(incumbente);
   meta.appendChild(pildora(fmtImporte(it.importe), { clase: 'importe' }));
-  if (it.fecha_fin_prevista) {
+  if (it.fecha_fin) {
     meta.appendChild(pildora(`${tipo === 'vencido' ? 'venció' : 'vence'} ` +
-                             fmtFecha(it.fecha_fin_prevista), { ico: 'ico-calendario' }));
+                             fmtFecha(it.fecha_fin), { ico: 'ico-calendario' }));
+    const origen = pildoraOrigenFin(it);
+    if (origen) meta.appendChild(origen);
   } else if (it.fecha_adjudicacion) {
     meta.appendChild(pildora(`adjudicada ${fmtFecha(it.fecha_adjudicacion)}`,
                              { ico: 'ico-calendario' }));
   }
-  if (it.duracion_meses) meta.appendChild(pildora(`contrato de ${Math.round(it.duracion_meses)} meses`));
+  // Si la fecha es estimada, la duración ya va en su píldora.
+  if (it.duracion_meses && !explicacionFin(it)) {
+    meta.appendChild(pildora(`contrato de ${Math.round(it.duracion_meses)} meses`));
+  }
   for (const perfil of (it.perfil || '').split(',').filter(Boolean)) {
     meta.appendChild(pildora(perfil, { clase: 'perfil' }));
   }
@@ -2342,6 +2382,14 @@ function tarjetaProspecto(it, tipo) {
     b.setAttribute('aria-pressed', String(valor === p.estado));
     b.addEventListener('click', async () => {
       if (await guardarProspeccion(it.clave, { estado: valor })) {
+        // Seguir o dejar de seguir cambia el número de «Siguiendo» en la barra lateral.
+        if (valor === 'siguiendo' || p.estado === 'siguiendo') cargarResumen();
+        p.estado = valor;
+        // En Siguiendo, dejar de seguir la saca de su grupo.
+        if (vistaActual === 'siguiendo') {
+          if (valor !== 'siguiendo') cargarSiguiendo();
+          return;
+        }
         // Descartar la saca de la lista; lo demás solo cambia la tarjeta.
         if (valor === 'descartado' && !$('vencimientos-descartados').checked) {
           cargarVencimientos();
@@ -2644,7 +2692,9 @@ function bloqueVencen(d, ambito, pregunta, conOrgano = false) {
   for (const v of d.vencen.slice(0, 20)) {
     const fila = crear('div', 'fila-ficha');
     fila.appendChild(enlaceTexto(v.objeto || '(sin objeto)', v.id));
-    fila.appendChild(crear('span', 'cifra', `vence ${fmtFecha(v.fecha_fin_prevista)}`));
+    fila.appendChild(crear('span', 'cifra', `vence ${fmtFecha(v.fecha_fin)}`));
+    const origen = pildoraOrigenFin(v);
+    if (origen) fila.appendChild(origen);
     const det = crear('span', 'detalle');
     det.appendChild(document.createTextNode(`${fmtImporte(v.importe)} · `));
     det.appendChild(enlaceFicha(v.adjudicatario, 'competidor', v.adjudicatario, ambito));
@@ -3048,7 +3098,7 @@ let vistaActual = 'bandeja';
 
 // El orden de la barra lateral, que es también el de los atajos ⌘1…⌘9.
 const VISTAS = ['bandeja', 'resumen', 'otras', 'siguiendo', 'vencimientos', 'adjudicatarios',
-                'organismos', 'analitica', 'ajustes', 'versiones'];
+                'organismos', 'analitica', 'ajustes', 'cobertura', 'versiones'];
 // Las fichas: vistas sin entrada en la barra lateral, a las que se llega desde un nombre.
 // Mientras se mira una, la barra lateral resalta la lista de la que es.
 const VISTAS_DETALLE = { organismo: 'organismos', competidor: 'adjudicatarios' };
@@ -3191,8 +3241,10 @@ async function abrirPanel(id) {
     ['Órgano', d.organo],
     ['Expediente', d.expediente],
     ['Importe', fmtImporte(d.importe_referencia)],
-    ['Fin de plazo', fmtFecha(d.fecha_limite_presentacion)],
-    ['Publicada', fmtFecha(d.fecha_publicacion)],
+    // Sin fecha, fuera: `fmtFecha` devuelve «—» y el filtro de abajo no lo quitaba, así
+    // que un contrato adjudicado enseñaba «Fin de plazo —».
+    ['Fin de plazo', d.fecha_limite_presentacion ? fmtFecha(d.fecha_limite_presentacion) : ''],
+    ['Publicada', d.fecha_publicacion ? fmtFecha(d.fecha_publicacion) : ''],
     ['Estado', d.estado],
     ['Procedimiento', d.procedimiento],
     ['Tipo', d.tipo_contrato],
@@ -3201,12 +3253,26 @@ async function abrirPanel(id) {
     ['Temática', (d.categorias || []).map(nombreTema).join(' · ')],
     ['Fuente', d.fuente],
     ['Adjudicatario', d.adjudicatario],
+    // «Importe» es el de referencia (valor estimado o presupuesto); el adjudicado es el
+    // que enseñan las tarjetas de Vencimientos, y sin él las dos cifras no cuadraban.
+    ['Importe adjudicado', d.importe_adjudicacion ? fmtImporte(d.importe_adjudicacion) : ''],
+    // Cuándo acaba el contrato adjudicado: lo que mira Vencimientos. Si la fuente no lo
+    // publica y se ha estimado, la etiqueta lo dice (ver `explicacionFin`).
+    ['Fin del contrato', (d.fecha_fin_prevista || d.fecha_fin_estimada)
+      ? fmtFecha(d.fecha_fin_prevista || d.fecha_fin_estimada) : ''],
+    ['Duración', d.duracion_meses ? `${Math.round(d.duracion_meses)} meses` : ''],
   ].filter(([, v]) => v);
+  const finFicha = { fin_origen: d.fin_origen, fin_base: d.fin_base, duracion_meses: d.duracion_meses };
 
   const cont = $('panel-contenido');
   cont.dataset.id = id;
   cont.innerHTML = `
     <h2></h2>
+    <div class="panel-copiar">
+      <button class="boton-sec" id="p-copiar" title="Copia la ficha con formato, para pegarla en Slack o en un correo">
+        <svg class="ico" aria-hidden="true"><use href="#ico-copiar"/></svg>Copiar ficha</button>
+      <span id="p-copiado" class="guardado"></span>
+    </div>
     <dl>${campos.map(([k]) => `<div class="campo"><dt>${k}</dt><dd data-c="${k}"></dd></div>`).join('')}</dl>
     <h4>Por qué ha entrado</h4>
     <div class="motivo" id="p-motivo"></div>
@@ -3229,11 +3295,21 @@ async function abrirPanel(id) {
     // tiene algo que contar. Desde la ficha se puede cambiar.
     if (k === 'Órgano') dd.appendChild(enlaceFicha(v, 'organismo', v, ambitoFicha));
     else if (k === 'Adjudicatario') dd.appendChild(enlaceFicha(v, 'competidor', v, ambitoFicha));
-    else dd.textContent = v;
+    else if (k === 'Fin del contrato') {
+      dd.textContent = v + ' ';
+      const origen = pildoraOrigenFin(finFicha);
+      if (origen) dd.appendChild(origen);
+    } else dd.textContent = v;
   }
+  $('p-copiar').addEventListener('click', async () => {
+    const ficha = fichaParaCopiar(d, campos, finFicha);
+    const ok = await copiarAlPortapapeles(ficha.html, ficha.texto);
+    $('p-copiado').textContent = ok ? 'copiada' : 'no se ha podido copiar';
+    setTimeout(() => ($('p-copiado').textContent = ''), 1800);
+  });
   const temas = (d.categorias || []).filter((c) => !TEMAS.resto || c !== TEMAS.resto.clave);
   $('p-motivo').textContent = d.motivo
-    ? (d.perfil ? `${d.perfil.split(',').join(' · ')} — ${d.motivo}` : d.motivo)
+    ? (d.perfil ? `${d.perfil.split(' + ').join(' · ')} — ${d.motivo}` : d.motivo)
     : temas.length
       ? 'No casa con ningún perfil activo: está en «Otras licitaciones» por su ' +
         `temática (${temas.map(nombreTema).join(' · ')}).`
@@ -3322,6 +3398,95 @@ async function abrirPanel(id) {
   ).join('') || '<li>Solo se ha visto una versión.</li>';
 
   abrirCajon();
+}
+
+// --- Copiar la ficha ---------------------------------------------------------
+//
+// Para pegar una licitación en Slack o en un correo con un clic: el título, los mismos
+// campos que enseña la ficha, la descripción y los enlaces. Sin «Por qué ha entrado», el
+// triaje, las notas ni el historial: eso es trabajo interno, no información del pliego.
+// Va en HTML —Slack lo pega con negritas, viñetas y enlaces— y en texto plano para donde
+// no se admita formato.
+
+const LARGO_DESCRIPCION_COPIADA = 400;
+
+function escaparHTML(texto) {
+  return String(texto).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fichaParaCopiar(d, campos, finFicha) {
+  const titulo = d.objeto || '(sin objeto)';
+  const filas = campos.map(([k, v]) => {
+    const e = k === 'Fin del contrato' ? explicacionFin(finFicha) : null;
+    return [k, e ? `${v} (${e.corto})` : v];
+  });
+  let descripcion = (d.descripcion || '').replace(/\s+/g, ' ').trim();
+  if (descripcion.length > LARGO_DESCRIPCION_COPIADA) {
+    descripcion = descripcion.slice(0, LARGO_DESCRIPCION_COPIADA).replace(/\s+\S*$/, '') + '…';
+  }
+  const enlaces = [];
+  if (d.url_detalle) enlaces.push(['Ficha en la plataforma oficial', d.url_detalle]);
+  (d.urls_pliegos || []).forEach((u, i) => enlaces.push([`Pliego / documento ${i + 1}`, u]));
+
+  const texto = [
+    `*${titulo}*`,
+    ...filas.map(([k, v]) => `• ${k}: ${v}`),
+    ...(descripcion ? ['', descripcion] : []),
+    ...(enlaces.length ? ['', ...enlaces.map(([t, u]) => `• ${t}: ${u}`)] : []),
+  ].join('\n');
+  const html =
+    `<p><b>${escaparHTML(titulo)}</b></p>` +
+    `<ul>${filas.map(([k, v]) => `<li><b>${escaparHTML(k)}:</b> ${escaparHTML(v)}</li>`).join('')}</ul>` +
+    (descripcion ? `<p>${escaparHTML(descripcion)}</p>` : '') +
+    (enlaces.length
+      ? `<ul>${enlaces.map(([t, u]) =>
+          `<li><a href="${escaparHTML(u)}">${escaparHTML(t)}</a></li>`).join('')}</ul>`
+      : '');
+  return { html, texto };
+}
+
+// Al portapapeles, con formato. Primero por el evento `copy`: dentro del clic, de forma
+// síncrona, deja poner a la vez el HTML y el texto plano exactos, y funciona igual en el
+// navegador y en la vista web de la app de Mac. Copiar una selección de la página —lo
+// que se hacía antes como último recurso— se llevaba los estilos calculados, y en el
+// tema oscuro el texto pegado en un correo salía casi blanco. Si el evento no llega, se
+// prueba la API del portapapeles.
+async function copiarAlPortapapeles(html, texto) {
+  // Algo seleccionado hace falta para que WebKit dispare `copy`; el contenido da igual,
+  // porque el manejador lo sustituye.
+  const ancla = document.createElement('textarea');
+  ancla.className = 'copia-oculta';
+  ancla.value = texto;
+  document.body.appendChild(ancla);
+  ancla.select();
+  let puesto = false;
+  const alCopiar = (ev) => {
+    ev.clipboardData.setData('text/html', html);
+    ev.clipboardData.setData('text/plain', texto);
+    ev.preventDefault();
+    puesto = true;
+  };
+  document.addEventListener('copy', alCopiar);
+  try { document.execCommand('copy'); } catch { /* se prueba lo siguiente */ }
+  document.removeEventListener('copy', alCopiar);
+  ancla.remove();
+  if (puesto) return true;
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([texto], { type: 'text/plain' }),
+      })]);
+      return true;
+    }
+  } catch { /* se prueba lo siguiente */ }
+  try {
+    await navigator.clipboard.writeText(texto);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // --- Consulta previa ↔ licitación ------------------------------------------

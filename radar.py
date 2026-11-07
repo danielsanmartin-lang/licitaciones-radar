@@ -68,6 +68,12 @@ def cmd_ingest(args) -> int:
     if not db.hay_indice(con_registro, db.INDICE_CONSULTAS):
         progreso.imprimir("Preparando un índice nuevo de la base (una sola vez, unos segundos)…")
         db.crear_indices_diferidos(con_registro)
+    # Lo mismo: las fechas de fin estimadas de lo que ya estaba guardado (ver
+    # `db.VERSION_FIN_ESTIMADO`). Lo que entra a partir de ahora ya llega con la suya.
+    if db.leer_preferencia(con_registro, "version_fin_estimado") != db.VERSION_FIN_ESTIMADO:
+        progreso.imprimir("Estimando las fechas de fin que no publican las fuentes "
+                          "(una sola vez, menos de un minuto)…")
+        db.rellenar_fin_estimado_si_toca(con_registro)
     registro = db.abrir_busqueda(con_registro, primera_carga=args.primera_carga)
     codigo = 1
     try:
@@ -348,6 +354,8 @@ def cmd_export(args) -> int:
 
 def cmd_vencimientos(args) -> int:
     con = db.conectar(args.bd)
+    if args.estimar:
+        return _estimar_fechas_de_fin(con, args.estimar)
     v = consultas.vencimientos(con, meses=args.meses, limite=args.limite)
     if not v["items"]:
         print(f"Nada vence en los próximos {args.meses} meses.")
@@ -357,13 +365,63 @@ def cmd_vencimientos(args) -> int:
     print(f"Contratos que vencen en los próximos {args.meses} meses ({v['total']} en total)\n")
     for it in v["items"]:
         imp = f"{it['importe']:,.0f} €" if it["importe"] else "s/i"
-        print(f"  {it['fecha_fin_prevista'][:10]}  ({it['dias_para_vencer']:>4} d)  {imp:>14}  "
+        marca = {"estimada": " ~", "aproximada": " ≈"}.get(it["fin_origen"], "  ")
+        print(f"  {it['fecha_fin'][:10]}{marca}({it['dias_para_vencer']:>4} d)  {imp:>14}  "
               f"{(it['objeto'] or '')[:58]}")
         print(f"{'':16}incumbente: {(it['adjudicatario'] or '(no publicado)')[:60]}")
         print(f"{'':16}{(it['organo'] or '')[:70]}")
-    print("\nSolo aparecen los que publican fecha de fin o duración; si la fuente no")
-    print("la da, la licitación no se lista en lugar de estimarla a ojo.")
+    print("\n~ fecha estimada (formalización o anuncio de adjudicación + duración)")
+    print("≈ fecha aproximada (publicación + duración: se adelanta a la real)")
+    print("Sin duración publicada no hay estimación y la licitación no se lista.")
     return 0
+
+
+def _estimar_fechas_de_fin(con, anios_txt: list[str]) -> int:
+    """Relee los ZIP anuales de plataformas agregadas para sacar la formalización y el
+    anuncio de adjudicación de lo ya guardado, y recalcula las fechas de fin estimadas.
+
+    Hace falta una vez por base: lo que entra a partir de ahora ya llega con esas fechas.
+    No toca ningún otro campo (ver `db.completar_fechas_para_estimar`).
+    """
+    from radar import busqueda
+    from radar.sources.placsp import FuentePLACSP
+
+    try:
+        anios = sorted({int(a) for t in anios_txt for a in t.split(",") if a.strip()})
+    except ValueError:
+        print("Los años van como números: --estimar 2024,2025,2026", file=sys.stderr)
+        return 2
+    if not busqueda.adquirir("cli"):
+        print("Hay una búsqueda en marcha; espera a que termine.", file=sys.stderr)
+        return 1
+    try:
+        fuente = FuentePLACSP("agregadas")
+        for anio in anios:
+            n = 0
+            for lote in _en_lotes(fuente.historico(anio), 2000):
+                n += db.completar_fechas_para_estimar(con, lote)
+                con.commit()
+            print(f"  {anio}: {n:,} fichas con fecha de formalización o de adjudicación".replace(",", "."))
+        filas = db.rellenar_fin_estimado(con)
+        db.escribir_preferencia(con, "version_fin_estimado", db.VERSION_FIN_ESTIMADO)
+        con.commit()
+    finally:
+        busqueda.liberar()
+    sin = consultas.vencimientos(con)["sin_fecha_total"]
+    print(f"Fechas de fin recalculadas ({filas:,} filas). ".replace(",", ".")
+          + f"Quedan {sin} expedientes sin fecha en Vencimientos.")
+    return 0
+
+
+def _en_lotes(iterable, tam: int):
+    lote = []
+    for x in iterable:
+        lote.append(x)
+        if len(lote) >= tam:
+            yield lote
+            lote = []
+    if lote:
+        yield lote
 
 
 def cmd_adjudicatarios(args) -> int:
@@ -616,6 +674,9 @@ def main(argv=None) -> int:
     s = sub.add_parser("vencimientos", help="contratos adjudicados que vencen pronto")
     s.add_argument("--meses", type=int, default=6)
     s.add_argument("--limite", type=int, default=200)
+    s.add_argument("--estimar", action="append", metavar="AÑO",
+                   help="relee los ZIP de plataformas agregadas de esos años (p.ej. "
+                        "2024,2025,2026) para estimar el fin de lo ya guardado. Una vez")
     s.set_defaults(func=cmd_vencimientos)
 
     # `competencia` era el nombre anterior de la pestaña y del comando. Se mantiene

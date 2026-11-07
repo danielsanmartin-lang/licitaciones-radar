@@ -406,5 +406,34 @@ class TestCaducidadDelZipDelAnioEnCurso(unittest.TestCase):
         self.assertEqual(bajar.call_count, 1)
 
 
+class TestDondeVaLaCache(unittest.TestCase):
+    def test_los_zip_van_a_la_cache_de_los_datos_y_no_junto_al_codigo(self):
+        """En la app empaquetada el código vive dentro del .app: los ZIP anuales acababan
+        dentro del bundle y el diagnóstico los buscaba en otro sitio."""
+        from radar import rutas
+        self.assertEqual(FuentePLACSP("agregadas").dir_cache, rutas.CACHE)
+
+
+class TestAgregadas(unittest.TestCase):
+    """El feed de plataformas agregadas no publica NUNCA la fecha de adjudicación (0 de
+    144.819 adjudicaciones en la base). Sin ella no hay `fecha_fin_prevista`; con la
+    formalización del contrato y la duración, sí una estimada. Entrada real de 2025."""
+
+    @classmethod
+    def setUpClass(cls):
+        datos = (FIXTURES / "placsp_agregadas_muestra.atom").read_bytes()
+        cls.lic = parsear_atom(datos, "agregadas")[0][0]
+
+    def test_no_trae_adjudicacion_pero_si_formalizacion_y_anuncio(self):
+        self.assertIsNone(self.lic.fecha_adjudicacion)
+        self.assertEqual(self.lic.fecha_formalizacion, "2025-12-31T00:00:00")
+        self.assertEqual(self.lic.fecha_anuncio_adjudicacion, "2025-12-04T00:00:00")
+
+    def test_la_fecha_de_fin_es_estimada_desde_la_formalizacion(self):
+        self.assertIsNone(self.lic.fecha_fin_prevista)
+        self.assertEqual((self.lic.fecha_fin_estimada, self.lic.fin_origen, self.lic.fin_base),
+                         ("2028-12-31", "estimada", "formalizacion:2025-12-31"))
+
+
 if __name__ == "__main__":
     unittest.main()

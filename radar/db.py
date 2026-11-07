@@ -67,6 +67,12 @@ CREATE TABLE IF NOT EXISTS licitaciones (
     fecha_inicio_ejecucion    TEXT,
     fecha_fin_prevista        TEXT,
     clave_grupo               TEXT,
+    -- Para estimar el fin cuando la fuente no da con qué calcularlo. Ver COLUMNAS_NUEVAS.
+    fecha_formalizacion       TEXT,
+    fecha_anuncio_adjudicacion TEXT,
+    fecha_fin_estimada        TEXT,
+    fin_origen                TEXT,
+    fin_base                  TEXT,
     raw                       TEXT,
     huella                    TEXT NOT NULL,
     -- Huella con la que se evaluaron los perfiles la última vez. Ver COLUMNAS_NUEVAS.
@@ -288,6 +294,14 @@ COLUMNAS_NUEVAS = {
         # columna, cada ingesta diaria reevaluaba las 673.755 filas de la base —39 s de
         # Python— y emitía 2,7 millones de DELETE contra una tabla `matches` de 3.705.
         ("huella_evaluada", "TEXT"),
+        # La fecha de fin estimada cuando la fuente no da con qué calcularla, y con qué se
+        # ha estimado. Ver `model.fin_estimado`. Va aparte de `fecha_fin_prevista` para
+        # que una fecha estimada no pase nunca por publicada.
+        ("fecha_formalizacion", "TEXT"),
+        ("fecha_anuncio_adjudicacion", "TEXT"),
+        ("fecha_fin_estimada", "TEXT"),
+        ("fin_origen", "TEXT"),
+        ("fin_base", "TEXT"),
     ],
     "revisiones": [
         ("motivo_descarte", "TEXT"),
@@ -361,6 +375,73 @@ VERSION_TEXTO_NORM = "1"
 # porque son dos columnas con dos contenidos distintos: compartir marcador obligaría a
 # recalcular las dos cada vez que cambiara cualquiera de ellas, y son 686.302 filas.
 VERSION_TEXTO_REGLAS = "1"
+
+# Se sube cuando cambia la forma de estimar `fecha_fin_estimada`. Se recalcula desde las
+# columnas que ya están en la base, sin descargar nada, y NO al abrir sino al empezar la
+# búsqueda (ver `rellenar_fin_estimado_si_toca`), por lo mismo que INDICES_DIFERIDOS:
+# encontrar las filas que pueden llevarla es recorrer la tabla entera, 27 s sobre la base
+# real de 4 GB con la caché fría, y al abrir la app espera al servidor.
+VERSION_FIN_ESTIMADO = "1"
+
+# Los campos que se reescriben aunque la huella no cambie: están fuera de ella (ver
+# `model.CAMPOS_FUERA_DE_HUELLA`), y es lo que permite rellenarlos en lo ya guardado
+# volviendo a leer los ficheros descargados, sin reevaluar ni versionar nada.
+CAMPOS_FIN = ("fecha_formalizacion", "fecha_anuncio_adjudicacion",
+              "fecha_fin_estimada", "fin_origen", "fin_base")
+
+
+def rellenar_fin_estimado_si_toca(con: sqlite3.Connection) -> int | None:
+    """Rellena las fechas de fin estimadas de lo ya guardado si no se ha hecho con la
+    versión actual. None si no tocaba; si no, cuántas filas ha mirado."""
+    if leer_preferencia(con, "version_fin_estimado") == VERSION_FIN_ESTIMADO:
+        return None
+    n = rellenar_fin_estimado(con)
+    escribir_preferencia(con, "version_fin_estimado", VERSION_FIN_ESTIMADO)
+    con.commit()
+    return n
+
+
+def completar_fechas_para_estimar(con: sqlite3.Connection, licitaciones) -> int:
+    """Escribe en lo ya guardado SOLO la formalización y el anuncio de adjudicación.
+
+    Es para releer los ZIP anuales y sacar de ellos esas dos fechas, que antes no se
+    leían. No vale `ingest --backfill` para esto: guarda la ficha entera, y el ZIP del año
+    en curso llega hasta el mes pasado, así que las fichas actualizadas después por el
+    feed diario volvían a su versión anterior (285 de 188.000 en la base real, medido).
+    Aquí nada más se toca, y nunca se borra una fecha que ya estaba.
+    """
+    filas = [(l.fecha_formalizacion, l.fecha_anuncio_adjudicacion, l.fuente, l.id_externo)
+             for l in licitaciones if l.fecha_formalizacion or l.fecha_anuncio_adjudicacion]
+    con.executemany(
+        "UPDATE licitaciones SET fecha_formalizacion = COALESCE(?, fecha_formalizacion),"
+        " fecha_anuncio_adjudicacion = COALESCE(?, fecha_anuncio_adjudicacion)"
+        " WHERE fuente = ? AND id_externo = ?", filas)
+    return len(filas)
+
+
+def rellenar_fin_estimado(con: sqlite3.Connection) -> int:
+    """Recalcula la fecha de fin estimada de las filas que pueden tenerla (y la quita de
+    las que ya no)."""
+    from .model import fin_estimado
+
+    filas = con.execute(
+        """SELECT id, fecha_fin_prevista, duracion_meses, fecha_formalizacion,
+                  fecha_anuncio_adjudicacion, fecha_publicacion, adjudicatario
+             FROM licitaciones
+            WHERE fecha_fin_prevista IS NULL AND duracion_meses IS NOT NULL
+               OR fecha_fin_estimada IS NOT NULL"""
+    ).fetchall()
+    cambios = [
+        (*fin_estimado(f["fecha_fin_prevista"], f["duracion_meses"],
+                       f["fecha_formalizacion"], f["fecha_anuncio_adjudicacion"],
+                       f["fecha_publicacion"], f["adjudicatario"]), f["id"])
+        for f in filas
+    ]
+    con.executemany(
+        "UPDATE licitaciones SET fecha_fin_estimada = ?, fin_origen = ?, fin_base = ?"
+        " WHERE id = ?", cambios)
+    con.commit()
+    return len(cambios)
 
 
 def rellenar_texto_norm(con: sqlite3.Connection) -> int:
@@ -536,6 +617,16 @@ def migrar(con: sqlite3.Connection) -> list[str]:
     if aplicadas:
         con.commit()
 
+    # Vencimientos dejó de distinguir «contactado» y «reunión»: ahora se sigue o no se
+    # sigue, y lo que estaba en marcha pasa a «siguiendo» con su nota intacta.
+    # El commit va siempre: el UPDATE abre transacción aunque no toque ninguna fila, y
+    # dejarla abierta bloquea las escrituras de cualquier otra conexión a la base.
+    pasados = con.execute("UPDATE prospeccion SET estado = 'siguiendo'"
+                          " WHERE estado IN ('contactado', 'reunion')").rowcount
+    con.commit()
+    if pasados:
+        aplicadas.append("prospección: contactado y reunión pasan a «siguiendo»")
+
     # Autocorrección de las claves de agrupación cuando cambia su lógica.
     if con.execute("SELECT COUNT(*) FROM licitaciones").fetchone()[0]:
         guardada = leer_preferencia(con, "version_clave_grupo")
@@ -596,7 +687,7 @@ CAMPOS = (
     "importe_adjudicacion", "fecha_adjudicacion", "duracion_meses",
     "fecha_inicio_ejecucion", "fecha_fin_prevista", "clave_grupo",
     "raw", "huella", "texto_busqueda", "texto_norm", "texto_reglas_norm",
-)
+) + CAMPOS_FIN
 
 # Lo que hace que un cambio merezca una entrada en el historial. Antes se guardaba
 # versión con cualquier cambio de huella, y eso incluye retoques de metadatos: al
@@ -638,7 +729,10 @@ def guardar(con: sqlite3.Connection, lic) -> str:
 
     lic_id = prev["id"]
     if prev["huella"] == fila["huella"]:
-        con.execute("UPDATE licitaciones SET visto_ultima_vez = ? WHERE id = ?", (momento, lic_id))
+        con.execute(
+            f"UPDATE licitaciones SET {', '.join(f'{c} = ?' for c in CAMPOS_FIN)},"
+            " visto_ultima_vez = ? WHERE id = ?",
+            [fila[c] for c in CAMPOS_FIN] + [momento, lic_id])
         return "igual"
 
     asignaciones = ", ".join(f"{c} = ?" for c in CAMPOS)

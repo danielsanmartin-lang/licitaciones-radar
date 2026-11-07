@@ -815,8 +815,7 @@ textarea {
  * está pasando, verde lo que ha terminado y gris lo que es contexto.
  */
 .avisos,
-.carga,
-.cobertura {
+.carga {
   margin: 0 0 var(--e-3);
   border-radius: var(--radio-lg);
   font-size: var(--txt-md);
@@ -831,35 +830,11 @@ textarea {
 .avisos p { margin: 3px 0; position: relative; padding-right: 26px; }
 .avisos .cerrar { top: -4px; right: -4px; width: 24px; height: 24px; font-size: 18px; }
 
-/* Cobertura: gris y no rojo, a propósito. No ha pasado nada malo: son los límites de la
-   herramienta, y saberlos es parte de usarla bien. */
-.cobertura {
-  padding: var(--e-2) var(--e-4);
-  background: var(--relleno);
-  font-size: var(--txt-sm);
-  color: var(--texto-sec);
-}
-.cobertura summary { cursor: default; list-style: none; -webkit-user-select: none; user-select: none; }
-.cobertura summary::-webkit-details-marker { display: none; }
-.cobertura summary::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin: 0 10px 1px 2px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform .15s;
-}
-.cobertura[open] summary::before { transform: rotate(45deg); }
-.cobertura summary:hover { color: var(--texto); }
-.cobertura ul { margin: var(--e-2) 0 var(--e-1); padding-left: 1.9em; }
-.cobertura li { margin-bottom: 5px; line-height: 1.45; }
-.cobertura b { color: var(--texto); font-weight: 600; }
-@media (prefers-reduced-motion: reduce) {
-  .cobertura summary::before { transition: none; }
-}
+/* Qué cubre y qué no: los límites de la herramienta, en su vista de la barra lateral. */
+.cobertura-lista { margin: var(--e-3) 0; padding-left: 1.4em; max-width: 72ch;
+                   font-size: var(--txt-md); color: var(--texto-sec); }
+.cobertura-lista li { margin-bottom: var(--e-2); line-height: 1.5; }
+.cobertura-lista b { color: var(--texto); font-weight: 600; }
 
 /* Una búsqueda que corre por detrás: azul, porque no ha pasado nada malo. */
 .carga {
@@ -1002,8 +977,7 @@ progress:not([value]) { opacity: .7; }
 .segmentos button:hover { color: var(--texto); }
 .segmentos button.activo { background: var(--fondo); color: var(--texto); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
 .segmentos button:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
-.tarjeta.pros-contactado .segmentos button.activo { color: var(--acento-texto); }
-.tarjeta.pros-reunion .segmentos button.activo { color: var(--verde); }
+.tarjeta.pros-siguiendo .segmentos button.activo { color: var(--acento-texto); }
 .tarjeta.pros-descartado { opacity: .6; }
 .tarjeta.pros-descartado:hover { opacity: 1; }
 .nota-prospeccion {
@@ -1013,6 +987,12 @@ progress:not([value]) { opacity: .7; }
 }
 .nota-prospeccion.guardada { box-shadow: 0 0 0 1.5px var(--verde); }
 .pill.renovacion { background: var(--violeta-tenue); color: var(--violeta); cursor: pointer; }
+/* La fecha de fin no la publica la fuente: se ha estimado con la duración. En contorno y
+   no en relleno, para no confundirla con la del incumbente, que también es ámbar: trazo
+   continuo la estimada (error de días) y discontinuo la aproximada (error de meses). */
+.pill.fin-estimado { background: transparent; color: var(--ambar); cursor: help;
+                     outline: 1px solid var(--ambar); outline-offset: -1px; }
+.pill.fin-aproximado { outline-style: dashed; }
 .pill.renovacion:hover { text-decoration: underline; }
 .prospeccion-apartado { margin-top: var(--e-6); }
 .apartado-titulo { margin: 0 0 var(--e-1); font-size: var(--txt-lg); font-weight: 600; }
@@ -1256,6 +1236,13 @@ progress:not([value]) { opacity: .7; }
 .hist { padding-left: 1.2em; font-size: var(--txt-sm); color: var(--texto-sec); }
 .hist li { margin-bottom: 3px; }
 .guardado { margin-left: var(--e-2); color: var(--verde); font-size: var(--txt-sm); }
+
+/* «Copiar ficha», bajo el título. */
+.panel-copiar { display: flex; align-items: center; margin: 0 0 var(--e-2); }
+.panel-copiar .boton-sec { display: inline-flex; align-items: center; gap: 6px; }
+/* La selección que necesita `execCommand('copy')` para disparar el evento: fuera de la
+   vista, pero en el documento. */
+.copia-oculta { position: fixed; left: -9999px; top: 0; opacity: 0; }
 
 /* Las licitaciones que pueden salir de una consulta previa, y al revés. */
 .enlace-consulta {
