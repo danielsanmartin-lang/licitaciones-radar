@@ -158,6 +158,31 @@ class TestCalendario(Base):
         self.assertEqual(c["mes_en_curso"], "2026-01")
         self.assertEqual((c["dias_con_datos"], c["dias_del_mes"]), (3, 31))
 
+    def test_el_corte_es_el_de_toda_la_base_y_no_el_de_lo_que_casa(self):
+        """Con la base al día, el 7 de noviembre decía «oct en curso, datos hasta el 14
+        oct»: lo último que había casado con los perfiles era del 14."""
+        self._añadir("casa", fecha_publicacion="2025-10-14")
+        db.guardar(self.con, Licitacion(fuente="prueba", id_externo="no-casa",
+                                        objeto="Obras de alcantarillado", organo="Otro",
+                                        estado="publicada", fecha_publicacion="2025-11-07"))
+        self.con.commit()
+        for perfil in (None, "p"):
+            with self.subTest(perfil=perfil):
+                c = consultas.analitica(self.con, perfil=perfil)["calendario"]
+                self.assertTrue(c["corte"].startswith("2025-11-07"))
+                self.assertEqual(c["mes_en_curso"], "2025-11")
+                self.assertEqual((c["dias_con_datos"], c["dias_del_mes"]), (7, 30))
+                self.assertEqual(c["meses"], [{"mes": "2025-10", "expedientes": 1}],
+                                 "lo que se cuenta sigue siendo solo lo que casa")
+
+    def test_una_fecha_futura_no_mueve_el_corte(self):
+        """Una errata de la fuente con fecha de 2099 daría por «en curso» un mes que no ha
+        empezado."""
+        self._añadir("uno", fecha_publicacion="2026-01-03")
+        self._añadir("errata", expediente="E/2", fecha_publicacion="2099-05-01")
+        c = consultas.analitica(self.con)["calendario"]
+        self.assertTrue(c["corte"].startswith("2026-01-03"))
+
     def test_los_dias_del_mes_salen_del_calendario_de_verdad(self):
         self._añadir("febrero-bisiesto", fecha_publicacion="2024-02-10")
         c = consultas.analitica(self.con)["calendario"]

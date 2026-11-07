@@ -66,19 +66,21 @@ function empezarCarga(idContenedor, texto = 'Cargando…') {
 
 let soloNovedades = false;
 let cierranEnDias = '';
-// El otro filtro que solo pone un contador: «coincidencias» deja fuera lo vencido.
+// El otro filtro que solo pone un contador: «sin vencer» deja fuera lo vencido.
 let sinVencidas = '';
 let kpiActivo = 'en_plazo';
 
 // Cada contador de la cabecera y el filtro que aplica. Tiene que coincidir con lo
 // que calcula consultas.resumen() o el número volvería a no cuadrar con la lista.
-// «coincidencias» no cuenta lo de plazo vencido: con ello decía 412 donde quedaban 101 que
-// todavía se podían mirar. Lo que sigues ya no tiene contador aquí: tiene su vista.
+// «sin vencer» no cuenta lo de plazo vencido: con ello decía 412 donde quedaban 101 que
+// todavía se podían mirar. Se llamaba «coincidencias», y la lista de debajo decía «15 de
+// 412 coincidencias»: la misma palabra para dos cifras. «Coincidencias» es ahora solo el
+// total, el de «ver todas». Lo que sigues ya no tiene contador aquí: tiene su vista.
 const KPIS = [
   { clave: 'en_plazo', etiqueta: 'abiertas', filtro: { vivas: '1' } },
   { clave: 'cierran_7_dias', etiqueta: 'cierran ≤7d', clase: 'urgente',
     filtro: { vivas: '1', cierran_en_dias: '7' } },
-  { clave: 'coincidencias', etiqueta: 'coincidencias',
+  { clave: 'sin_vencer', etiqueta: 'sin vencer',
     filtro: { vivas: '0', sin_vencidas: '1' } },
   { clave: 'sin_revisar', etiqueta: 'sin revisar', filtro: { vivas: '0', estado: 'nuevo' } },
 ];
@@ -706,19 +708,33 @@ async function cargarLista(reset = true) {
 // Lo que el radar descarga y no casa con ningún perfil. Es casi toda la base, así que
 // arranca acotado —solo lo abierto— y se ordena por temáticas, que son chips de
 // selección múltiple: ninguno elegido es «todas».
+//
+// La primera vez, sin nada guardado, arranca con las temáticas IT marcadas y no con
+// todas: con todas, nueve de cada diez fichas son «Resto» y la pestaña se abría con agua
+// y protectoras de animales (11.030 abiertas contra 1.217 de IT en la base real). Quien
+// quiera el resto lo marca, o desmarca todas.
 
 const TEMAS_OTRAS = 'temas-otras';
 let otrasOffset = 0;
 let otrasTemas = new Set();
+let otrasTemasDeFabrica = true;
 try {
-  otrasTemas = new Set(JSON.parse(localStorage.getItem(TEMAS_OTRAS) || '[]'));
-} catch { /* sin almacén se abre con todas, que es lo de fábrica */ }
+  const guardado = localStorage.getItem(TEMAS_OTRAS);
+  if (guardado !== null) {
+    otrasTemas = new Set(JSON.parse(guardado));
+    otrasTemasDeFabrica = false;
+  }
+} catch { /* sin almacén se abre con las de fábrica, las IT */ }
 
 // Los chips se crean una vez y luego solo cambian su cifra y su estado. Rehacerlos en
 // cada carga movería el foco de quien está navegando con el teclado.
 function pintarChipsTemas() {
   const cont = $('otras-temas');
   const todos = [...TEMAS.categorias, ...(TEMAS.resto ? [TEMAS.resto] : [])];
+  if (otrasTemasDeFabrica && TEMAS.categorias.length) {
+    otrasTemas = new Set(TEMAS.categorias.map((c) => c.clave));
+    otrasTemasDeFabrica = false;
+  }
   cont.textContent = '';
   for (const c of todos) {
     const b = document.createElement('button');
@@ -2522,9 +2538,12 @@ let ambitoAdjudicatarios = '';
 async function cargarAdjudicatarios() {
   const carga = empezarCarga('lista-adjudicatarios');
   const cont = $('lista-adjudicatarios');
+  $('adjudicatarios-contador').textContent = '';
+  const q = $('adjudicatarios-q').value.trim();
   let d;
   try {
     const p = ponerAmbito(new URLSearchParams({ limite: 30 }), ambitoAdjudicatarios);
+    if (q) p.set('q', q);
     const r = await fetch('/api/adjudicatarios?' + p);
     d = await r.json();
   } catch {
@@ -2540,7 +2559,17 @@ async function cargarAdjudicatarios() {
     cont.firstChild.textContent = d.error;
     return;
   }
+  // Como en Organismos: cuántas hay y, buscando, de cuántas. El ranking enseña las 30
+  // primeras, y sin decirlo parecía que no había más.
+  const n = (x) => x.toLocaleString('es-ES');
+  $('adjudicatarios-contador').textContent =
+    (d.total === d.distintos ? `${n(d.total)} empresas` : `${n(d.total)} de ${n(d.distintos)} empresas`)
+    + (d.items.length < d.total ? ` · las ${n(d.items.length)} que más contratos ganan` : '');
   if (!d.items.length) {
+    if (q && d.distintos) {
+      cont.appendChild(crear('p', 'vacio', 'Ninguna empresa con ese nombre en este ámbito.'));
+      return;
+    }
     cont.innerHTML = `<p class="vacio">Aún no hay adjudicaciones en la base.
       Prueba: <code>python3 radar.py ingest --primera-carga</code></p>`;
     return;
@@ -3240,7 +3269,13 @@ async function abrirPanel(id) {
   const campos = [
     ['Órgano', d.organo],
     ['Expediente', d.expediente],
-    ['Importe', fmtImporte(d.importe_referencia)],
+    // «De licitación» y no «Importe» a secas: es el valor estimado o el presupuesto base,
+    // lo que se licita, y unas líneas más abajo, al lado de «Importe adjudicado», se leían
+    // como dos versiones de la misma cifra. Si la fuente solo publica la adjudicación,
+    // `importe_referencia` es esa misma cifra y aquí no se repite; sin ninguna de las
+    // dos, «sin importe», como siempre.
+    ['Importe de licitación', (d.valor_estimado || d.importe_sin_iva || !d.importe_adjudicacion)
+      ? fmtImporte(d.importe_referencia) : ''],
     // Sin fecha, fuera: `fmtFecha` devuelve «—» y el filtro de abajo no lo quitaba, así
     // que un contrato adjudicado enseñaba «Fin de plazo —».
     ['Fin de plazo', d.fecha_limite_presentacion ? fmtFecha(d.fecha_limite_presentacion) : ''],
@@ -3253,8 +3288,8 @@ async function abrirPanel(id) {
     ['Temática', (d.categorias || []).map(nombreTema).join(' · ')],
     ['Fuente', d.fuente],
     ['Adjudicatario', d.adjudicatario],
-    // «Importe» es el de referencia (valor estimado o presupuesto); el adjudicado es el
-    // que enseñan las tarjetas de Vencimientos, y sin él las dos cifras no cuadraban.
+    // El adjudicado es el que enseñan las tarjetas de Vencimientos, y sin él las dos
+    // cifras no cuadraban.
     ['Importe adjudicado', d.importe_adjudicacion ? fmtImporte(d.importe_adjudicacion) : ''],
     // Cuándo acaba el contrato adjudicado: lo que mira Vencimientos. Si la fuente no lo
     // publica y se ha estimado, la etiqueta lo dice (ver `explicacionFin`).
@@ -3652,6 +3687,11 @@ let debounceOrganismos;
 $('organismos-q').addEventListener('input', () => {
   clearTimeout(debounceOrganismos);
   debounceOrganismos = setTimeout(() => cargarOrganismos(), 250);
+});
+let debounceAdjudicatarios;
+$('adjudicatarios-q').addEventListener('input', () => {
+  clearTimeout(debounceAdjudicatarios);
+  debounceAdjudicatarios = setTimeout(() => cargarAdjudicatarios(), 250);
 });
 // Cambiar el ámbito de una ficha es mirar la misma con otros ojos, no ir a otra: no se
 // apila en «Volver».

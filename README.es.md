@@ -327,14 +327,15 @@ Todas cuentan **expedientes**, no anuncios, igual que la lista.
 
 | Contador | Qué es |
 |---|---|
-| abiertas | han pasado el filtro, siguen vivas y el plazo no ha vencido |
+| abiertas | han pasado el filtro, siguen vivas y el plazo no ha vencido (lo que no publica fecha límite cuenta como abierto durante 180 días desde que se publicó) |
 | cierran ≤7d | de las anteriores, las que se acaban esta semana |
-| coincidencias | todas las que han pasado el filtro menos las de plazo vencido: lo que todavía se puede mirar |
+| sin vencer | todas las que han pasado el filtro menos las de plazo vencido (con el mismo tope de 180 días para lo que no publica fecha límite): lo que todavía se puede mirar |
 | sin revisar | no les has dado ni Seguir, ni Descartar, ni las has marcado como vistas |
 
 Lo que sigues ya no tiene contador aquí: tiene su propia vista, **Siguiendo** (más abajo).
 
-Debajo de la lista pone «110 de 2.716 coincidencias» y qué filtros están puestos, porque
+Debajo de la lista pone «110 de 2.716 coincidencias» —coincidencias son siempre todas, lo
+que sale con «ver todas»— y qué filtros están puestos, porque
 el desplegable de triaje y la casilla **«Solo abiertas» se combinan**: elegir «todo
 menos descartadas» sin desmarcar la casilla sigue mostrando solo las abiertas. «Ver
 todas» quita los filtros, y entonces sí sale también lo vencido.
@@ -470,7 +471,9 @@ Cuando entran licitaciones nuevas desde tu última visita aparece una pestaña v
 Todo lo que el radar descarga y **no** casa con tus perfiles. El radar trae PLACSP entero
 —unas 700.000 fichas con el histórico— y los perfiles se quedan con unos cientos; el resto
 del mercado IT estaba en la base sin que hubiera por dónde verlo. Aquí se ve, ordenado por
-**temáticas**, que se eligen con chips de selección múltiple (ninguno marcado es «todas»):
+**temáticas**, que se eligen con chips de selección múltiple (ninguno marcado es «todas»;
+la primera vez se abre con todas las IT marcadas y «Resto» sin marcar, que si no son nueve
+de cada diez fichas):
 
 | Temática | Cómo se reconoce |
 |---|---|

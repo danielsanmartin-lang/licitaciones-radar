@@ -233,8 +233,8 @@ class Manejador(BaseHTTPRequestHandler):
                 ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
             except ValueError as exc:
                 return self._error(str(exc))
-            self._json({"items": consultas.competencia(self.con, ambito=ambito,
-                                                       limite=limite)})
+            self._json(consultas.adjudicatarios(self.con, ambito=ambito, limite=limite,
+                                                q=params.get("q") or None))
 
         elif partes.path == "/api/contratos-empresa":
             empresa = params.get("empresa")

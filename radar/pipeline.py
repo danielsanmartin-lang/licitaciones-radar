@@ -252,9 +252,10 @@ def ingerir(con: sqlite3.Connection, fuentes: list, *, anios: list[int] | None =
     fusion = db.fusionar_grupos_ted(con)
     if fusion["anuncios_fusionados"]:
         log.info(
-            "%-28s %6d anuncios unidos a su expediente de PLACSP "
-            "(%d grupos ambiguos, sin tocar)",
-            "dedup ted/placsp", fusion["anuncios_fusionados"], fusion["ambiguos"],
+            "%-28s %6d anuncios unidos a su expediente de PLACSP o Cataluña, %d de ellos "
+            "por órgano y título (%d grupos ambiguos, sin tocar)",
+            "dedup ted", fusion["anuncios_fusionados"], fusion["por_organo"],
+            fusion["ambiguos"] + fusion["ambiguos_por_organo"],
         )
 
     # Va después de la fusión, no antes: un anuncio que acaba de entrar en el grupo de

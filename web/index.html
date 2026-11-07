@@ -372,8 +372,8 @@
                      data-icono="ico-capas" data-tono="violeta">
               <p class="intro">
                 Todo lo que el radar descarga y <strong>no</strong> casa con tus perfiles, ordenado
-                por temática. Lo que ya está en la Bandeja no sale aquí; si marcas
-                «Seguir», pasa a ella.
+                por temática. Empieza con las temáticas IT; desmárcalas todas para verlo todo.
+                Lo que ya está en la Bandeja no sale aquí; si marcas «Seguir», pasa a ella.
               </p>
               <div class="chips-tema" id="otras-temas" role="group" aria-label="Temáticas"></div>
               <div class="filtros filtros-otras">
@@ -468,9 +468,11 @@
                 Quién se lleva estos contratos. Agrupa las variantes de razón social; pulsa una
                 empresa para ver su ficha.
               </p>
-              <p class="filtros-activos">
+              <div class="filtros">
+                <input type="search" id="adjudicatarios-q" placeholder="Buscar una empresa…" autocomplete="off">
                 <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
-              </p>
+              </div>
+              <p id="adjudicatarios-contador" class="contador"></p>
               <div id="lista-adjudicatarios" class="lista"></div>
             </section>
 
