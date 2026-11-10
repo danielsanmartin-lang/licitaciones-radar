@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from . import categorias, db, enlaces
-from .model import (ESTADOS_VIVOS, ORIGEN_FIN_APROXIMADA, ORIGEN_FIN_ESTIMADA,
-                    ORIGEN_FIN_PUBLICADA, normalizar)
+from .model import (ESTADO_ADJUDICADA, ESTADO_ANULADA, ESTADO_FORMALIZADA,
+                    ESTADO_RESUELTA, ESTADOS_VIVOS, ORIGEN_FIN_APROXIMADA,
+                    ORIGEN_FIN_ESTIMADA, ORIGEN_FIN_PUBLICADA, normalizar)
 
 ORDENES = {
     # "Cierran antes" tiene que poner primero lo que cierra pronto y AÚN está
@@ -122,14 +123,23 @@ _VISIBLE = (
 # Analítica, y holgado para cualquier plazo de presentación real.
 DIAS_ABIERTA_SIN_PLAZO = 180
 
-# «El plazo no ha pasado»: la fecha límite es hoy o después, o no la hay y la ficha es de
-# los últimos DIAS_ABIERTA_SIN_PLAZO días (sin fecha de publicación tampoco, se deja
-# abierta: no hay con qué decir que no). Una sola expresión para la Bandeja, sus
-# contadores y la Analítica, por lo mismo que `_condiciones()`: cuando cada sitio escribía
-# la suya, acababan contando cosas distintas.
+# Los estados de algo que ya no admite ofertas. Sin fecha límite, una ficha así no está
+# «sin vencer»: está cerrada. El caso que lo motiva es el de los contratos basados en un
+# acuerdo marco de la Junta de Contratación Centralizada, que PLACSP publica ya resueltos y
+# sin plazo —solo ofertan las empresas del acuerdo, por invitación—: de las 19 fichas que
+# contaba «sin vencer», 16 eran adjudicaciones así, y solo 3 se podían preparar todavía.
+ESTADOS_CERRADOS = (ESTADO_ADJUDICADA, ESTADO_RESUELTA, ESTADO_FORMALIZADA)
+_CERRADOS_SQL = ", ".join(f"'{e}'" for e in (*ESTADOS_CERRADOS, ESTADO_ANULADA))
+
+# «El plazo no ha pasado»: la fecha límite es hoy o después, o no la hay, la ficha no está
+# cerrada (ver ESTADOS_CERRADOS) y es de los últimos DIAS_ABIERTA_SIN_PLAZO días (sin
+# fecha de publicación tampoco, se deja abierta: no hay con qué decir que no). Una sola
+# expresión para la Bandeja, sus contadores y la Analítica, por lo mismo que
+# `_condiciones()`: cuando cada sitio escribía la suya, acababan contando cosas distintas.
 _PLAZO_SIN_VENCER = (
     "(substr(l.fecha_limite_presentacion, 1, 10) >= date('now')"
     " OR (l.fecha_limite_presentacion IS NULL"
+    f"     AND COALESCE(l.estado, '') NOT IN ({_CERRADOS_SQL})"
     "     AND (l.fecha_publicacion IS NULL"
     f"         OR substr(l.fecha_publicacion, 1, 10) >= date('now', '-{DIAS_ABIERTA_SIN_PLAZO} day'))))"
 )
@@ -312,6 +322,14 @@ def bandeja(
                    COALESCE(r.estado, 'nuevo') AS estado_revision,
                    r.asignado_a, r.notas, r.motivo_descarte,
                    CASE
+                     -- Cerrada sin plazo: con lo vencido, no con «sin plazo», y con la
+                     -- publicación haciendo de cierre, para que lo adjudicado esta
+                     -- semana quede arriba dentro de lo vencido.
+                     WHEN l.fecha_limite_presentacion IS NULL
+                          AND l.estado IN ({_CERRADOS_SQL})
+                       THEN MIN(-1, COALESCE(
+                              CAST(julianday(substr(l.fecha_publicacion, 1, 10))
+                                   - julianday('now') AS INTEGER), -99999))
                      WHEN l.fecha_limite_presentacion IS NULL THEN 9999
                      ELSE CAST(julianday(substr(l.fecha_limite_presentacion, 1, 10))
                                - julianday('now') AS INTEGER)
@@ -342,6 +360,7 @@ def bandeja(
     total_sin_filtros = contar(con, solo_vivas=False)
 
     items = enlaces.anotar(con, [_preparar_item(dict(f)) for f in filas])
+    anotar_llego_cerrada(con, items)
     return {"total": total, "total_sin_filtros": total_sin_filtros, "items": items}
 
 
@@ -361,6 +380,105 @@ def _preparar_item(d: dict) -> dict:
     d["dias_desde_publicacion"] = dias
     d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
     return d
+
+
+# --- Fichas que llegaron cerradas ---------------------------------------------
+#
+# Fichas que el radar recibió ya adjudicadas (o resueltas, o formalizadas) y sin fecha
+# límite en ningún anuncio de su expediente. Nunca fueron una oportunidad para presentarse
+# desde aquí: sirven para saber quién ganó y cuándo vence. Se calcula al consultar, con
+# los datos de la ficha, y no se guarda: una ficha nueva así sale marcada sin hacer nada,
+# y si después llega el anuncio de licitación con su plazo, la marca se va sola.
+#
+# El motivo es para explicarlo en la interfaz, y el orden importa: va primero lo que dice
+# por qué no hubo plazo público, después lo que dice por qué el radar no lo tiene.
+# Medido en la base real (88 expedientes de la Bandeja): 57 de TED, 17 de acuerdo marco,
+# 5 negociados sin publicidad y 9 sin motivo más concreto.
+PROCEDIMIENTOS_ACUERDO_MARCO = ("Basado en acuerdo marco",
+                                "Basado en sistema dinámico de adquisición")
+# La Dirección General de Racionalización y Centralización de la Contratación (la Junta
+# de Contratación Centralizada) publica sus contratos derivados como «Restringido», no
+# como «Basado en acuerdo marco»: el procedimiento solo no los reconoce.
+NIFS_CENTRALIZACION = ("E04962703",)
+PROCEDIMIENTO_NEGOCIADO_SIN_PUBLICIDAD = "Negociado sin publicidad"
+
+
+def _motivo_llego_cerrada(f, vista_viva: bool) -> str:
+    if (f["procedimiento"] in PROCEDIMIENTOS_ACUERDO_MARCO
+            or f["nif_organo"] in NIFS_CENTRALIZACION):
+        return "acuerdo_marco"
+    if f["procedimiento"] == PROCEDIMIENTO_NEGOCIADO_SIN_PUBLICIDAD:
+        return "negociado"
+    if (f["fuente"] or "").startswith("ted"):
+        return "ted"
+    if vista_viva:
+        return "vista_viva"
+    return "generico"
+
+
+def anotar_llego_cerrada(con: sqlite3.Connection, items: list[dict]) -> list[dict]:
+    """Pone en cada tarjeta `llego_cerrada`: `{"motivo": …}` si llegó cerrada (ver
+    arriba), o `None`. Si la lleva, quita «Nueva»: no es una oportunidad nueva.
+
+    Lee de la base lo que necesita, y no de la tarjeta: cada pestaña monta las suyas con
+    columnas distintas, y así la regla es la misma en todas.
+    """
+    for it in items:
+        it["llego_cerrada"] = None
+    ids = [it["id"] for it in items if it.get("id") is not None]
+    if not ids:
+        return items
+
+    candidatas: dict[int, sqlite3.Row] = {}
+    for tanda in db._por_tandas(ids):
+        for f in con.execute(
+                f"""SELECT id, estado, procedimiento, fuente, nif_organo, clave_grupo
+                      FROM licitaciones
+                     WHERE id IN ({", ".join("?" * len(tanda))})
+                       AND fecha_limite_presentacion IS NULL
+                       AND estado IN ({", ".join("?" * len(ESTADOS_CERRADOS))})""",
+                [*tanda, *ESTADOS_CERRADOS]):
+            candidatas[f["id"]] = f
+    if not candidatas:
+        return items
+
+    # Los demás anuncios de cada expediente: si alguno trae plazo, es una licitación
+    # normal que ya venció; si alguno se vio vivo, el radar no la recibió cerrada.
+    def grupo(f) -> str:
+        return f["clave_grupo"] or str(f["id"])
+
+    ids_por_grupo: dict[str, set[int]] = {grupo(f): {f["id"]} for f in candidatas.values()}
+    con_plazo: set[str] = set()
+    vivas: set[str] = set()
+    claves = [f["clave_grupo"] for f in candidatas.values() if f["clave_grupo"]]
+    for tanda in db._por_tandas(sorted(set(claves))):
+        for f in con.execute(
+                f"""SELECT id, clave_grupo, estado,
+                           fecha_limite_presentacion IS NOT NULL AS plazo
+                      FROM licitaciones
+                     WHERE clave_grupo IN ({", ".join("?" * len(tanda))})""", tanda):
+            ids_por_grupo[f["clave_grupo"]].add(f["id"])
+            if f["plazo"]:
+                con_plazo.add(f["clave_grupo"])
+            if f["estado"] in ESTADOS_VIVOS:
+                vivas.add(f["clave_grupo"])
+    grupo_de = {i: g for g, ids_g in ids_por_grupo.items() for i in ids_g}
+    vivos = sorted(ESTADOS_VIVOS)
+    for tanda in db._por_tandas(sorted(grupo_de)):
+        for f in con.execute(
+                f"""SELECT DISTINCT licitacion_id FROM licitaciones_versiones
+                     WHERE licitacion_id IN ({", ".join("?" * len(tanda))})
+                       AND estado IN ({", ".join("?" * len(vivos))})""",
+                [*tanda, *vivos]):
+            vivas.add(grupo_de[f["licitacion_id"]])
+
+    for it in items:
+        f = candidatas.get(it.get("id"))
+        if f is None or grupo(f) in con_plazo:
+            continue
+        it["llego_cerrada"] = {"motivo": _motivo_llego_cerrada(f, grupo(f) in vivas)}
+        it["es_nueva"] = False
+    return items
 
 
 # --- Otras licitaciones -------------------------------------------------------
@@ -530,7 +648,7 @@ def otras(
 
     return {
         "total": total,
-        "items": enlaces.anotar(con, items),
+        "items": anotar_llego_cerrada(con, enlaces.anotar(con, items)),
         "por_categoria": por_categoria,
         "clasificacion_pendiente": not categorias.al_dia(con),
     }
@@ -689,10 +807,16 @@ def _sin_revisar_por_expediente(con) -> list[dict]:
     no con un perfil: una corrección que amplía el plazo manda sobre el anuncio original
     aunque su texto ya no case. Es la misma unidad que el contador «sin revisar», así que
     el reparto suma lo que dice el contador.
+
+    Un expediente sin fecha límite que ya está cerrado (ver ESTADOS_CERRADOS) y no tiene
+    ningún anuncio vivo cuenta como `vencidas`, no como `sin_fecha`: el momento de
+    presentarse, si lo hubo, ya pasó.
     """
+    vivos = ", ".join(f"'{e}'" for e in sorted(ESTADOS_VIVOS))
     filas = con.execute(
         f"""SELECT clave, id,
-                   CASE WHEN limite IS NULL THEN 'sin_fecha'
+                   CASE WHEN limite IS NULL AND cerrada AND NOT viva THEN 'vencidas'
+                        WHEN limite IS NULL THEN 'sin_fecha'
                         WHEN limite < date('now') THEN 'vencidas'
                         ELSE 'en_plazo' END AS plazo
               FROM (
@@ -700,10 +824,20 @@ def _sin_revisar_por_expediente(con) -> list[dict]:
                           COALESCE(
                               (SELECT MAX(substr(l2.fecha_limite_presentacion, 1, 10))
                                  FROM licitaciones l2 WHERE l2.clave_grupo = e.clave),
-                              e.limite) AS limite
+                              e.limite) AS limite,
+                          COALESCE(
+                              (SELECT MAX(l2.estado IN ({vivos}))
+                                 FROM licitaciones l2 WHERE l2.clave_grupo = e.clave),
+                              e.viva) AS viva,
+                          COALESCE(
+                              (SELECT MAX(l2.estado IN ({_CERRADOS_SQL}))
+                                 FROM licitaciones l2 WHERE l2.clave_grupo = e.clave),
+                              e.cerrada) AS cerrada
                      FROM (
                           SELECT {_GRUPO} AS g, MAX(l.clave_grupo) AS clave, MIN(l.id) AS id,
-                                 MAX(substr(l.fecha_limite_presentacion, 1, 10)) AS limite
+                                 MAX(substr(l.fecha_limite_presentacion, 1, 10)) AS limite,
+                                 MAX(l.estado IN ({vivos})) AS viva,
+                                 MAX(l.estado IN ({_CERRADOS_SQL})) AS cerrada
                             {_DESDE_BANDEJA}
                            WHERE {_VISIBLE} AND COALESCE(r.estado, 'nuevo') = 'nuevo'
                            GROUP BY g
@@ -724,7 +858,8 @@ def sin_revisar_por_plazo(con) -> dict:
 def limpiar_sin_revisar(con, criterio: str) -> dict:
     """Pasa a «vista» los expedientes sin revisar que cumplan `criterio`.
 
-    `vencidas` son las de plazo vencido, `sin_fecha` las que no publican fecha límite y
+    `vencidas` son las de plazo vencido (y las cerradas sin plazo, ver
+    `_sin_revisar_por_expediente`), `sin_fecha` las que no publican fecha límite y
     `todas`, todas las sin revisar. Se escribe en todos los anuncios de cada expediente,
     como cualquier triaje (ver `db.ids_del_grupo`), y solo en los que siguen en «nuevo»:
     lo que sigues o has presentado no se toca. Devuelve los ids, que son lo que necesita
@@ -1194,6 +1329,7 @@ def resumen_novedades(con: sqlite3.Connection, periodo: str = "busqueda", *,
             d["dias_desde_publicacion"] = dias
             d["es_nueva"] = dias is not None and 0 <= dias <= DIAS_NUEVA
             salida["items"].append(d)
+        anotar_llego_cerrada(con, salida["items"])
     return salida
 
 

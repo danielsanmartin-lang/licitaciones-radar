@@ -1037,6 +1037,11 @@ progress:not([value]) { opacity: .7; }
 .pill.plazo-vencido { background: var(--rojo-tenue); color: var(--rojo); }
 .pill.incumbente { background: var(--ambar-tenue); color: var(--ambar); }
 .pill.anuncios { background: var(--relleno); color: var(--texto-sec); }
+/* Llegó ya adjudicada y sin plazo: gris, porque no pide nada, y con contorno para que se
+   lea como etiqueta y no como dato. La explicación sale al pasar el ratón. */
+.pill.cerrada { background: var(--relleno); color: var(--texto-sec); cursor: help;
+                outline: 1px solid var(--borde-fuerte); outline-offset: -1px; }
+.pill.cerrada:focus-visible { outline: 2px solid var(--acento); }
 /* La única píldora rellena de la fila: tiene que verse al pasar la vista sin leerla. */
 .pill.nueva { background: var(--acento); color: #fff; font-weight: 600; }
 /* Consulta previa ↔ pliego (ver `pintarEnlacesConsulta` en app.js). «Ya licitada» en
@@ -1915,6 +1920,7 @@ progress:not([value]) { opacity: .7; }
 .tt-fila { display: flex; align-items: center; gap: 6px; }
 .tt-fila strong { font-weight: 600; font-variant-numeric: tabular-nums; }
 .tt-nombre { color: var(--texto-sec); }
+.tt-texto { color: var(--texto); line-height: 1.45; }
 .tt-clave { width: 12px; height: 2px; border-radius: 1px; flex: none; }
 .tt-clave.serie-1 { background: var(--serie-1); }
 .tt-clave.serie-2 { background: var(--serie-2); }

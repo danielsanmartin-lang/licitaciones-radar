@@ -41,15 +41,16 @@ class Base(unittest.TestCase):
         self.addCleanup(self.con.close)
 
     def alta(self, ide, *, limite=None, estado="publicada", grupo=None, perfil=PERFIL,
-             revision=None, publicada=-30, **extra) -> int:
+             revision=None, publicada=-30, fuente="prueba", **extra) -> int:
         db.guardar(self.con, Licitacion(
-            fuente="prueba", id_externo=ide, objeto=f"Objeto {ide}", organo="Órgano",
+            fuente=fuente, id_externo=ide, objeto=f"Objeto {ide}", organo="Órgano",
             fecha_publicacion=dia(publicada), estado=estado,
             fecha_limite_presentacion=dia(limite) if limite is not None else None,
             clave_grupo=grupo or f"g-{ide}", **extra,
         ))
         lic_id = self.con.execute(
-            "SELECT id FROM licitaciones WHERE id_externo = ?", (ide,)).fetchone()[0]
+            "SELECT id FROM licitaciones WHERE id_externo = ? AND fuente = ?",
+            (ide, fuente)).fetchone()[0]
         if perfil:
             self.con.execute(
                 """INSERT INTO matches (licitacion_id, perfil, puntuacion, motivo, creado_en)
@@ -151,12 +152,14 @@ class TestContadores(Base):
         self.alta("cerrada-sin-fecha", estado="adjudicada")
 
     def test_sin_vencer_no_cuenta_lo_vencido_y_su_filtro_tampoco(self):
+        # Ni lo vencido ni lo que llegó adjudicado sin plazo: «sin-fecha» y «abierta».
         r = consultas.resumen(self.con)
-        self.assertEqual(r["sin_vencer"], 3)
+        self.assertEqual(r["sin_vencer"], 2)
         lista = consultas.bandeja(self.con, solo_vivas=False, sin_vencidas=True)
-        self.assertEqual(lista["total"], 3)
-        self.assertEqual(len(lista["items"]), 3)
-        # El denominador de «3 de 4 coincidencias» es todo, y es el contador
+        self.assertEqual(lista["total"], 2)
+        self.assertEqual(sorted(it["id_externo"] for it in lista["items"]),
+                         ["abierta", "sin-fecha"])
+        # El denominador de «2 de 4 coincidencias» es todo, y es el contador
         # «coincidencias»: una palabra, una cifra.
         self.assertEqual(lista["total_sin_filtros"], 4)
         self.assertEqual(r["coincidencias"], 4)
@@ -165,6 +168,76 @@ class TestContadores(Base):
         lista = consultas.bandeja(self.con, solo_vivas=False, con_plazo=True)
         self.assertEqual(sorted(it["id_externo"] for it in lista["items"]), ["abierta", "vencida"])
         self.assertEqual(consultas.contar(self.con, solo_vivas=True, con_plazo=True), 1)
+
+
+class TestLlegoCerrada(Base):
+    """Fichas que el radar recibió ya adjudicadas y sin plazo: etiqueta, motivo, «Nueva»,
+    orden y limpieza. Ver `consultas.anotar_llego_cerrada`."""
+
+    def marcas(self, **filtros) -> dict:
+        lista = consultas.bandeja(self.con, solo_vivas=False, limite=100, **filtros)
+        return {it["id_externo"]: it for it in lista["items"]}
+
+    def test_marca_cada_motivo(self):
+        self.alta("am", estado="adjudicada", procedimiento="Basado en acuerdo marco",
+                  adjudicatario="Ganadora S.L.")
+        # La Junta de Contratación Centralizada publica sus derivados como «Restringido».
+        self.alta("dgrcc", estado="resuelta", procedimiento="Restringido",
+                  nif_organo="E04962703", adjudicatario="Sothis")
+        self.alta("neg", estado="adjudicada", procedimiento="Negociado sin publicidad")
+        self.alta("ted", estado="adjudicada", procedimiento="Abierto", fuente="ted")
+        self.alta("gen", estado="formalizada", procedimiento="Abierto")
+        # El radar la vio viva (sin plazo) y después se adjudicó.
+        self.alta("viva", estado="previo", procedimiento="Abierto")
+        db.guardar(self.con, Licitacion(
+            fuente="prueba", id_externo="viva", objeto="Objeto viva", organo="Órgano",
+            fecha_publicacion=dia(-30), estado="adjudicada", procedimiento="Abierto",
+            clave_grupo="g-viva", adjudicatario="Otra S.L."))
+        self.con.commit()
+        m = self.marcas()
+        self.assertEqual({k: (v["llego_cerrada"] or {}).get("motivo") for k, v in m.items()},
+                         {"am": "acuerdo_marco", "dgrcc": "acuerdo_marco", "neg": "negociado",
+                          "ted": "ted", "gen": "generico", "viva": "vista_viva"})
+
+    def test_no_marca_lo_que_tuvo_plazo_ni_lo_vivo(self):
+        # El anuncio de licitación, con plazo, y la adjudicación sin él: es una
+        # licitación normal que ya venció.
+        self.alta("exp-cn", limite=-20, grupo="exp", perfil=None)
+        self.alta("exp-can", estado="adjudicada", grupo="exp", publicada=-1)
+        self.alta("sin-fecha")
+        self.alta("abierta", limite=5)
+        m = self.marcas()
+        self.assertEqual(set(m), {"exp-can", "sin-fecha", "abierta"})
+        self.assertTrue(all(v["llego_cerrada"] is None for v in m.values()))
+
+    def test_quita_nueva(self):
+        self.alta("cerrada", estado="adjudicada", publicada=-1)
+        self.alta("abierta", limite=5, publicada=-1)
+        m = self.marcas()
+        self.assertFalse(m["cerrada"]["es_nueva"])
+        self.assertTrue(m["abierta"]["es_nueva"])
+
+    def test_va_con_lo_vencido_al_ordenar_por_urgencia(self):
+        self.alta("vencida", limite=-10)
+        self.alta("cerrada", estado="adjudicada", publicada=-2)
+        self.alta("sin-fecha")
+        self.alta("abierta", limite=5)
+        lista = consultas.bandeja(self.con, solo_vivas=False, orden="urgencia")
+        self.assertEqual([it["id_externo"] for it in lista["items"]],
+                         ["abierta", "sin-fecha", "cerrada", "vencida"])
+
+    def test_limpiar_la_cuenta_como_vencida(self):
+        self.alta("vencida", limite=-10)
+        self.alta("cerrada", estado="adjudicada")
+        self.alta("sin-fecha")
+        self.alta("abierta", limite=5)
+        self.assertEqual(consultas.sin_revisar_por_plazo(self.con),
+                         {"vencidas": 2, "sin_fecha": 1, "en_plazo": 1})
+
+    def test_tambien_en_la_ficha(self):
+        lic_id = self.alta("cerrada", estado="adjudicada", procedimiento="Negociado sin publicidad")
+        d = consultas.anotar_llego_cerrada(self.con, [{"id": lic_id}])[0]
+        self.assertEqual(d["llego_cerrada"], {"motivo": "negociado"})
 
 
 class TestSiguiendo(Base):
