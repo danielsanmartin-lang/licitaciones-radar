@@ -405,6 +405,9 @@ class Manejador(BaseHTTPRequestHandler):
             d.pop("raw", None)
             d["historial"] = consultas.historial(self.con, lic_id)
             d["categorias"] = consultas.categorias_de(self.con, lic_id)
+            # Si llegó ya adjudicada y sin plazo, el panel lo explica (ver
+            # `consultas.anotar_llego_cerrada`): la misma regla que la tarjeta.
+            consultas.anotar_llego_cerrada(self.con, [d])
             # De una consulta previa, qué pliego ha salido de ella; de un pliego, de qué
             # consulta viene. Ver `enlaces.py`.
             if d.get("fuente") == enlaces.FUENTE_CONSULTAS:

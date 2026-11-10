@@ -406,7 +406,7 @@ let ultimaLimpieza = null;
 let relojAvisoLote = null;
 
 const CRITERIOS_LIMPIEZA = [
-  { criterio: 'vencidas', cifra: (d) => d.sin_revisar_vencidas, texto: 'con el plazo vencido' },
+  { criterio: 'vencidas', cifra: (d) => d.sin_revisar_vencidas, texto: 'con el plazo vencido o ya cerradas' },
   { criterio: 'sin_fecha', cifra: (d) => d.sin_revisar_sin_fecha, texto: 'sin fecha de cierre' },
   { criterio: 'todas', cifra: (d) => d.sin_revisar, texto: 'todas las sin revisar' },
 ];
@@ -514,8 +514,47 @@ function pildora(texto, { clase = '', ico = null, titulo = '' } = {}) {
   return el;
 }
 
+// --- Fichas que llegaron cerradas ---------------------------------------------
+//
+// Las que el radar recibió ya adjudicadas y sin fecha límite (ver `anotar_llego_cerrada`
+// en radar/consultas.py, que es quien decide y da el motivo). Aquí solo se explican.
+// `vista_viva` es la única en la que el radar sí la vio antes de cerrarse: ahí «Llegó…»
+// no sería verdad, y la etiqueta lo dice de otra forma.
+const LLEGO_CERRADA = {
+  acuerdo_marco: ['contrato basado en un acuerdo marco',
+    'Contrato basado en un acuerdo marco: solo pueden ofertar las empresas que ya están ' +
+    'dentro del acuerdo, por invitación. Por eso no hubo plazo público y se publica ya ' +
+    'adjudicado.'],
+  negociado: ['negociado sin publicidad',
+    'Procedimiento negociado sin publicidad: el órgano invitó directamente a las empresas, ' +
+    'sin anuncio previo. Se conoce cuando ya está adjudicado.'],
+  ted: ['anuncio de adjudicación de TED',
+    'Es el anuncio de adjudicación de TED. El de licitación, con su plazo, se publicó ' +
+    'aparte y el radar no lo tiene unido a esta ficha.'],
+  vista_viva: ['nunca publicó fecha límite',
+    'El radar la vio antes de cerrarse, pero la fuente nunca publicó fecha límite de ' +
+    'presentación.'],
+  generico: ['publicada ya cerrada',
+    'La fuente la publicó ya cerrada y sin fecha límite: el radar no llegó a verla abierta.'],
+};
+
+function explicacionLlegoCerrada(it) {
+  if (!it.llego_cerrada) return null;
+  const motivo = it.llego_cerrada.motivo;
+  const [corto, largo] = LLEGO_CERRADA[motivo] || LLEGO_CERRADA.generico;
+  const ganada = Boolean(it.adjudicatario);
+  const etiqueta = motivo === 'vista_viva'
+    ? (ganada ? 'Adjudicada sin plazo' : 'Cerrada sin plazo')
+    : (ganada ? 'Llegó adjudicada' : 'Llegó cerrada');
+  const cierre = ganada
+    ? 'Sirve para saber quién la ganó y cuándo vence, no para presentarse.'
+    : 'Sirve como antecedente, no para presentarse.';
+  return { etiqueta, corto, largo: `${largo} ${cierre}` };
+}
+
 function tarjeta(it) {
   const d = it.dias_restantes;
+  const cerrada = explicacionLlegoCerrada(it);
 
   const el = document.createElement('article');
   el.className = `tarjeta rev-${it.estado_revision}`;
@@ -547,8 +586,9 @@ function tarjeta(it) {
   const derecha = el.querySelector('.derecha');
   const dias = document.createElement('div');
   if (d === null || d === undefined) {
+    // «Sin plazo» en algo ya adjudicado hacía pensar que podía seguir abierto.
     dias.className = 'dias';
-    dias.innerHTML = '<small>sin plazo</small>';
+    dias.innerHTML = cerrada ? '<small>cerrada</small>' : '<small>sin plazo</small>';
   } else {
     dias.className = d < 0 ? 'dias vencido' : d <= 7 ? 'dias pronto' : 'dias';
     const n = document.createElement('span');
@@ -615,6 +655,13 @@ function tarjeta(it) {
     const c = d === null ? '' : d < 0 ? 'plazo-vencido' : d <= 7 ? 'plazo-pronto' : 'plazo-ok';
     meta.appendChild(pildora(`cierra ${fmtFecha(it.fecha_limite_presentacion)}`,
                              { clase: c, ico: 'ico-reloj' }));
+  }
+  // Delante de «ganó …»: es lo que dice que esto nunca fue una oportunidad para
+  // presentarse. La explicación, al pasar el ratón.
+  if (cerrada) {
+    const p = pildora(cerrada.etiqueta, { clase: 'cerrada', ico: 'ico-info' });
+    conExplicacion(p, cerrada.etiqueta, cerrada.largo);
+    meta.appendChild(p);
   }
   if (it.adjudicatario) {
     meta.appendChild(pildora(`ganó ${it.adjudicatario.slice(0, 38)}`, { clase: 'incumbente' }));
@@ -3311,6 +3358,10 @@ async function abrirPanel(id) {
     <dl>${campos.map(([k]) => `<div class="campo"><dt>${k}</dt><dd data-c="${k}"></dd></div>`).join('')}</dl>
     <h4>Por qué ha entrado</h4>
     <div class="motivo" id="p-motivo"></div>
+    <div id="p-sin-plazo" hidden>
+      <h4>Por qué no tiene plazo</h4>
+      <div class="motivo"></div>
+    </div>
     <div id="p-consulta" hidden></div>
     <h4>Triaje</h4>
     <div class="acciones" id="p-acciones"></div>
@@ -3354,6 +3405,12 @@ async function abrirPanel(id) {
     p.className = 'descripcion';
     p.textContent = d.descripcion;
     $('p-motivo').after(p);
+  }
+  const cerrada = explicacionLlegoCerrada(d);
+  if (cerrada) {
+    $('p-sin-plazo').hidden = false;
+    $('p-sin-plazo').querySelector('.motivo').textContent =
+      `${cerrada.etiqueta}. ${cerrada.largo}`;
   }
 
   pintarEnlacesConsulta(d);
@@ -3456,6 +3513,11 @@ function fichaParaCopiar(d, campos, finFicha) {
     const e = k === 'Fin del contrato' ? explicacionFin(finFicha) : null;
     return [k, e ? `${v} (${e.corto})` : v];
   });
+  // Quien la recibe pegada no ve la etiqueta: que sepa que no es para presentarse.
+  const cerrada = explicacionLlegoCerrada(d);
+  if (cerrada) {
+    filas.push(['Plazo', `${cerrada.etiqueta} (${cerrada.corto}), sin plazo para presentarse`]);
+  }
   let descripcion = (d.descripcion || '').replace(/\s+/g, ' ').trim();
   if (descripcion.length > LARGO_DESCRIPCION_COPIADA) {
     descripcion = descripcion.slice(0, LARGO_DESCRIPCION_COPIADA).replace(/\s+\S*$/, '') + '…';
@@ -3892,24 +3954,48 @@ function conTooltip(marca, titulo, filas) {
       if (f.nombre) fila.appendChild(crear('span', 'tt-nombre', f.nombre));
       tt.appendChild(fila);
     }
-    tt.hidden = false;
-    const caja = marca.getBoundingClientRect();
-    const ancho = tt.offsetWidth;
-    const alto = tt.offsetHeight;
-    const x = Math.min(Math.max(8, caja.left + caja.width / 2 - ancho / 2),
-                       window.innerWidth - ancho - 8);
-    const arriba = caja.top - alto - 8;
-    tt.style.left = `${x}px`;
-    tt.style.top = `${arriba > 8 ? arriba : caja.bottom + 8}px`;
+    colocarTooltip(marca);
   };
+  escucharTooltip(marca, mostrar);
+  // El mismo contenido para quien no ve el tooltip.
+  marca.setAttribute('aria-label',
+    [titulo, ...filas.map((f) => [f.nombre, f.valor].filter(Boolean).join(': '))].join('. '));
+}
+
+// Lo enseña encima de `marca` (o debajo, si arriba no cabe), sin salirse de la ventana.
+function colocarTooltip(marca) {
+  const tt = tooltip();
+  tt.hidden = false;
+  const caja = marca.getBoundingClientRect();
+  const ancho = tt.offsetWidth;
+  const alto = tt.offsetHeight;
+  const x = Math.min(Math.max(8, caja.left + caja.width / 2 - ancho / 2),
+                     window.innerWidth - ancho - 8);
+  const arriba = caja.top - alto - 8;
+  tt.style.left = `${x}px`;
+  tt.style.top = `${arriba > 8 ? arriba : caja.bottom + 8}px`;
+}
+
+function escucharTooltip(marca, mostrar) {
   const ocultar = () => { tooltip().hidden = true; };
   marca.addEventListener('pointerenter', mostrar);
   marca.addEventListener('pointerleave', ocultar);
   marca.addEventListener('focus', mostrar);
   marca.addEventListener('blur', ocultar);
-  // El mismo contenido para quien no ve el tooltip.
-  marca.setAttribute('aria-label',
-    [titulo, ...filas.map((f) => [f.nombre, f.valor].filter(Boolean).join(': '))].join('. '));
+}
+
+// El mismo tooltip, para una explicación en texto corrido en lugar de cifras: sale al
+// instante, no al segundo largo del `title` nativo, y también con el teclado.
+function conExplicacion(marca, titulo, texto) {
+  escucharTooltip(marca, () => {
+    const tt = tooltip();
+    tt.textContent = '';
+    tt.appendChild(crear('div', 'tt-titulo', titulo));
+    tt.appendChild(crear('div', 'tt-texto', texto));
+    colocarTooltip(marca);
+  });
+  marca.tabIndex = 0;
+  marca.setAttribute('aria-label', `${titulo}. ${texto}`);
 }
 
 // Columnas sobre una rejilla, para lo que tiene orden: los meses y los tramos. `serie2`
