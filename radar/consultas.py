@@ -1715,8 +1715,24 @@ def _marcar_renovaciones(expedientes: list[dict]) -> None:
                 break
 
 
+# Dónde mira el buscador de Vencimientos. Lleva el incumbente y la nota de la llamada,
+# que es lo que se busca en una lista de prospección («¿qué le vence a X?», «Marta»).
+_CAMPOS_BUSQUEDA_PROSPECCION = ("objeto", "organo", "adjudicatario", "expediente",
+                                "descripcion", "cpv")
+
+
+def _casa_busqueda_prospeccion(e: dict, palabras: list[str]) -> bool:
+    """Si el expediente lleva TODAS las palabras buscadas, sin mirar tildes ni mayúsculas,
+    en cualquiera de sus campos: «limpieza madrid» casa aunque cada una vaya en uno."""
+    texto = _normalizar_busqueda(" ".join(
+        [str(e.get(c) or "") for c in _CAMPOS_BUSQUEDA_PROSPECCION]
+        + [e["prospeccion"].get("nota") or ""]))
+    return all(p in texto for p in palabras)
+
+
 def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
                  perfil: str | None = None, ver_descartados: bool = False,
+                 q: str | None = None,
                  limite_apartados: int | None = LIMITE_SECCION_PROSPECCION) -> dict:
     """La lista de prospección: contratos ya adjudicados que vencen pronto.
 
@@ -1735,9 +1751,17 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
     Cada uno lleva su estado de prospección (pendiente, siguiendo o descartado). Los
     descartados en la prospección se cuentan pero no se listan, salvo con
     `ver_descartados`.
+
+    `q` filtra los tres apartados y sus recuentos (ver `_casa_busqueda_prospeccion`).
+    El calendario de renovaciones (`por_mes`) no: es la foto del ámbito entero.
     """
     expedientes = _expedientes_prospeccion(con, perfil)
+    # Las renovaciones se buscan antes de filtrar: «después publicó» tiene que mirar todo
+    # lo del órgano, no solo lo que casa con la búsqueda.
     _marcar_renovaciones(expedientes)
+    palabras = _normalizar_busqueda(q).split()
+    if palabras:
+        expedientes = [e for e in expedientes if _casa_busqueda_prospeccion(e, palabras)]
 
     # Las fronteras las calcula SQLite y no Python, para que sean las mismas fechas que
     # el calendario de renovaciones (`EN_VENTANA`): sumar meses no es trivial en el 31
@@ -1792,6 +1816,7 @@ def vencimientos(con: sqlite3.Connection, *, meses: int = 6, limite: int = 200,
         "importe_total": sum(e["importe"] or 0 for e in en_ventana),
         "meses": meses,
         "perfil": perfil,
+        "q": " ".join(palabras) or None,
         "items": en_ventana[:limite],
         # Recuento de cada ventana, para poder comparar de un vistazo sin cambiar de
         # selección una por una. Sale de la misma lista, así que no puede descuadrar.
@@ -1918,13 +1943,14 @@ def _fila_prospeccion(e: dict) -> list:
 
 
 def prospeccion_excel(con: sqlite3.Connection, *, meses: int = 6, perfil: str | None = None,
-                      ver_descartados: bool = False) -> bytes:
+                      ver_descartados: bool = False, q: str | None = None) -> bytes:
     """La lista de Vencimientos en un `.xlsx`: la ventana elegida, lo vencido hace poco y
-    lo que no tiene fecha, cada cosa en su hoja y entera, sin el recorte de la pantalla."""
+    lo que no tiene fecha, cada cosa en su hoja y entera, sin el recorte de la pantalla.
+    Con `q`, solo lo que casa con la búsqueda, como en pantalla."""
     from .excel import Hoja, libro
 
     v = vencimientos(con, meses=meses, perfil=perfil, limite=100_000,
-                     ver_descartados=ver_descartados, limite_apartados=None)
+                     ver_descartados=ver_descartados, q=q, limite_apartados=None)
     columnas = _columnas_prospeccion()
     hojas = [
         Hoja(f"Vencen en {meses} meses", columnas, [_fila_prospeccion(e) for e in v["items"]]),
