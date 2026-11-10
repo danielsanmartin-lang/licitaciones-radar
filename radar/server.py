@@ -222,7 +222,8 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._error("meses no válido")
             self._json(consultas.vencimientos(
                 self.con, meses=meses, perfil=params.get("perfil") or None,
-                ver_descartados=params.get("descartados") == "1"))
+                ver_descartados=params.get("descartados") == "1",
+                q=params.get("q") or None))
 
         elif partes.path == "/api/adjudicatarios":
             try:
@@ -435,7 +436,8 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._error("meses no válido")
             cuerpo = consultas.prospeccion_excel(
                 self.con, meses=meses, perfil=params.get("perfil") or None,
-                ver_descartados=params.get("descartados") == "1")
+                ver_descartados=params.get("descartados") == "1",
+                q=params.get("q") or None)
             self._descarga(
                 cuerpo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 f"vencimientos-{meses}-meses-{date.today().isoformat()}.xlsx")

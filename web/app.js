@@ -2224,9 +2224,11 @@ async function cargarVencimientos() {
   $('total-ventana').textContent = '';
   llenarPerfilVencimientos();
   // Sus propios parámetros y no `query()`, que lleva dentro los filtros de la Bandeja.
+  const q = $('vencimientos-q').value.trim();
   const params = (extra = {}) => {
     const p = new URLSearchParams({ meses });
     if (perfilVencimiento) p.set('perfil', perfilVencimiento);
+    if (q) p.set('q', q);
     for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
     return p.toString();
   };
@@ -2275,13 +2277,19 @@ async function cargarVencimientos() {
   const plural = d.total === 1 ? 'contrato vence' : 'contratos vencen';
   $('total-ventana').innerHTML =
     `<strong>${d.total.toLocaleString('es-ES')}</strong> ${plural} en los próximos ` +
-    `${meses} meses, por <strong>${fmtImporte(d.importe_total)}</strong> en total.`;
+    `${meses} meses, por <strong>${fmtImporte(d.importe_total)}</strong> en total` +
+    (q ? ' con la búsqueda <strong></strong>.' : '.');
+  // El texto buscado va por textContent: lo ha escrito el usuario y no es HTML.
+  if (q) $('total-ventana').querySelector('strong:last-child').textContent = `«${q}»`;
   if (d.descartados_ocultos) {
     $('total-ventana').appendChild(document.createTextNode(
       ` ${d.descartados_ocultos.toLocaleString('es-ES')} descartados en la prospección no salen.`));
   }
 
-  if (!d.items.length) {
+  if (!d.items.length && q) {
+    cont.appendChild(crear('p', 'vacio',
+      `Nada que case con «${q}» vence en los próximos ${meses} meses.`));
+  } else if (!d.items.length) {
     cont.innerHTML = `<p class="vacio">Nada vence en los próximos ${meses} meses.
       Para verlo hace falta histórico de adjudicaciones:
       <code>python3 radar.py ingest --primera-carga</code></p>`;
@@ -2507,6 +2515,11 @@ $('vencimientos-perfil').addEventListener('change', () => {
   cargarVencimientos();
 });
 $('vencimientos-descartados').addEventListener('change', () => cargarVencimientos());
+let debounceVencimientos;
+$('vencimientos-q').addEventListener('input', () => {
+  clearTimeout(debounceVencimientos);
+  debounceVencimientos = setTimeout(() => cargarVencimientos(), 300);
+});
 
 // --- Adjudicatarios --------------------------------------------------------
 

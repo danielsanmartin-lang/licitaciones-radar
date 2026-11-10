@@ -446,6 +446,40 @@ class TestProspeccion(unittest.TestCase):
         self.assertEqual([e["objeto"] for e in v["items"]], ["Concienciación de-q"])
         self.assertEqual(v["por_ventana"][0]["total"], 1)
 
+    def test_buscar_filtra_los_tres_apartados_y_sus_recuentos(self):
+        self._añadir("vence", fin=self._fecha("+1 months"), organo="Ayuntamiento de Móstoles")
+        self._añadir("otro", fin=self._fecha("+1 months"), organo="Diputación", nif="Q2")
+        self._añadir("vencido", fin=self._fecha("-1 months"), organo="Ayto. Mostoles")
+        self._añadir("sin-fin", adjudicada=self._fecha("-1 years"), organo="Diputación",
+                     nif="Q2")
+        # Sin tildes ni mayúsculas, como el resto de buscadores.
+        v = consultas.vencimientos(self.con, q="MOSTOLES")
+        self.assertEqual([e["objeto"] for e in v["items"]], ["Concienciación vence"])
+        self.assertEqual(v["por_ventana"][0]["total"], 1)
+        self.assertEqual([e["objeto"] for e in v["vencidos"]], ["Concienciación vencido"])
+        self.assertEqual(v["sin_fecha"], [])
+
+    def test_buscar_exige_todas_las_palabras_en_cualquier_campo(self):
+        self._añadir("a", fin=self._fecha("+1 months"), organo="Ayuntamiento de Getafe")
+        self._añadir("b", fin=self._fecha("+1 months"), organo="Ayuntamiento de Leganés")
+        # «incumbente» está en el adjudicatario y «getafe» en el órgano.
+        v = consultas.vencimientos(self.con, q="incumbente getafe")
+        self.assertEqual([e["objeto"] for e in v["items"]], ["Concienciación a"])
+        self.assertEqual(consultas.vencimientos(self.con, q="  ")["total"], 2)
+
+    def test_buscar_mira_la_nota_de_la_llamada(self):
+        self._añadir("a", fin=self._fecha("+1 months"))
+        self._añadir("b", fin=self._fecha("+1 months"))
+        clave = consultas.vencimientos(self.con)["items"][0]["clave"]
+        consultas.fijar_prospeccion(self.con, clave, nota="Hablar con Marta")
+        self.assertEqual([e["clave"] for e in consultas.vencimientos(self.con, q="marta")["items"]],
+                         [clave])
+
+    def test_el_excel_respeta_la_busqueda(self):
+        self._añadir("uno", fin=self._fecha("+1 months"))
+        self._añadir("dos", fin=self._fecha("+1 months"))
+        self.assertEqual(self._hojas_excel(meses=6, q="dos")["Vencen en 6 meses"], 1)
+
     def test_el_estado_y_la_nota_se_guardan_por_expediente(self):
         self._añadir("a", fin=self._fecha("+1 months"))
         clave = consultas.vencimientos(self.con)["items"][0]["clave"]
