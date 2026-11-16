@@ -54,6 +54,16 @@ enum Ajustes {
     ///    la app en la carpeta del repositorio y se quiere que use ESE código y ESA
     ///    base, no una copia congelada dentro del bundle. Sin esto, cada cambio en el
     ///    Python obligaría a volver a montar la app para verlo.
+    /// 3. **La copia de trabajo recordada.** Cada vez que arranca desde el repositorio,
+    ///    la app apunta esa carpeta en sus preferencias. Si luego se arrastra a
+    ///    Aplicaciones, o se abre otra copia de la app en este mismo Mac, sigue usando
+    ///    ese repositorio y su base en lugar de estrenar una vacía en Application
+    ///    Support y ponerse a descargar el histórico. A un compañero no le afecta: su
+    ///    app nunca ha arrancado desde un repositorio y no tiene nada apuntado. Para
+    ///    probar aquí la experiencia de un compañero:
+    ///    `defaults delete app.zepo.licitaciones-radar carpetaProyecto`.
+    static let claveProyecto = "carpetaProyecto"
+
     static func raizProyecto() -> URL? {
         let fm = FileManager.default
         let tiene = { (u: URL) in
@@ -64,8 +74,20 @@ enum Ajustes {
         // del repositorio, se desarrolla contra el repositorio.
         var candidata = Bundle.main.bundleURL.deletingLastPathComponent()
         for _ in 0..<5 {
-            if tiene(candidata) { return candidata }
+            if tiene(candidata) {
+                UserDefaults.standard.set(candidata.path, forKey: claveProyecto)
+                return candidata
+            }
             candidata = candidata.deletingLastPathComponent()
+        }
+
+        // Fuera del repositorio, el que se usó la última vez, si sigue ahí.
+        if let ruta = UserDefaults.standard.string(forKey: claveProyecto) {
+            let recordada = URL(fileURLWithPath: ruta, isDirectory: true)
+            if tiene(recordada) {
+                traza("fuera del repositorio; uso el recordado")
+                return recordada
+            }
         }
 
         if let recursos = Bundle.main.resourceURL, tiene(recursos) { return recursos }

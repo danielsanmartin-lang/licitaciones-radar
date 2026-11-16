@@ -182,14 +182,24 @@ It depends on how you use it, and the rule is explicit:
 | | |
 |---|---|
 | App built **inside the project folder** | the project's `data/` and `config/`, as always |
-| App **in Applications** or received from someone | `~/Library/Application Support/Radar de Licitaciones` |
-| `RADAR_DATOS` in the environment | wherever that variable says, and it overrides the other two |
+| App **in Applications** or elsewhere, on a Mac where it already ran from a repository | that repository's `data/` and `config/` |
+| App **in Applications** or received from someone, in any other case | `~/Library/Application Support/Radar de Licitaciones` |
+| `RADAR_DATOS` in the environment | wherever that variable says, and it overrides the others |
 
 In other words: **if you work from the repository, nothing changes and your database
-stays where it is.** The app you build there uses that code and that database. If you
-drag the app to Applications it becomes a separate installation and would start from
-scratch, with its own empty database; if you want to take the one you already have with
-you, move it once:
+stays where it is.** The app you build there uses that code and that database, and it
+also remembers the repository folder: if you later drag it to Applications, or open
+another copy of the app on this Mac (the one you prepare for a colleague, say), it keeps
+using that repository and that database instead of starting from scratch. To try a
+colleague's experience here, with an empty database in Application Support, forget the
+remembered folder:
+
+```bash
+defaults delete app.zepo.licitaciones-radar carpetaProyecto
+```
+
+If what you want is a separate installation that takes the database you already have,
+move it once:
 
 ```bash
 mkdir -p ~/Library/Application\ Support/Radar\ de\ Licitaciones
