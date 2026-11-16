@@ -171,13 +171,23 @@ Depende de cómo la uses, y la regla es explícita:
 | | |
 |---|---|
 | App montada **dentro de la carpeta del proyecto** | `data/` y `config/` del proyecto, como siempre |
-| App **en Aplicaciones** o recibida de alguien | `~/Library/Application Support/Radar de Licitaciones` |
-| `RADAR_DATOS` en el entorno | donde diga esa variable, y manda sobre las otras dos |
+| App **en Aplicaciones** o en otro sitio, en un Mac donde ya arrancó desde un repositorio | el `data/` y el `config/` de ese repositorio |
+| App **en Aplicaciones** o recibida de alguien, en cualquier otro caso | `~/Library/Application Support/Radar de Licitaciones` |
+| `RADAR_DATOS` en el entorno | donde diga esa variable, y manda sobre las demás |
 
 Es decir: **si trabajas con el repositorio, nada cambia y tu base no se mueve de sitio.**
-La app que montas ahí usa ese código y esa base. Si arrastras la app a Aplicaciones se
-convierte en una instalación independiente y empezaría de cero, con su propia base
-vacía; si quieres llevarte la que ya tienes, muévela una vez:
+La app que montas ahí usa ese código y esa base, y además apunta la carpeta del
+repositorio: si luego la arrastras a Aplicaciones, o abres en este Mac otra copia de la
+app (la que preparas para un compañero, por ejemplo), sigue usando ese repositorio y esa
+base en lugar de empezar de cero. Para probar aquí la experiencia de un compañero, con
+base vacía en Application Support, borra lo apuntado:
+
+```bash
+defaults delete app.zepo.licitaciones-radar carpetaProyecto
+```
+
+Si lo que quieres es una instalación independiente que se lleve la base que ya tienes,
+muévela una vez:
 
 ```bash
 mkdir -p ~/Library/Application\ Support/Radar\ de\ Licitaciones
