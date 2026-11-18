@@ -158,7 +158,18 @@ def ingerir(con: sqlite3.Connection, fuentes: list, *, anios: list[int] | None =
     ventana completa. Hace falta cuando cambia la forma de interpretar los datos:
     los registros ya guardados no se reprocesan solos, porque la ingesta
     incremental —con razón— solo pide lo publicado desde la última ejecución.
+
+    Lo escrito se guarda antes de cada descarga, además de cada 2.000 fichas. Las
+    fuentes descargan dentro del propio bucle que va guardando, así que sin esto la
+    transacción seguía abierta —con el cerrojo de escritura tomado— mientras se
+    esperaba a la red, y la bandeja no podía guardar nada durante minutos.
     """
+    with net.antes_de_cada_descarga(con.commit):
+        return _ingerir(con, fuentes, anios=anios, reiniciar_cursor=reiniciar_cursor)
+
+
+def _ingerir(con: sqlite3.Connection, fuentes: list, *, anios: list[int] | None,
+             reiniciar_cursor: bool) -> dict:
     resumen = {}
 
     for fuente in fuentes:

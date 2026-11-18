@@ -76,10 +76,23 @@ class Manejador(BaseHTTPRequestHandler):
 
     @property
     def con(self) -> sqlite3.Connection:
-        # Una conexión por hilo: sqlite3 no admite compartirlas entre hilos.
+        # Una conexión por hilo: sqlite3 no admite compartirlas entre hilos. Con
+        # `ThreadingHTTPServer` cada petición trae su hilo, así que en la práctica es una
+        # por petición. Por eso se abre con `db.abrir()` y no con `db.conectar()`: la base
+        # ya la dejó preparada `arrancar()`, y preparar es lo que podía quedarse esperando
+        # a una búsqueda en marcha.
         if getattr(self._local, "con", None) is None:
-            self._local.con = db.conectar(self.ruta_bd)
+            self._local.con = db.abrir(self.ruta_bd)
         return self._local.con
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            con = getattr(self._local, "con", None)
+            if con is not None:
+                self._local.con = None
+                con.close()
 
     def _json(self, datos, codigo: int = 200) -> None:
         cuerpo = json.dumps(datos, ensure_ascii=False, default=str).encode("utf-8")
@@ -626,5 +639,8 @@ class Manejador(BaseHTTPRequestHandler):
 
 def arrancar(puerto: int = 8811, ruta_bd: Path | None = None) -> ThreadingHTTPServer:
     Manejador.ruta_bd = ruta_bd or db.BD_POR_DEFECTO
+    # Se prepara la base aquí, una vez, antes de atender a nadie: esquema y migraciones.
+    # Las peticiones solo abren (`Manejador.con`).
+    db.conectar(Manejador.ruta_bd).close()
     servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Manejador)
     return servidor
