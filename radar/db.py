@@ -261,12 +261,31 @@ def ahora() -> str:
 
 
 def conectar(ruta: Path | str | None = None) -> sqlite3.Connection:
+    """Abre la base y la deja lista: crea lo que falte y aplica las migraciones."""
     ruta = Path(ruta) if ruta else BD_POR_DEFECTO
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(ruta), timeout=30)
-    con.row_factory = sqlite3.Row
+    con = abrir(ruta)
     con.executescript(ESQUEMA)
     migrar(con)
+    return con
+
+
+def abrir(ruta: Path | str | None = None) -> sqlite3.Connection:
+    """Abre una base que ya se preparó con `conectar()`, sin esquema ni migraciones.
+
+    Es la del servidor, que abre una conexión por petición (`ThreadingHTTPServer` da un
+    hilo nuevo a cada una). Preparar la base en cada petición no solo era trabajo
+    repetido: las migraciones pueden escribir, y escribir exige el cerrojo que una
+    búsqueda en marcha tiene tomado. Así, mientras PLACSP bajaba a 0,1 MB/s, hasta abrir
+    la bandeja esperaba 30 s y acababa en «database is locked». El servidor prepara la
+    base una vez al arrancar (`server.arrancar`) y después solo abre.
+    """
+    ruta = Path(ruta) if ruta else BD_POR_DEFECTO
+    con = sqlite3.connect(str(ruta), timeout=30)
+    con.row_factory = sqlite3.Row
+    # Va por conexión, no se guarda en la base: sin esto no se respetarían las claves
+    # ajenas. `journal_mode = WAL`, en cambio, sí queda guardado en el fichero.
+    con.execute("PRAGMA foreign_keys = ON")
     return con
 
 
@@ -756,13 +775,16 @@ def migrar(con: sqlite3.Connection) -> list[str]:
 
     # Vencimientos dejó de distinguir «contactado» y «reunión»: ahora se sigue o no se
     # sigue, y lo que estaba en marcha pasa a «siguiendo» con su nota intacta.
-    # El commit va siempre: el UPDATE abre transacción aunque no toque ninguna fila, y
-    # dejarla abierta bloquea las escrituras de cualquier otra conexión a la base.
-    pasados = con.execute("UPDATE prospeccion SET estado = 'siguiendo'"
-                          " WHERE estado IN ('contactado', 'reunion')").rowcount
-    con.commit()
-    if pasados:
-        aplicadas.append("prospección: contactado y reunión pasan a «siguiendo»")
+    # Se mira antes con un SELECT y solo se escribe si queda algo que pasar. Un UPDATE
+    # pide el cerrojo de escritura aunque no toque ninguna fila, y con una búsqueda en
+    # marcha ese cerrojo puede estar tomado minutos: abrir la base esperaba 30 s y
+    # acababa en «database is locked» para no cambiar nada.
+    if con.execute("SELECT 1 FROM prospeccion"
+                   " WHERE estado IN ('contactado', 'reunion') LIMIT 1").fetchone():
+        pasados = con.execute("UPDATE prospeccion SET estado = 'siguiendo'"
+                              " WHERE estado IN ('contactado', 'reunion')").rowcount
+        con.commit()
+        aplicadas.append(f"prospección: contactado y reunión pasan a «siguiendo» ({pasados})")
 
     # Autocorrección de las claves de agrupación cuando cambia su lógica.
     if con.execute("SELECT COUNT(*) FROM licitaciones").fetchone()[0]:

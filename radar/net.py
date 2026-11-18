@@ -28,7 +28,9 @@ import ssl
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Iterator
 
 from . import progreso
 
@@ -124,7 +126,32 @@ def contexto_ssl() -> ssl.SSLContext:
     return ctx
 
 
+# Lo que hay que hacer justo antes de salir a la red. Lo pone `pipeline.ingerir` para
+# guardar lo que lleva escrito antes de cada descarga: si no, la transacción abierta
+# —y con ella el cerrojo de escritura de la base— seguía tomada mientras se esperaba a
+# la página siguiente. Con PLACSP a 0,1 MB/s eran unos 2,5 minutos por página, y el
+# guardado cada 2.000 fichas lo alargaba a diez: diez minutos en los que nadie podía
+# marcar, descartar ni anotar nada en la bandeja.
+_antes_de_la_red: Callable[[], None] | None = None
+
+
+@contextmanager
+def antes_de_cada_descarga(funcion: Callable[[], None]) -> Iterator[None]:
+    """Ejecuta `funcion` antes de cada petición de red mientras dure el bloque."""
+    global _antes_de_la_red
+    previa = _antes_de_la_red
+    _antes_de_la_red = funcion
+    try:
+        yield
+    finally:
+        _antes_de_la_red = previa
+
+
 def _abrir(req: urllib.request.Request, timeout: int):
+    # Es lo único que llama a `urlopen`, así que vale para todas las fuentes, las
+    # descargas a fichero y cada reintento.
+    if _antes_de_la_red is not None:
+        _antes_de_la_red()
     return urllib.request.urlopen(req, timeout=timeout, context=contexto_ssl())
 
 
