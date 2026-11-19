@@ -69,6 +69,10 @@ let cierranEnDias = '';
 // El otro filtro que solo pone un contador: «sin vencer» deja fuera lo vencido.
 let sinVencidas = '';
 let kpiActivo = 'en_plazo';
+// El filtro que pone una cifra de «Qué tengo de verdad hoy» (Analítica): `{ etiqueta,
+// params }`. No tiene control propio en la barra de filtros, así que se dice en «Filtrando
+// por» con su botón para quitarlo.
+let filtroAnalitica = null;
 
 // Cada contador de la cabecera y el filtro que aplica. Tiene que coincidir con lo
 // que calcula consultas.resumen() o el número volvería a no cuadrar con la lista.
@@ -107,6 +111,7 @@ function filtros() {
     cierran_en_dias: cierranEnDias,
     sin_vencidas: sinVencidas,
     con_plazo: $('con-plazo').checked ? '1' : '',
+    ...(filtroAnalitica ? filtroAnalitica.params : {}),
   };
 }
 
@@ -114,6 +119,7 @@ function aplicarKpi(clave) {
   const kpi = KPIS.find((k) => k.clave === clave);
   if (!kpi) return;
   kpiActivo = clave;
+  filtroAnalitica = null;
   cierranEnDias = kpi.filtro.cierran_en_dias || '';
   sinVencidas = kpi.filtro.sin_vencidas || '';
   $('vivas').checked = kpi.filtro.vivas === '1';
@@ -127,6 +133,7 @@ function aplicarKpi(clave) {
 
 function limpiarFiltros() {
   kpiActivo = null;
+  filtroAnalitica = null;
   cierranEnDias = '';
   sinVencidas = '';
   soloNovedades = false;
@@ -146,6 +153,7 @@ function limpiarFiltros() {
 // abiertas" seguía marcada. Ahora los filtros activos se dicen en voz alta.
 function describirFiltros() {
   const partes = [];
+  if (filtroAnalitica) partes.push(`desde la Analítica: ${filtroAnalitica.etiqueta}`);
   if ($('vivas').checked) partes.push('solo abiertas (plazo sin vencer)');
   if (cierranEnDias) partes.push(`cierran en ${cierranEnDias} días`);
   if (sinVencidas) partes.push('sin las de plazo vencido');
@@ -735,6 +743,13 @@ async function cargarLista(reset = true) {
     btn.textContent = 'ver todas';
     btn.addEventListener('click', limpiarFiltros);
     fa.appendChild(btn);
+    if (filtroAnalitica) {
+      const quitar = document.createElement('button');
+      quitar.className = 'quitar';
+      quitar.textContent = 'quitar el de la Analítica';
+      quitar.addEventListener('click', () => { filtroAnalitica = null; cargarLista(); });
+      fa.appendChild(quitar);
+    }
   } else {
     fa.hidden = true;
   }
@@ -4235,6 +4250,18 @@ function barraApilada(partes) {
     li.appendChild(crear('strong', '', fmtEntero(p.valor)));
     li.appendChild(crear('span', 'apilada-pct', porcentaje));
     lista.appendChild(li);
+    // Con `alPulsar`, el tramo y su fila de la leyenda llevan a esas fichas.
+    if (p.alPulsar) {
+      for (const el of [seg, li]) {
+        el.classList.add('pulsable');
+        el.setAttribute('role', 'button');
+        el.addEventListener('click', p.alPulsar);
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); p.alPulsar(); }
+        });
+      }
+      li.tabIndex = 0;
+    }
   }
   caja.appendChild(barra);
   caja.appendChild(lista);
@@ -4952,50 +4979,94 @@ function pintarAdjudicatarios(d) {
 // Los estados de la fuente, juntados en cuatro momentos de la vida de un expediente. El
 // color sigue al momento y no al puesto: lo abierto es siempre el azul, aunque sea lo que
 // menos haya, y lo cerrado va en gris porque es lo que menos se puede trabajar.
-const MOMENTOS = [
-  { clave: 'abiertas', nombre: 'Abiertas o por salir', clase: 'serie-1',
-    estados: ['publicada', 'previo'] },
-  { clave: 'evaluacion', nombre: 'En evaluación', clase: 'serie-2', estados: ['evaluacion'] },
-  { clave: 'cerradas', nombre: 'Adjudicadas o cerradas', clase: 'serie-gris',
-    estados: ['adjudicada', 'formalizada', 'resuelta'] },
-  { clave: 'otras', nombre: 'Anuladas o sin estado', clase: 'serie-gris-2', estados: [] },
-];
+// Los tramos de la barra. El reparto lo hace el servidor (`FASES_CARTERA`), que es el
+// mismo que usa el filtro `fase` de la bandeja: aquí solo el nombre y el color.
+const MOMENTOS = {
+  abiertas: { nombre: 'Publicadas o por salir', clase: 'serie-1' },
+  evaluacion: { nombre: 'En evaluación', clase: 'serie-2' },
+  adjudicadas: { nombre: 'Adjudicadas o cerradas', clase: 'serie-gris' },
+  otras: { nombre: 'Anuladas o sin estado', clase: 'serie-gris-2' },
+};
+
+// Lleva a la Bandeja con exactamente las fichas de una cifra de «Qué tengo de verdad
+// hoy». Se quitan los demás filtros —texto, comunidad, importe, «ocultar sin plazo»—
+// porque si no el número de la lista no sería el que se acaba de pulsar, y el perfil es
+// el del ámbito de la Analítica. `solo_casan` deja fuera lo que sigues y ya no casa, que
+// el bloque tampoco cuenta.
+function irDesdeCartera(etiqueta, params, { vivas = false, orden = null } = {}) {
+  kpiActivo = null;
+  cierranEnDias = '';
+  sinVencidas = '';
+  soloNovedades = false;
+  $('tab-novedades').classList.remove('activo');
+  ponerConPlazo(false);
+  $('q').value = '';
+  $('estado').value = '';
+  $('ccaa').value = '';
+  $('importe_min').value = '';
+  const perfil = ambitoAnalitica.startsWith('perfil:') ? ambitoAnalitica.slice(7) : '';
+  $('perfil').value = [...$('perfil').options].some((o) => o.value === perfil) ? perfil : '';
+  $('vivas').checked = vivas;
+  if (orden) $('orden').value = orden;
+  filtroAnalitica = { etiqueta, params: { solo_casan: '1', ...params } };
+  for (const b of $('kpis').querySelectorAll('button.kpi')) b.classList.remove('activo');
+  mostrarVista('bandeja');
+  cargarLista();
+}
 
 function pintarCartera(d) {
   const el = bloqueAnalitica('Qué tengo de verdad hoy',
     '¿Esto es un pipeline o un archivo histórico?', 'cartera');
   const fila = crear('div', 'cifras-fila');
+  const corte = fmtDecimal(d.puntuacion_lista_corta);
+  // En el orden en que se trabaja: lo que se puede presentar hoy, primero. Los nombres
+  // dicen de qué periodo es cada cifra porque «413 coincidencias» se leía como pipeline,
+  // y es todo lo que ha casado desde que hay datos, abierto o no.
   const cifras = [
-    ['coincidencias', d.expedientes, ''],
-    [`puntúan más de ${fmtDecimal(d.puntuacion_lista_corta)}`, d.lista_corta, ''],
-    ['con plazo abierto', d.con_plazo_abierto, 'ojo'],
-    ['ya cerradas o adjudicadas', d.expedientes - d.con_plazo_abierto, ''],
+    ['con plazo abierto', 'se puede presentar hoy', d.con_plazo_abierto, 'ojo',
+     () => irDesdeCartera('con plazo abierto', {}, { vivas: true })],
+    ['coincidencias', 'desde que hay datos, abiertas o no', d.expedientes, '',
+     () => irDesdeCartera('todas las coincidencias', {})],
+    [`puntúan más de ${corte}`, 'las que mejor encajan', d.lista_corta, '',
+     () => irDesdeCartera(`puntúan más de ${corte}`,
+       { puntuacion_min: String(d.puntuacion_lista_corta) }, { orden: 'puntuacion' })],
+    ['sin plazo abierto', 'cerradas, adjudicadas o vencidas', d.sin_plazo_abierto, '',
+     () => irDesdeCartera('sin plazo abierto', { cerradas: '1' })],
   ];
-  for (const [etiqueta, valor, clase] of cifras) {
-    const c = crear('div', clase);
+  for (const [etiqueta, pie, valor, clase, alPulsar] of cifras) {
+    const c = crear('button', `cifra-cartera ${clase}`.trim());
+    c.title = 'Ver estas licitaciones en la Bandeja';
     c.appendChild(crear('span', '', etiqueta));
     c.appendChild(crear('b', '', valor.toLocaleString('es-ES')));
+    c.appendChild(crear('span', 'pie', pie));
+    c.addEventListener('click', alPulsar);
     fila.appendChild(c);
   }
   el.appendChild(fila);
 
-  const porMomento = Object.fromEntries(MOMENTOS.map((m) => [m.clave, 0]));
-  for (const e of d.estados) {
-    const momento = MOMENTOS.find((m) => m.estados.includes(e.estado)) || MOMENTOS[3];
-    porMomento[momento.clave] += e.expedientes;
-  }
-  el.appendChild(barraApilada(MOMENTOS.map((m) => ({
-    nombre: m.nombre, valor: porMomento[m.clave], clase: m.clase,
+  el.appendChild(barraApilada(d.fases.map((f) => ({
+    nombre: MOMENTOS[f.clave].nombre,
+    valor: f.expedientes,
+    clase: MOMENTOS[f.clave].clase,
+    alPulsar: () => irDesdeCartera(MOMENTOS[f.clave].nombre.toLowerCase(), { fase: f.clave }),
   }))));
 
   // La frase sale del dato: el día que esto sea un pipeline de verdad, dejará de decir
   // que es un archivo.
+  const publicadas = (d.fases.find((f) => f.clave === 'abiertas') || {}).expedientes || 0;
   nota(el, d.es_archivo_historico
     ? `De ${d.expedientes.toLocaleString('es-ES')} coincidencias, ${d.con_plazo_abierto} ` +
       'tienen el plazo abierto: esto es sobre todo un archivo histórico, y su valor está ' +
       'en los otros bloques, no en presentar ofertas hoy.'
     : `${d.con_plazo_abierto} coincidencias tienen el plazo abierto: hay pipeline vivo que ` +
       'trabajar en la bandeja.');
+  if (publicadas > d.con_plazo_abierto) {
+    nota(el, `«Publicadas o por salir» (${publicadas}) es el estado que publica la fuente: ` +
+      `de ellas, solo las que siguen en plazo cuentan como «con plazo abierto». Pulsa ` +
+      'cualquier cifra o tramo para ver esas licitaciones en la Bandeja.');
+  } else {
+    nota(el, 'Pulsa cualquier cifra o tramo para ver esas licitaciones en la Bandeja.');
+  }
   const m = metodo(el, 'Ver cada estado');
   if (d.consultas_previas_sin_importe) {
     nota(m, `${d.consultas_previas_sin_importe} son consultas previas al mercado sin ` +

@@ -1888,17 +1888,35 @@ progress:not([value]) { opacity: .7; }
 .apilada-leyenda strong { font-weight: 600; font-variant-numeric: tabular-nums; }
 .apilada-pct { min-width: 3em; text-align: right; color: var(--texto-ter); font-variant-numeric: tabular-nums; }
 
-/* Las cifras de la cartera, como fichas de cifra. */
+/* Las cifras de la cartera, como fichas de cifra. Son botones: cada una lleva a la Bandeja
+   con exactamente esas licitaciones. */
 .bloque .cifras-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--e-2); }
-.bloque .cifras-fila div {
+.bloque .cifras-fila div,
+.cifra-cartera {
   padding: var(--e-2) var(--e-3);
   background: var(--relleno);
   border-radius: var(--radio-lg);
   font-size: var(--txt-xs);
   color: var(--texto-ter);
 }
+.cifra-cartera {
+  border: 1px solid transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: default;
+  transition: border-color var(--transicion);
+}
+/* El mismo aviso de «se puede pulsar» que las cifras clave de arriba. */
+.cifra-cartera:hover { border-color: var(--acento-borde); }
+.cifra-cartera:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.cifra-cartera .pie { display: block; margin-top: 2px; color: var(--texto-ter); }
 .bloque .cifras-fila b { display: block; margin-top: 2px; font: 600 var(--txt-xl)/1.3 var(--letra-titulo); color: var(--texto); }
 .bloque .cifras-fila .ojo b { color: var(--ambar); }
+/* Los tramos y las filas de la leyenda que llevan a la Bandeja. */
+.apilada .pulsable { cursor: default; }
+.apilada-leyenda li.pulsable { border-radius: var(--radio-sm); padding: 1px 4px; margin: -1px -4px; }
+.apilada-leyenda li.pulsable:hover { background: var(--relleno); }
+.apilada-leyenda li.pulsable:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
 
 /* Tabla escueta para los cinco mayores, los CPV y los datos de cada gráfica: sin bordes de
    celda, que aquí lo que se compara son las cifras. */

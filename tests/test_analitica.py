@@ -437,6 +437,76 @@ class TestCartera(Base):
         self.assertFalse(consultas.analitica(self.con)["cartera"]["es_archivo_historico"])
 
 
+class TestCarteraLlevaALaBandeja(Base):
+    """Cada cifra y cada tramo de «Qué tengo de verdad hoy» lleva a la Bandeja con un
+    filtro. El número de la lista tiene que ser el que se ha pulsado: si no, la cifra
+    vuelve a ser un número que no se puede comprobar, que es lo que motivó hacerlas
+    pulsables («413 coincidencias» no cuadraba con nada que se pudiera ver)."""
+
+    def setUp(self):
+        super().setUp()
+        mas10, menos10 = self._sqlite_fecha("+10 days"), self._sqlite_fecha("-10 days")
+        # Un expediente con dos anuncios: se publicó y luego se adjudicó.
+        self._añadir("lic", expediente="E/1", estado="publicada", fecha_publicacion="2025-01-01",
+                     fecha_limite_presentacion="2025-02-01", puntuacion=6.0)
+        self._añadir("adj", expediente="E/1", estado="adjudicada", fecha_publicacion="2025-04-01")
+        self._añadir("abierta", expediente="E/2", estado="publicada",
+                     fecha_limite_presentacion=mas10, perfiles=("p", "q"), puntuacion=5.5)
+        self._añadir("vencida", expediente="E/3", estado="publicada",
+                     fecha_limite_presentacion=menos10, perfiles=("q",))
+        self._añadir("evaluando", expediente="E/4", estado="evaluacion", puntuacion=5.0)
+        self._añadir("anulada", expediente="E/5", estado="anulada")
+        self._añadir("rara", expediente="E/6", estado="desconocido", perfiles=("q",))
+        descartada = self._añadir("descartada", expediente="E/7", estado="publicada",
+                                  fecha_limite_presentacion=mas10, puntuacion=9.0)
+        db.fijar_revision(self.con, descartada, estado="descartado",
+                          motivo_descarte="fuera de nicho")
+        # Seguida y ya sin perfil: está en la Bandeja, pero el bloque no la cuenta.
+        seguida = self._añadir("seguida", expediente="E/8", estado="publicada",
+                               fecha_limite_presentacion=mas10, perfiles=())
+        db.fijar_revision(self.con, seguida, estado="siguiendo")
+        self.con.commit()
+
+    def comprobar(self, perfil):
+        consultas._MEMO.clear()
+        d = consultas.analitica(self.con, perfil=perfil)["cartera"]
+        base = dict(perfil=perfil, solo_casan=True)
+        contar = lambda **f: consultas.contar(self.con, **base, **f)  # noqa: E731
+        self.assertEqual(contar(solo_vivas=False), d["expedientes"])
+        self.assertEqual(contar(solo_vivas=True), d["con_plazo_abierto"])
+        self.assertEqual(contar(solo_vivas=False, cerradas=True), d["sin_plazo_abierto"])
+        self.assertEqual(d["con_plazo_abierto"] + d["sin_plazo_abierto"], d["expedientes"])
+        self.assertEqual(contar(solo_vivas=False, puntuacion_min=d["puntuacion_lista_corta"]),
+                         d["lista_corta"])
+        for f in d["fases"]:
+            with self.subTest(perfil=perfil, fase=f["clave"]):
+                self.assertEqual(contar(solo_vivas=False, fase=f["clave"]), f["expedientes"])
+        self.assertEqual(sum(f["expedientes"] for f in d["fases"]), d["expedientes"])
+        return d
+
+    def test_todas_las_cifras_cuadran_con_la_bandeja(self):
+        d = self.comprobar(None)
+        self.assertEqual((d["expedientes"], d["con_plazo_abierto"], d["lista_corta"]), (6, 1, 2))
+        self.assertEqual({f["clave"]: f["expedientes"] for f in d["fases"]},
+                         {"abiertas": 2, "evaluacion": 1, "adjudicadas": 1, "otras": 2})
+
+    def test_y_con_un_perfil(self):
+        self.comprobar("p")
+        self.comprobar("q")
+
+    def test_la_lista_es_la_del_ultimo_anuncio_del_expediente(self):
+        """E/1 se publicó y luego se adjudicó: no es «publicada», aunque uno de sus
+        anuncios lo fuera."""
+        r = consultas.bandeja(self.con, solo_vivas=False, solo_casan=True, fase="abiertas")
+        self.assertEqual({it["expediente"] for it in r["items"]}, {"E/2", "E/3"})
+        r = consultas.bandeja(self.con, solo_vivas=False, solo_casan=True, fase="adjudicadas")
+        self.assertEqual([it["id_externo"] for it in r["items"]], ["adj"])
+
+    def test_fase_desconocida_se_rechaza(self):
+        with self.assertRaises(ValueError):
+            consultas.contar(self.con, fase="inventada")
+
+
 class TestRenovaciones(Base):
     def test_cuenta_los_que_vencen_en_la_ventana_y_los_que_tienen_incumbente(self):
         self._añadir("con-titular", expediente="E/1", estado="adjudicada",

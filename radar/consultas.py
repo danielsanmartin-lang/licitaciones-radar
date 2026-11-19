@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from . import categorias, db, enlaces
-from .model import (ESTADO_ADJUDICADA, ESTADO_ANULADA, ESTADO_FORMALIZADA,
+from .model import (ESTADO_ADJUDICADA, ESTADO_ANULADA, ESTADO_EVALUACION,
+                    ESTADO_FORMALIZADA, ESTADO_PREVIO, ESTADO_PUBLICADA,
                     ESTADO_RESUELTA, ESTADOS_VIVOS, ORIGEN_FIN_APROXIMADA,
                     ORIGEN_FIN_ESTIMADA, ORIGEN_FIN_PUBLICADA, normalizar)
 
@@ -188,8 +189,18 @@ def _condiciones(
     solo_novedades: bool = False,
     con_plazo: bool = False,
     sin_vencidas: bool = False,
+    solo_casan: bool = False,
+    puntuacion_min: float | None = None,
+    cerradas: bool = False,
+    fase: str | None = None,
 ) -> tuple[list[str], list]:
     """Construye el WHERE de la bandeja. Lo comparten la lista y los contadores.
+
+    Los cuatro últimos son los de «Qué tengo de verdad hoy» (Analítica): cada cifra y
+    cada tramo de su barra llevan a la bandeja con exactamente esas fichas, y para que
+    el número cuadre se calculan con la misma entrada que el bloque
+    (`_entrada_expedientes`), no con una parecida. `solo_casan` deja fuera lo que sigues
+    sin que case ya con ningún perfil, que el bloque no cuenta.
 
     Está extraído a propósito: los contadores de la cabecera tenían sus propias
     consultas y acabaron contando otra cosa que la lista (decían 945 sin revisar
@@ -252,8 +263,61 @@ def _condiciones(
         if marca is not None:
             where.append("l.id > ?")
             params.append(marca)
+    if solo_casan:
+        where.append("m.licitacion_id IS NOT NULL")
+    if puntuacion_min is not None:
+        # Estricto, como `lista_corta` en la cartera: «más de 5,0».
+        where.append("m.puntuacion > ?")
+        params.append(float(puntuacion_min))
+    if cerradas or fase:
+        # Por expediente, no por anuncio: el subquery tiene su propio `l` y devuelve los
+        # grupos que cumplen; fuera solo se mira si el de la fila está entre ellos.
+        entrada, p_entrada = _entrada_expedientes(Ambito.de(perfil=perfil))
+        if cerradas:
+            # Ningún anuncio del expediente está en plazo: es «coincidencias» menos «con
+            # plazo abierto», con las mismas dos condiciones (`_condicion_viva`).
+            viva, p_viva = _condicion_viva()
+            where.append(f"{_GRUPO} NOT IN (SELECT {_GRUPO} {entrada} AND {viva})")
+            params.extend(p_entrada + p_viva)
+        if fase:
+            # El estado del anuncio más reciente del expediente: el de la barra.
+            cond, p_fase = _condicion_fase(fase)
+            where.append(
+                f"{_GRUPO} IN (SELECT g FROM ("
+                f"  SELECT {_GRUPO} AS g, l.estado AS estado,"
+                f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+                "                             ORDER BY l.fecha_publicacion DESC, l.id DESC) AS rn"
+                f"  {entrada}) WHERE rn = 1 AND {cond})")
+            params.extend(p_entrada + p_fase)
 
     return where, params
+
+
+# Los tramos de la barra de «Qué tengo de verdad hoy», por el estado del último anuncio
+# de cada expediente. `otras` es todo lo demás: anuladas, sin estado conocido o sin estado.
+FASES_CARTERA = {
+    "abiertas": (ESTADO_PUBLICADA, ESTADO_PREVIO),
+    "evaluacion": (ESTADO_EVALUACION,),
+    "adjudicadas": (ESTADO_ADJUDICADA, ESTADO_FORMALIZADA, ESTADO_RESUELTA),
+    "otras": (),
+}
+
+
+def fase_de(estado: str | None) -> str:
+    for clave, estados in FASES_CARTERA.items():
+        if estado in estados:
+            return clave
+    return "otras"
+
+
+def _condicion_fase(fase: str) -> tuple[str, list]:
+    if fase not in FASES_CARTERA:
+        raise ValueError(f"fase no válida: {fase}. Válidas: {', '.join(FASES_CARTERA)}")
+    if fase != "otras":
+        estados = list(FASES_CARTERA[fase])
+        return f"estado IN ({', '.join('?' * len(estados))})", estados
+    conocidos = [e for v in FASES_CARTERA.values() for e in v]
+    return f"COALESCE(estado, '') NOT IN ({', '.join('?' * len(conocidos))})", conocidos
 
 
 def contar(con: sqlite3.Connection, **filtros) -> int:
@@ -284,6 +348,10 @@ def bandeja(
     solo_novedades: bool = False,
     con_plazo: bool = False,
     sin_vencidas: bool = False,
+    solo_casan: bool = False,
+    puntuacion_min: float | None = None,
+    cerradas: bool = False,
+    fase: str | None = None,
     orden: str = ORDEN_POR_DEFECTO,
     limite: int = 200,
     offset: int = 0,
@@ -297,7 +365,8 @@ def bandeja(
         perfil=perfil, estado_revision=estado_revision, solo_vivas=solo_vivas,
         cierran_en_dias=cierran_en_dias, ccaa=ccaa, fuente=fuente,
         importe_min=importe_min, busqueda=busqueda, solo_novedades=solo_novedades,
-        con_plazo=con_plazo, sin_vencidas=sin_vencidas,
+        con_plazo=con_plazo, sin_vencidas=sin_vencidas, solo_casan=solo_casan,
+        puntuacion_min=puntuacion_min, cerradas=cerradas, fase=fase,
     )
     where, params = _condiciones(con, **filtros)
     orden_sql = ORDENES.get(orden, ORDENES[ORDEN_POR_DEFECTO])
@@ -2737,6 +2806,7 @@ def _bloque_cartera(con, ambito) -> dict:
         "       COUNT(CASE WHEN punt > ? AND punt <= ? THEN 1 END) AS intermedios,"
         "       COUNT(CASE WHEN punt <= ? THEN 1 END) AS resto,"
         "       COUNT(CASE WHEN abierta = 1 THEN 1 END) AS con_plazo_abierto,"
+        "       COUNT(CASE WHEN abierta = 0 THEN 1 END) AS sin_plazo_abierto,"
         "       COUNT(CASE WHEN consulta = 1 AND imp IS NULL THEN 1 END)"
         "           AS consultas_previas_sin_importe"
         "  FROM ("
@@ -2769,6 +2839,13 @@ def _bloque_cartera(con, ambito) -> dict:
 
     datos = {k: f[k] for k in f.keys()}
     datos["estados"] = estados
+    # Los tramos de la barra, sumados aquí y no en la interfaz, con el mismo reparto que
+    # el filtro `fase` de la bandeja: si cada lado agrupara por su cuenta, pulsar un
+    # tramo podría dar otro número.
+    fases = {clave: 0 for clave in FASES_CARTERA}
+    for e in estados:
+        fases[fase_de(e["estado"])] += e["expedientes"]
+    datos["fases"] = [{"clave": c, "expedientes": n} for c, n in fases.items()]
     datos["puntuacion_lista_corta"] = PUNTUACION_LISTA_CORTA
     datos["siempre_a_fecha_de_hoy"] = True
     # La frase sale del dato y no escrita a mano: el día que el usuario ingeste a diario

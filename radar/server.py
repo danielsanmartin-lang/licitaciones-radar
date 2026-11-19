@@ -67,6 +67,34 @@ def _perfiles_activos() -> list[str]:
     ]
 
 
+def _filtros_bandeja(params: dict) -> dict:
+    """Los filtros de la bandeja tal como llegan en la URL. Los comparten la lista y el
+    CSV, para que «Exportar CSV» baje exactamente lo que se ve."""
+    return dict(
+        perfil=params.get("perfil") or None,
+        estado_revision=params.get("estado") or None,
+        solo_vivas=params.get("vivas", "1") == "1",
+        ccaa=params.get("ccaa") or None,
+        fuente=params.get("fuente") or None,
+        importe_min=float(params["importe_min"]) if params.get("importe_min") else None,
+        cierran_en_dias=(
+            int(params["cierran_en_dias"]) if params.get("cierran_en_dias") else None
+        ),
+        busqueda=params.get("q") or None,
+        solo_novedades=params.get("novedades") == "1",
+        con_plazo=params.get("con_plazo") == "1",
+        sin_vencidas=params.get("sin_vencidas") == "1",
+        # Los de «Qué tengo de verdad hoy» (Analítica).
+        solo_casan=params.get("solo_casan") == "1",
+        puntuacion_min=(
+            float(params["puntuacion_min"]) if params.get("puntuacion_min") else None
+        ),
+        cerradas=params.get("cerradas") == "1",
+        fase=params.get("fase") or None,
+        orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
+    )
+
+
 class Manejador(BaseHTTPRequestHandler):
     server_version = "licitaciones-radar"
     ruta_bd: Path = db.BD_POR_DEFECTO
@@ -166,21 +194,7 @@ class Manejador(BaseHTTPRequestHandler):
         elif partes.path == "/api/bandeja":
             try:
                 self._json(consultas.bandeja(
-                    self.con,
-                    perfil=params.get("perfil") or None,
-                    estado_revision=params.get("estado") or None,
-                    solo_vivas=params.get("vivas", "1") == "1",
-                    ccaa=params.get("ccaa") or None,
-                    fuente=params.get("fuente") or None,
-                    importe_min=float(params["importe_min"]) if params.get("importe_min") else None,
-                    cierran_en_dias=(
-                        int(params["cierran_en_dias"]) if params.get("cierran_en_dias") else None
-                    ),
-                    busqueda=params.get("q") or None,
-                    solo_novedades=params.get("novedades") == "1",
-                    con_plazo=params.get("con_plazo") == "1",
-                    sin_vencidas=params.get("sin_vencidas") == "1",
-                    orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
+                    self.con, **_filtros_bandeja(params),
                     limite=min(int(params.get("limite", 200)), 1000),
                     offset=int(params.get("offset", 0)),
                 ))
@@ -442,15 +456,14 @@ class Manejador(BaseHTTPRequestHandler):
             self._json(d)
 
         elif partes.path == "/api/export.csv":
-            columnas, filas = consultas.para_csv(
-                self.con,
-                perfil=params.get("perfil") or None,
-                estado_revision=params.get("estado") or None,
-                solo_vivas=params.get("vivas", "1") == "1",
-                busqueda=params.get("q") or None,
-                con_plazo=params.get("con_plazo") == "1",
-                sin_vencidas=params.get("sin_vencidas") == "1",
-            )
+            # Los mismos filtros que la lista: antes se quedaba con seis y el CSV traía
+            # más filas de las que se veían (sin comunidad, importe mínimo ni «cierran en»).
+            try:
+                columnas, filas = consultas.para_csv(self.con, **_filtros_bandeja(params))
+            except sqlite3.OperationalError as exc:
+                return self._error(f"Búsqueda no válida: {exc}")
+            except ValueError as exc:
+                return self._error(str(exc))
             self._csv(columnas, filas, "licitaciones.csv")
 
         elif partes.path == "/api/vencimientos.xlsx":
