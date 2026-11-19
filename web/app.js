@@ -2673,11 +2673,110 @@ async function cargarAdjudicatarios() {
         <span><b>${fmtImporte(e.importe)}</b></span>
       </div>`;
     el.querySelector('h3').textContent = e.empresa;
+    el.prepend(botonEstrella('empresa', e.empresa, e.favorito));
     // Con el mismo ámbito que el ranking: si no, la ficha de una empresa de cloud
     // enseñaría solo lo que casa con los perfiles y no cuadraría con su cifra.
     el.addEventListener('click', () => abrirFicha('competidor', e.empresa, ambitoAdjudicatarios));
     cont.appendChild(el);
   }
+}
+
+// --- Favoritos -------------------------------------------------------------------
+//
+// Empresas y organismos marcados con la estrella: una fila de botones encima de cada
+// listado, y cada uno abre su ficha con el ámbito del listado. Los guarda el servidor.
+
+let favoritosActuales = { empresa: [], organismo: [] };
+const FAVORITOS = {
+  empresa: { cont: 'adjudicatarios-favoritos', ficha: 'competidor',
+             ambito: () => ambitoAdjudicatarios,
+             vacio: 'Pulsa ☆ junto a una empresa para tenerla aquí a un clic.' },
+  organismo: { cont: 'organismos-favoritos', ficha: 'organismo',
+               ambito: () => ambitoOrganismos,
+               vacio: 'Pulsa ☆ junto a un organismo para tenerlo aquí a un clic.' },
+};
+
+async function cargarFavoritos() {
+  try {
+    favoritosActuales = await pedirJSON('/api/favoritos');
+  } catch { /* sin favoritos se ve el listado igual */ }
+  pintarFavoritos('empresa');
+  pintarFavoritos('organismo');
+}
+
+function pintarFavoritos(tipo) {
+  const conf = FAVORITOS[tipo];
+  const cont = $(conf.cont);
+  cont.innerHTML = '';
+  cont.appendChild(crear('span', 'favoritos-titulo', '★ Favoritos'));
+  const lista = favoritosActuales[tipo] || [];
+  if (!lista.length) {
+    cont.appendChild(crear('span', 'pista', conf.vacio));
+    return;
+  }
+  for (const f of lista) {
+    const b = crear('button', 'favorito', f.nombre);
+    b.title = `Abrir la ficha de ${f.nombre}`;
+    b.addEventListener('click', () => abrirFicha(conf.ficha, f.nombre, conf.ambito()));
+    cont.appendChild(b);
+  }
+}
+
+async function cambiarFavorito(tipo, nombre, favorito) {
+  const r = await fetch('/api/favoritos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo, nombre, favorito }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'No se ha podido guardar el favorito.');
+  favoritosActuales = d;
+  pintarFavoritos(tipo);
+}
+
+// La estrella de cada fila. No abre la ficha: la fila sí.
+function botonEstrella(tipo, nombre, activo) {
+  const b = crear('button', 'estrella');
+  let marcado = Boolean(activo);
+  const pintar = () => {
+    b.textContent = marcado ? '★' : '☆';
+    b.classList.toggle('activa', marcado);
+    b.setAttribute('aria-pressed', marcado ? 'true' : 'false');
+    b.title = marcado ? 'Quitar de favoritos' : 'Añadir a favoritos';
+    b.setAttribute('aria-label', `${b.title}: ${nombre}`);
+  };
+  pintar();
+  b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await cambiarFavorito(tipo, nombre, !marcado);
+      marcado = !marcado;
+      pintar();
+    } catch { /* se queda como estaba, que es la verdad */ }
+  });
+  return b;
+}
+
+// El botón de la cabecera de la ficha. `nombre` es el de la ficha y no el pulsado: en la
+// de una empresa, la razón social más larga de las que se juntan.
+function pintarFavoritoFicha(tipoFicha, nombre, activo) {
+  const tipo = tipoFicha === 'organismo' ? 'organismo' : 'empresa';
+  const b = $(`${tipoFicha}-favorito`);
+  let marcado = Boolean(activo);
+  const pintar = () => {
+    b.textContent = marcado ? '★ En favoritos' : '☆ Añadir a favoritos';
+    b.classList.toggle('activa', marcado);
+    b.setAttribute('aria-pressed', marcado ? 'true' : 'false');
+  };
+  pintar();
+  b.hidden = false;
+  b.onclick = async () => {
+    try {
+      await cambiarFavorito(tipo, nombre, !marcado);
+      marcado = !marcado;
+      pintar();
+    } catch { /* se queda como estaba */ }
+  };
 }
 
 // --- Organismos -------------------------------------------------------------------
@@ -2713,6 +2812,7 @@ async function cargarOrganismos() {
   }
   for (const o of d.items) {
     const el = crear('article', 'tarjeta fila-organismo');
+    el.appendChild(botonEstrella('organismo', o.organo, o.favorito));
     const izq = crear('div');
     izq.appendChild(crear('h3', '', o.organo));
     izq.appendChild(crear('div', 'organo', o.ultimo
@@ -2746,6 +2846,7 @@ async function cargarFicha() {
   const pasada = ++pasadaFicha;
   const id = `ficha-${f.tipo}`;
   $(`${f.tipo}-ambito`).value = f.ambito;
+  $(`${f.tipo}-favorito`).hidden = true;
   $('vista-titulo').textContent = f.nombre;
   $('vista-sub').textContent = '';
   const carga = empezarCarga(id, esMercado(f.ambito)
@@ -2766,6 +2867,7 @@ async function cargarFicha() {
     cont.appendChild(crear('p', 'vacio', `${d.error} Prueba con otro ámbito en el desplegable.`));
     return;
   }
+  pintarFavoritoFicha(f.tipo, f.tipo === 'organismo' ? d.organo : d.empresa, d.favorito);
   if (f.tipo === 'organismo') pintarFichaOrganismo(cont, d, f.ambito);
   else pintarFichaCompetidor(cont, d, f.ambito);
 }
@@ -3356,8 +3458,8 @@ function mostrarVista(vista, { conservarPila = false } = {}) {
     otras: cargarOtras,
     siguiendo: cargarSiguiendo,
     vencimientos: cargarVencimientos,
-    adjudicatarios: cargarAdjudicatarios,
-    organismos: cargarOrganismos,
+    adjudicatarios: () => { cargarFavoritos(); return cargarAdjudicatarios(); },
+    organismos: () => { cargarFavoritos(); return cargarOrganismos(); },
     organismo: cargarFicha,
     competidor: cargarFicha,
     analitica: cargarAnalitica,

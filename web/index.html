@@ -469,6 +469,7 @@
                 Quién se lleva estos contratos. Agrupa las variantes de razón social; pulsa una
                 empresa para ver su ficha.
               </p>
+              <div id="adjudicatarios-favoritos" class="favoritos"></div>
               <div class="filtros">
                 <input type="search" id="adjudicatarios-q" placeholder="Buscar una empresa…" autocomplete="off">
                 <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
@@ -484,6 +485,7 @@
                 Quién compra en tu ámbito, de más a menos expedientes. Pulsa uno para ver su
                 ficha: cuándo publica, a quién adjudica y qué le vence.
               </p>
+              <div id="organismos-favoritos" class="favoritos"></div>
               <div class="filtros">
                 <input type="search" id="organismos-q" placeholder="Buscar un organismo…" autocomplete="off">
                 <select id="organismos-ambito" class="selector-ambito" aria-label="Ámbito"></select>
@@ -500,7 +502,10 @@
               <p class="intro">Lo que el radar sabe de este órgano en el ámbito elegido.</p>
               <div class="detalle-barra">
                 <button class="boton-sec" data-volver>← Volver</button>
-                <select id="organismo-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                <div class="detalle-acciones">
+                  <button id="organismo-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
+                  <select id="organismo-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                </div>
               </div>
               <div id="ficha-organismo" class="analitica"></div>
             </section>
@@ -509,7 +514,10 @@
               <p class="intro">Lo que ha ganado esta empresa en el ámbito elegido.</p>
               <div class="detalle-barra">
                 <button class="boton-sec" data-volver>← Volver</button>
-                <select id="competidor-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                <div class="detalle-acciones">
+                  <button id="competidor-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
+                  <select id="competidor-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                </div>
               </div>
               <div id="ficha-competidor" class="analitica"></div>
             </section>

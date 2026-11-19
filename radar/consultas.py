@@ -1482,6 +1482,51 @@ def normalizar_empresa(nombre: str | None) -> str | None:
     return re.sub(r"\s+", " ", t).strip() or None
 
 
+# --- Favoritos ----------------------------------------------------------------------
+#
+# Empresas y organismos que se quieren tener a mano. Van en la base, como el triaje: son
+# decisiones de quien usa la herramienta y tienen que sobrevivir a reinstalar la app.
+
+TIPOS_FAVORITO = ("empresa", "organismo")
+
+
+def clave_favorito(tipo: str, nombre: str | None) -> str | None:
+    if tipo == "empresa":
+        return normalizar_empresa(nombre)
+    return (nombre or "").strip() or None
+
+
+def favoritos(con: sqlite3.Connection) -> dict:
+    """Los favoritos de cada tipo, por orden alfabético, que es como se buscan."""
+    salida: dict = {t: [] for t in TIPOS_FAVORITO}
+    for f in con.execute(
+            "SELECT tipo, clave, nombre FROM favoritos ORDER BY nombre COLLATE NOCASE"):
+        salida[f["tipo"]].append({"nombre": f["nombre"], "clave": f["clave"]})
+    return salida
+
+
+def claves_favoritas(con: sqlite3.Connection, tipo: str) -> set[str]:
+    return {f[0] for f in con.execute("SELECT clave FROM favoritos WHERE tipo = ?", (tipo,))}
+
+
+def fijar_favorito(con: sqlite3.Connection, tipo: str, nombre: str, favorito: bool) -> dict:
+    """Añade o quita un favorito. Devuelve todos, para repintar los botones de una vez."""
+    if tipo not in TIPOS_FAVORITO:
+        raise ValueError(f"tipo no válido: {tipo}. Válidos: {', '.join(TIPOS_FAVORITO)}")
+    clave = clave_favorito(tipo, nombre)
+    if not clave:
+        raise ValueError("falta el nombre")
+    if favorito:
+        con.execute(
+            """INSERT INTO favoritos (tipo, clave, nombre, creado_en) VALUES (?, ?, ?, ?)
+               ON CONFLICT(tipo, clave) DO UPDATE SET nombre = excluded.nombre""",
+            (tipo, clave, nombre.strip(), db.ahora()))
+    else:
+        con.execute("DELETE FROM favoritos WHERE tipo = ? AND clave = ?", (tipo, clave))
+    con.commit()
+    return favoritos(con)
+
+
 def _fichas_del_ambito(ambito: Ambito | None) -> tuple[str, list]:
     """Las fichas sobre las que se hace el ranking, una vez cada una.
 

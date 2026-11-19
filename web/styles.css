@@ -1097,6 +1097,53 @@ progress:not([value]) { opacity: .7; }
   gap: var(--e-2);
   margin-bottom: var(--e-4);
 }
+.detalle-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: var(--e-2); }
+
+/* --- Favoritos ---------------------------------------------------------------
+ *
+ * Encima de Adjudicatarios y Organismos, una fila de botones con los favoritos: un clic
+ * y se abre su ficha. La estrella va al principio de cada fila del listado y en la
+ * cabecera de la ficha. */
+.favoritos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e-2);
+  margin: 0 0 var(--e-3);
+}
+.favoritos-titulo { font-size: var(--txt-sm); font-weight: 600; color: var(--ambar); margin-right: var(--e-1); }
+.favorito {
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: 28px;
+  padding: 0 var(--e-3);
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  background: var(--panel);
+  font: inherit;
+  font-size: var(--txt-sm);
+  color: var(--texto);
+  cursor: default;
+  transition: border-color var(--transicion);
+}
+.favorito:hover { border-color: var(--acento-borde); }
+.fila-empresa, .fila-organismo { grid-template-columns: auto 1fr auto; align-items: center; }
+.estrella {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radio-sm);
+  background: none;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--texto-ter);
+  cursor: default;
+}
+.estrella:hover { background: var(--relleno); color: var(--ambar); }
+.estrella.activa, .boton-favorito.activa { color: var(--ambar); }
+
 /* Una fila del listado de organismos: el nombre y sus cifras, como las de empresa. */
 .fila-organismo .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
 .fila-organismo .cifras b { font-weight: 600; color: var(--texto); }

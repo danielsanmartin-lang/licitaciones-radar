@@ -261,8 +261,16 @@ class Manejador(BaseHTTPRequestHandler):
                 ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
             except ValueError as exc:
                 return self._error(str(exc))
-            self._json(consultas.adjudicatarios(self.con, ambito=ambito, limite=limite,
-                                                q=params.get("q") or None))
+            datos = consultas.adjudicatarios(self.con, ambito=ambito, limite=limite,
+                                             q=params.get("q") or None)
+            favoritas = consultas.claves_favoritas(self.con, "empresa")
+            datos["items"] = [
+                {**it, "favorito": consultas.normalizar_empresa(it["empresa"]) in favoritas}
+                for it in datos["items"]]
+            self._json(datos)
+
+        elif partes.path == "/api/favoritos":
+            self._json(consultas.favoritos(self.con))
 
         elif partes.path == "/api/contratos-empresa":
             empresa = params.get("empresa")
@@ -280,8 +288,11 @@ class Manejador(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._error(str(exc))
             if partes.path == "/api/organismos":
-                return self._json(consultas.organismos(
-                    self.con, ambito=ambito, q=params.get("q") or None))
+                datos = consultas.organismos(self.con, ambito=ambito, q=params.get("q") or None)
+                favoritos = consultas.claves_favoritas(self.con, "organismo")
+                datos["items"] = [{**it, "favorito": it["organo"] in favoritos}
+                                  for it in datos["items"]]
+                return self._json(datos)
             if partes.path == "/api/organismo":
                 nombre = params.get("nombre")
                 if not nombre:
@@ -297,7 +308,11 @@ class Manejador(BaseHTTPRequestHandler):
             if ficha is None:
                 # 404 y no una ficha vacía: la pantalla lo dice, y sugiere cambiar el ámbito.
                 return self._error(f"No hay expedientes de {quien} en «{ambito.etiqueta}».", 404)
-            self._json(ficha)
+            # Aparte de la ficha, que va en caché: marcar o desmarcar no la invalida.
+            tipo = "organismo" if partes.path == "/api/organismo" else "empresa"
+            nombre = ficha.get("organo") if tipo == "organismo" else ficha.get("empresa")
+            self._json({**ficha, "favorito": consultas.clave_favorito(tipo, nombre)
+                        in consultas.claves_favoritas(self.con, tipo)})
 
         elif partes.path == "/api/motivos-descarte":
             self._json({"items": consultas.motivos_descarte(self.con)})
@@ -642,6 +657,16 @@ class Manejador(BaseHTTPRequestHandler):
             except OSError as exc:
                 return self._error(f"No se pudo lanzar la búsqueda: {exc}", 500)
             self._json({"ok": True, **datos})
+
+        elif partes.path == "/api/favoritos":
+            if not isinstance(cuerpo.get("favorito"), bool):
+                return self._error("favorito debe ser true o false")
+            try:
+                self._json(consultas.fijar_favorito(
+                    self.con, str(cuerpo.get("tipo") or ""), str(cuerpo.get("nombre") or ""),
+                    cuerpo["favorito"]))
+            except ValueError as exc:
+                self._error(str(exc))
 
         elif partes.path == "/api/preferencias":
             try:
