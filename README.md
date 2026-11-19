@@ -44,7 +44,10 @@ search carries on underneath. When both tasks finish it does not close by itself
 says «Todo listo» (All done) and waits for you to press **Continuar** (Continue). See
 [Updating the program](#updating-the-program).
 
-There is no terminal to keep open, and quitting with ⌘Q stops the server with it.
+There is no terminal to keep open. **Closing the window does not quit the app**: it stays
+in the Dock, like Slack or Mail, searching on its own and alerting you to what comes in
+(see [Automatic search and alerts](#automatic-search-and-alerts)); clicking the icon opens
+it again. **⌘Q** does quit it, and the server stops with it.
 
 **Neither step can be skipped.** There is no "show me the inbox without waiting" button
 and no time limit: as long as whatever it is waiting for shows signs of life — bytes
@@ -323,11 +326,35 @@ resumen»**.
 new tenders since you last looked at them —the same ones as «N nuevas» in the sidebar—
 plus the **market consultations you follow whose tender has now come out** (see
 [Market consultations and their tender](#market-consultations-and-their-tender)). It
-clears when you look at the new ones. So that the number is useful even if you keep the
-app open all day, every quarter of an hour it refreshes the figures and, if the last
-search is **more than four hours old**, launches another in the background, the same as
-«Buscar ahora». With the app closed there is no number: macOS does not let you badge an
-app that is not running.
+clears when you look at the new ones. With the app quit (⌘Q) there is no number: macOS
+does not let you badge an app that is not running.
+
+### Automatic search and alerts
+
+While the app is open — also with its window closed, in the Dock — it **searches on its own
+every two hours** and, if something comes in that matches your profiles, **alerts you with
+a macOS notification with sound**: «3 licitaciones nuevas», the split by profile and the
+first titles. Clicking the alert opens the Inbox showing only the new ones. If you are
+looking at the app at that moment, there is no banner — the inbox itself says «Búsqueda
+terminada: N nuevas» — only the sound.
+
+It is set up at the end of **Términos de búsqueda** (Search terms), below «Buscar ahora»:
+every hour, every 2, 4 or 8 hours, or never; alert or not; with or without sound. The
+same place shows when the last search was and roughly when the next one is due.
+
+- **The first time there is something to alert you about, macOS asks** whether the app
+  may send notifications. If you say no (or macOS does not allow it), it still alerts you
+  with the sound and by bouncing the Dock icon; you can change it in System Settings →
+  Notifications → Radar de Licitaciones.
+- **The server searches, not the page**, so it keeps time with the window closed. It never
+  clashes with another search — «Buscar ahora», the morning task or a half-finished first
+  load —, leaves the first five minutes to the start-up screen's own search and, if the
+  Mac was asleep, searches on waking.
+- **It alerts per search, not per visit**: what each search brings is announced once, even
+  if you do not look at the inbox. The first load is never announced.
+- With the app quit (⌘Q) it neither searches nor alerts; for that there is still the
+  morning task (see [Keeping it up to date automatically](#keeping-it-up-to-date-automatically)),
+  which downloads but does not alert.
 
 **If it really gets stuck.** A watchdog checks that the search keeps moving: bytes,
 records, pages or retries. If **15 minutes go by with nothing moving**, it cuts that
@@ -604,7 +631,8 @@ the same body has published something later in your profiles, the card says so
 («después publicó: …»): it may be the renewal, and then it is no longer time to call but
 to bid.
 
-**Exportar Excel** (Export to Excel) downloads an `.xlsx` with three sheets: the ones
+**Exportar Excel** (Export to Excel) asks where to save it (next time it suggests the same
+folder) and downloads an `.xlsx` with three sheets: the ones
 ending in the chosen window (3 months gives fewer rows than 6), the recently expired and
 the ones with no date. They go in full, without the on-screen cut, with what it takes to
 understand each contract —subject, description, body, incumbent, value, duration, dates,
@@ -622,13 +650,18 @@ By default it looks at what matches your profiles. The drop-down at the top chan
 **scope**: a specific profile, or a whole market topic — cybersecurity, cloud, all of
 IT… — whether or not it matches your profiles. It is the same selector as in Analítica.
 
+**Favourites.** The ☆ star on each row (or the «Añadir a favoritos» button on its profile)
+puts it in a row of buttons above the search box: one click opens its profile. A company
+is the same under any of its registered names. They are kept in your database, like your
+triage.
+
 ### Organismos (Contracting bodies)
 
 Who buys in your scope, from most to fewest procurement files, with a search box that
 ignores accents and case. Each row says how many files it has, how many are still open
 and how many are awarded, and leads to its profile. The body is the one that signs, as
 the source publishes it: the same agency can appear several times, once per signatory,
-just as in Analytics.
+just as in Analytics. It has its own **favourites**, like Adjudicatarios.
 
 ### Contracting body and competitor profiles
 
@@ -638,12 +671,32 @@ discount from a single notice and the deadline from the first — and the same s
 selector.
 
 - **Body**: its figures (files, median value, discount and deadline when there are at
-  least three cases, awarded), in which months it publishes, whom it awards to, which of
-  its contracts expire in the next 24 months and with whom, what it has open today and
-  its earlier files with the usual card.
+  least three cases, awarded), in which months it publishes, whom it awards to, **whether
+  it changes supplier** on renewal, **how it buys** (procedure, contract length, days to
+  award, whether it splits into lots, and its open market consultations), which of its
+  contracts expire in the next 24 months and with whom, what it has open today and its
+  earlier files with the usual card.
 - **Competitor**: what it has won and for how much, year by year, in which regions, which
-  bodies it sells to, which of its contracts expire — the chance to take them — and its
-  awards, merging its registered names as the Adjudicatarios ranking does.
+  bodies it sells to, which of its contracts expire — the chance to take them —, **which
+  clients it keeps and which it loses** on renewal (and the ones it takes from others),
+  **its rivals** (who else wins at its bodies) **and partners** (the joint ventures, UTE, it
+  appears in), **its price and size against the market** (median value and discount, and
+  by which procedure it wins) and **where it has beaten you** (what you marked as
+  «Presentada» and it won, and what you discarded as «incumbente atado» at bodies where it
+  already had a contract). And its awards, merging its registered names as the
+  Adjudicatarios ranking does.
+
+**How a contract is matched to its renewal.** The source does not say, so it is inferred:
+the same body, published at least three months later and with a similar subject (words in
+common, as with market consultations); of the candidates, the most similar, and each
+contract is matched only once. Simply taking «the next thing the body publishes» paired a
+software purchase with a training course and said the incumbent keeps it 33% of the time;
+with a similar subject there are about fifty credible pairs in your profiles and it keeps
+it 58%. It is an approximation, and each block says how many renewals it is based on.
+
+**Exportar PDF**, in each profile's header, saves it to a PDF wherever you choose: without
+the sidebar or buttons, light even if the Mac is in dark mode, and on A4 pages without
+splitting the cards.
 
 You reach them from the rows of Organismos and Adjudicatarios, from «Quién compra» and
 «Quién gana» in Analytics, from the body and the incumbent in Vencimientos, and from the
@@ -676,7 +729,8 @@ below, twenty blocks, each led by a sales question, in the order they are read:
 | Cómo se compra (How they buy) | the way in: open, simplified, restricted or by-invitation procedure |
 | De consulta previa a pliego (From preliminary consultation to tender) | how long a preliminary market consultation takes to become a tender (market-wide: about 130 days median), and which consultations in your scope are still open with no tender. It is the earliest warning there is |
 | A quién llamo antes del pliego (Who to call before the tender) | how many contracts end within six months, with a known incumbent, and the calendar of the next twelve months |
-| Qué tengo de verdad hoy (What I really have today) | whether this is a pipeline or a historical archive |
+| ¿Se puede desbancar al incumbente? (Can the incumbent be unseated?) | how many renewals stay with the same company, who keeps most and which bodies change most (see [how a contract is matched to its renewal](#contracting-body-and-competitor-profiles)) |
+| Qué tengo de verdad hoy (What I really have today) | whether this is a pipeline or a historical archive. **Every figure and every segment of its bar is clickable** and leads to the Inbox with exactly those tenders |
 
 It is filtered by **scope** and by one of three ranges (this year, last 24 months,
 everything since 2024). The blocks that talk about *now* — renewals and pipeline —, market
@@ -767,8 +821,22 @@ And there are three things this tab does **not** do, all for the same reason:
 Each block also has a minimum below which it is not drawn: a median of twelve cases
 presented as a median is worse than a gap.
 
-And in any view, **Exportar CSV** (Export CSV) downloads what you are looking at with
-the filters applied, ready for Excel.
+**«Qué tengo de verdad hoy» leads to the Inbox.** «Coincidencias» is everything that has
+ever matched your profiles, open or not — which is why it is in the hundreds —; «con plazo
+abierto» is what you can bid for today, the same as the «abiertas» counter in the Inbox.
+Clicking a figure or a segment makes the Inbox show exactly those tenders — with the same
+profile and dropping the other filters, so the number adds up — and says so in «Filtrando
+por», with a button to remove it. «Publicadas o por salir» is the status the source
+publishes and can be far more than «con plazo abierto»: many stay «published» after
+their deadline.
+
+**Exportar PDF**, next to the scope, saves the whole tab to a PDF wherever you choose, with
+the scope, the period and the date in its header. In the browser (`start.command`) it
+opens the print dialog, where «Save as PDF» is.
+
+And in the Inbox, **Exportar CSV** (Export CSV) downloads what you are looking at with all
+the filters applied, ready for Excel. In the app, every export — CSV, Excel or PDF — asks
+where to save it and remembers the last folder.
 
 ### Commands
 
@@ -1037,8 +1105,9 @@ top of that most of them fall out anyway because of `importe_minimo`.
   its tenders on PLACSP. What they would add is `adjudicatario`, `fecha_formalizacion`
   and `plazo_de_ejecucion_meses`, which is exactly what the Vencimientos view is missing.
   Pending as an improvement to that view, not as a source of tenders.
-- **Alerts outside the app.** The only alert is the number on the Dock icon, and only
-  while the app is open. There is no email or Slack.
+- **Alerts outside the app.** The alerts are the number on the Dock icon and the macOS
+  notification, and only while the app is running (window closed is fine; quit is not).
+  There is no email or Slack.
 - **A shared instance.** Each person has their own database and triage.
 
 On the native connector for Euskadi (the Basque Country): it was investigated and **is

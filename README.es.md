@@ -36,8 +36,10 @@ arranque enseña «Actualizado a la versión X» y **qué ha cambiado desde la q
 terminar las dos cosas no se cierra sola: dice «Todo listo» y espera a que pulses
 **Continuar**. Ver [Actualizar el programa](#actualizar-el-programa).
 
-No hay que dejar ninguna terminal abierta, y al salir con ⌘Q el servidor se para con
-ella.
+No hay que dejar ninguna terminal abierta. **Cerrar la ventana no cierra la aplicación**:
+se queda en el Dock, como Slack o Mail, buscando sola y avisando de lo que llega (ver
+[Búsqueda automática y avisos](#búsqueda-automática-y-avisos)); un clic en el icono la
+vuelve a abrir. **⌘Q** sí la cierra, y el servidor se para con ella.
 
 **Ninguna de las dos se puede saltar.** No hay botón de «ver la bandeja sin esperar» ni
 tope de tiempo: mientras lo que se espera dé señales de vida —bytes que llegan, una fase
@@ -304,10 +306,35 @@ al acabar, avisa con **«Búsqueda terminada: N nuevas · Ver resumen»**.
 número: las licitaciones nuevas desde la última vez que las miraste —las mismas de «N
 nuevas» en la barra lateral— más las **consultas previas que sigues cuyo pliego ya ha
 salido** (ver [Consultas previas y su pliego](#consultas-previas-y-su-pliego)). Se borra al
-mirar las nuevas. Para que el número sirva aunque la tengas abierta todo el día, cada
-cuarto de hora repasa las cifras y, si la última búsqueda tiene **más de cuatro horas**,
-lanza otra por detrás, la misma que «Buscar ahora». Con la aplicación cerrada no hay
-número: macOS no deja ponérselo a una aplicación que no está corriendo.
+mirar las nuevas. Con la aplicación cerrada (⌘Q) no hay número: macOS no deja ponérselo a
+una aplicación que no está corriendo.
+
+### Búsqueda automática y avisos
+
+Mientras la aplicación está abierta —también con la ventana cerrada, en el Dock— **busca
+sola cada dos horas** y, si entra algo que encaja con tus perfiles, **te avisa con una
+notificación de macOS con sonido**: «3 licitaciones nuevas», el reparto por perfil y los
+primeros títulos. Pulsar el aviso abre la Bandeja con solo lo nuevo. Si estás mirando la
+aplicación en ese momento, no sale el globo —ya lo dice la propia bandeja con «Búsqueda
+terminada: N nuevas»—, solo el sonido.
+
+Se configura al final de **Términos de búsqueda**, debajo de «Buscar ahora»: cada hora,
+cada 2, 4 u 8 horas o nunca; avisar o no; con sonido o sin él. Ahí mismo se ve cuándo fue
+la última búsqueda y hacia qué hora toca la siguiente.
+
+- **La primera vez que haya algo que avisar, macOS pregunta** si dejas que la aplicación
+  envíe notificaciones. Si dices que no (o macOS no se lo permite), avisa igual con el
+  sonido y haciendo rebotar el icono del Dock; se puede cambiar en Ajustes del Sistema →
+  Notificaciones → Radar de Licitaciones.
+- **Quien busca es el servidor, no la página**, así que sigue a su hora con la ventana
+  cerrada. Nunca se pisa con otra búsqueda —la de «Buscar ahora», la tarea de las mañanas
+  o una carga inicial a medias—, deja los cinco primeros minutos a la búsqueda de la
+  pantalla de arranque y, si el Mac estaba dormido, busca al despertar.
+- **Avisa por búsqueda, no por visita**: lo que trae cada búsqueda se avisa una sola vez,
+  aunque no mires la bandeja. La carga inicial no se avisa.
+- Con la aplicación cerrada (⌘Q) no busca ni avisa; para eso sigue estando la tarea de
+  las mañanas (ver [Que se actualice solo](#que-se-actualice-solo)), que descarga pero no
+  avisa.
 
 **Si se atasca de verdad.** Un vigilante mira que la búsqueda avance: bytes, fichas,
 páginas o reintentos. Si pasan **15 minutos sin moverse nada**, corta esa fuente, guarda
@@ -566,7 +593,8 @@ salir —la cabecera dice cuántos hay ocultos y «Ver descartados» los enseña
 perfiles, la tarjeta lo dice («después publicó: …»): puede ser la renovación, y entonces
 ya no toca llamar sino presentarse.
 
-**Exportar Excel** baja un `.xlsx` con tres hojas: los que vencen en la ventana elegida
+**Exportar Excel** pregunta dónde guardarlo (la próxima vez propone la misma carpeta) y
+baja un `.xlsx` con tres hojas: los que vencen en la ventana elegida
 (con 3 meses, menos filas que con 6), los vencidos hace poco y los que no tienen fecha.
 Van enteros, sin el recorte de la pantalla, con lo necesario para entender cada contrato
 —objeto, descripción, órgano, incumbente, importe, duración, fechas, si la de fin es
@@ -584,13 +612,18 @@ Por defecto mira lo que casa con tus perfiles. El desplegable de arriba cambia e
 **ámbito**: un perfil concreto, o una temática entera del mercado —ciberseguridad, cloud,
 toda la IT…—, case o no con tus perfiles. Es el mismo selector que el de la Analítica.
 
+**Favoritos.** La estrella ☆ de cada fila (o el botón «Añadir a favoritos» de su ficha)
+la deja en una fila de botones encima del buscador: un clic y se abre su ficha. Una
+empresa es la misma con cualquiera de sus razones sociales. Se guardan en tu base, como
+el triaje.
+
 ### Organismos
 
 Quién compra en tu ámbito, de más a menos expedientes, con un buscador que no distingue
 acentos ni mayúsculas. Cada fila dice cuántos expedientes tiene, cuántos siguen abiertos
 y cuántos están adjudicados, y lleva a su ficha. El órgano es el que firma, tal como lo
 publica la fuente: una misma agencia puede salir varias veces, una por firmante, igual
-que en la Analítica.
+que en la Analítica. Tiene sus **favoritos**, igual que Adjudicatarios.
 
 ### Las fichas de organismo y de competidor
 
@@ -599,12 +632,31 @@ sola empresa**, con las mismas reglas —por expediente, sin lo descartado, la b
 solo anuncio y el plazo del primero— y con el mismo selector de ámbito.
 
 - **Organismo**: sus cifras (expedientes, importe mediano, baja y plazo cuando hay al
-  menos tres casos, adjudicados), en qué meses publica, a quién adjudica, qué contratos
+  menos tres casos, adjudicados), en qué meses publica, a quién adjudica, **si cambia de
+  proveedor** al renovar, **cómo compra** (procedimiento, duración de sus contratos, días
+  hasta adjudicar, si divide en lotes y sus consultas previas abiertas), qué contratos
   suyos vencen en los próximos 24 meses y con quién, lo que tiene abierto hoy y sus
   expedientes anteriores con la tarjeta de siempre.
 - **Competidor**: lo que ha ganado y por cuánto, año a año, en qué comunidades, a qué
-  organismos les vende, qué contratos suyos vencen —la ocasión de quitárselos— y sus
+  organismos les vende, qué contratos suyos vencen —la ocasión de quitárselos—, **qué
+  clientes retiene y cuáles pierde** al renovar (y los que gana a otros), **sus rivales**
+  (quién más gana en sus organismos) **y socios** (las UTE en las que aparece), **su precio
+  y tamaño frente al mercado** (importe y baja medianos, y por qué procedimiento gana) y
+  **dónde te ha ganado** (lo que marcaste como «Presentada» y se llevó, y lo que
+  descartaste por «incumbente atado» en organismos donde ya tenía contrato). Y sus
   adjudicaciones, juntando sus razones sociales como el ranking de Adjudicatarios.
+
+**Cómo se sabe qué contrato renueva a cuál.** La fuente no lo dice, así que se deduce: el
+mismo órgano, publicado al menos tres meses después y con un objeto parecido (palabras en
+común, como con las consultas previas); de los candidatos, el más parecido, y cada
+contrato se empareja una sola vez. Tomar sin más «lo siguiente que publica el órgano»
+emparejaba un software con una formación y daba que el incumbente repite el 33 %; con
+objeto parecido quedan unas cincuenta parejas creíbles en tus perfiles y repite el 58 %.
+Es una aproximación, y cada bloque dice sobre cuántas renovaciones se calcula.
+
+**Exportar PDF**, en la cabecera de cada ficha, la guarda en un PDF donde elijas: sin la
+barra lateral ni los botones, en claro aunque el Mac esté en oscuro y en páginas A4 sin
+partir las tarjetas.
 
 Se llega a ellas desde las filas de Organismos y Adjudicatarios, desde «Quién compra» y
 «Quién gana» de la Analítica, desde el órgano y el incumbente de Vencimientos y desde el
@@ -637,8 +689,9 @@ bloques, cada uno con una pregunta de venta delante, en el orden en que se leen:
 | Qué compran exactamente | en qué CPV cae tu producto, con enlace para afinar los términos |
 | Cómo se compra | por qué puerta se entra: abierto, simplificado, restringido o por invitación |
 | De consulta previa a pliego | cuánto tarda una consulta preliminar de mercado en convertirse en licitación (en todo el mercado: unos 130 días de mediana), y qué consultas de tu ámbito siguen abiertas sin pliego. Es el aviso más temprano que hay |
+| ¿Se puede desbancar al incumbente? | cuántas renovaciones se queda la misma empresa, quién retiene más y qué organismos cambian más (ver [cómo se sabe qué contrato renueva a cuál](#las-fichas-de-organismo-y-de-competidor)) |
 | A quién llamo antes del pliego | cuántos contratos se acaban en seis meses, con incumbente conocido, y el calendario de los doce meses que vienen |
-| Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico |
+| Qué tengo de verdad hoy | si esto es un pipeline o un archivo histórico. **Cada cifra y cada tramo de su barra se pueden pulsar** y llevan a la Bandeja con exactamente esas licitaciones |
 
 Se filtra por **ámbito** y por uno de tres rangos (este año, últimos 24 meses, todo desde
 2024). Los bloques que hablan de *ahora* —renovaciones y cartera—, la cuota (desde 2024
@@ -719,8 +772,22 @@ Y hay tres cosas que esta pestaña **no** hace, todas por el mismo motivo:
 Cada bloque tiene además un mínimo por debajo del cual no se pinta: una mediana de doce
 casos presentada como una mediana es peor que un hueco.
 
-Y en cualquier vista, **Exportar CSV** baja lo que estés viendo con los filtros
-aplicados, listo para Excel.
+**«Qué tengo de verdad hoy» lleva a la Bandeja.** «Coincidencias» es todo lo que ha casado
+con tus perfiles desde que hay datos, abierto o no —por eso son cientos—; «con plazo
+abierto» es lo que se puede presentar hoy, lo mismo que el contador «abiertas» de la
+Bandeja. Al pulsar una cifra o un tramo, la Bandeja enseña exactamente esas licitaciones
+—con el mismo perfil y quitando los demás filtros, para que el número cuadre— y lo dice
+en «Filtrando por», con un botón para quitarlo. «Publicadas o por salir» es el estado que
+publica la fuente y puede ser mucho más que «con plazo abierto»: muchas siguen
+«publicadas» con el plazo vencido.
+
+**Exportar PDF**, junto al ámbito, guarda la pestaña entera en un PDF donde elijas, con el
+ámbito, el periodo y la fecha en la cabecera. En el navegador (`start.command`) abre el
+diálogo de imprimir, donde está «Guardar como PDF».
+
+Y en la Bandeja, **Exportar CSV** baja lo que estés viendo con todos los filtros
+aplicados, listo para Excel. En la aplicación, cualquier exportación —CSV, Excel o PDF—
+pregunta dónde guardarla y recuerda la última carpeta.
 
 ### Comandos
 
@@ -990,8 +1057,9 @@ la mayoría cae de todas formas por `importe_minimo`.
   aportarían es `adjudicatario`, `fecha_formalizacion` y `plazo_de_ejecucion_meses`,
   que es justo lo que le falta a la vista de Vencimientos. Pendiente como mejora de
   esa vista, no como fuente de licitaciones.
-- **Avisos fuera de la aplicación.** El único aviso es el número del icono del Dock, y
-  solo mientras la aplicación está abierta. No hay correo ni Slack.
+- **Avisos fuera de la aplicación.** Los avisos son el número del icono del Dock y la
+  notificación de macOS, y solo mientras la aplicación está en marcha (con la ventana
+  cerrada sí; con ⌘Q no). No hay correo ni Slack.
 - **Una instancia compartida.** Cada persona tiene su base y su triaje.
 
 Sobre el conector nativo de Euskadi: se investigó y **no hace falta**. Su API existe
