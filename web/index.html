@@ -253,6 +253,9 @@
 
       <div class="cuerpo" id="cuerpo">
         <div class="cuerpo-ancho">
+          <!-- Solo sale en el PDF: de qué ámbito y qué día es lo que se ha exportado. Lo
+               rellena `exportarPdf()` justo antes de imprimir. -->
+          <p id="impresion-cabecera" class="solo-impresion impresion-cabecera"></p>
           <!-- Carga en segundo plano. Se rellena desde /api/busqueda-estado: la ingesta corre
                en otro proceso y la base va creciendo mientras se trabaja aquí. -->
           <div id="carga" class="carga" hidden>
@@ -504,6 +507,7 @@
                 <button class="boton-sec" data-volver>← Volver</button>
                 <div class="detalle-acciones">
                   <button id="organismo-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
+                  <button id="organismo-pdf" class="boton-sec">Exportar PDF</button>
                   <select id="organismo-ambito" class="selector-ambito" aria-label="Ámbito"></select>
                 </div>
               </div>
@@ -516,6 +520,7 @@
                 <button class="boton-sec" data-volver>← Volver</button>
                 <div class="detalle-acciones">
                   <button id="competidor-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
+                  <button id="competidor-pdf" class="boton-sec">Exportar PDF</button>
                   <select id="competidor-ambito" class="selector-ambito" aria-label="Ámbito"></select>
                 </div>
               </div>
@@ -533,6 +538,7 @@
               <div class="analitica-filtros">
                 <div class="ventanas" id="analitica-rango"></div>
                 <select id="analitica-perfil" class="selector-ambito" aria-label="Ámbito"></select>
+                <button id="analitica-pdf" class="boton-sec">Exportar PDF</button>
               </div>
               <p class="total-ventana" id="analitica-resumen"></p>
               <div id="analitica" class="analitica"></div>

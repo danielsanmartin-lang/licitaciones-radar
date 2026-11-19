@@ -2779,6 +2779,51 @@ function pintarFavoritoFicha(tipoFicha, nombre, activo) {
   };
 }
 
+// --- Exportar PDF ----------------------------------------------------------------
+//
+// La Analítica y las fichas de organismo y de competidor se exportan imprimiendo la
+// propia página con la hoja de impresión de `styles.css`. En la app de macOS lo hace la
+// ventana (pregunta dónde guardar y deja el PDF); en el navegador, su diálogo de imprimir,
+// donde está «Guardar como PDF».
+
+function trozoNombre(texto) {
+  return (texto || '').replace(/[\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
+}
+
+function exportarPdf(partes, cabecera) {
+  const hoy = new Date();
+  const fecha = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-` +
+    String(hoy.getDate()).padStart(2, '0');
+  $('impresion-cabecera').textContent = ['Radar de Licitaciones', ...cabecera,
+    `exportado el ${hoy.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}`]
+    .filter(Boolean).join(' · ');
+  tooltip().hidden = true;
+  const nombre = [...partes.map(trozoNombre).filter(Boolean), fecha].join(' - ') + '.pdf';
+  const nativa = ventanaNativa();
+  if (nativa) nativa.postMessage({ accion: 'pdf', nombre });
+  else window.print();
+}
+
+function textoAmbito(select) {
+  const op = select.options[select.selectedIndex];
+  return op ? op.textContent.trim() : '';
+}
+
+$('analitica-pdf').addEventListener('click', () => {
+  const rango = rangosAnalitica().find((r) => r.clave === rangoAnalitica);
+  const ambito = textoAmbito($('analitica-perfil'));
+  exportarPdf(['Analitica', ambito, rango && rango.etiqueta],
+    ['Analítica', `ámbito: ${ambito}`, rango && `periodo: ${rango.etiqueta}`]);
+});
+for (const tipo of ['organismo', 'competidor']) {
+  $(`${tipo}-pdf`).addEventListener('click', () => {
+    if (!fichaActual) return;
+    const ambito = textoAmbito($(`${tipo}-ambito`));
+    exportarPdf([tipo === 'organismo' ? 'Organismo' : 'Competidor', $('vista-titulo').textContent],
+      [tipo === 'organismo' ? 'Ficha de organismo' : 'Ficha de competidor', `ámbito: ${ambito}`]);
+  });
+}
+
 // --- Organismos -------------------------------------------------------------------
 
 let ambitoOrganismos = '';

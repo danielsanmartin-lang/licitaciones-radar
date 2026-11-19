@@ -2110,3 +2110,100 @@ progress:not([value]) { opacity: .7; }
 /* El calendario de renovaciones de Vencimientos va en su propia tarjeta. */
 #calendario-vencimientos:empty { display: none; }
 #calendario-vencimientos { margin-bottom: var(--e-4); }
+
+/* --- Impresión y PDF ----------------------------------------------------------
+ *
+ * «Exportar PDF» (Analítica y fichas de organismo y competidor) imprime la propia página:
+ * en la app, `Radar.swift` la manda a un PDF; en el navegador, `window.print()`. Aquí se
+ * deja solo el contenido —sin barra lateral, filtros, botones ni «Cómo se calcula»—, en
+ * claro aunque el Mac esté en oscuro, y fluyendo en páginas en lugar de dentro de `.cuerpo`,
+ * que es lo que hace scroll en pantalla. */
+.solo-impresion { display: none; }
+
+@media print {
+  @page { size: A4 portrait; }
+  /* Los mismos valores que el `:root` claro: van después del bloque oscuro, así que ganan
+     aunque el sistema esté en oscuro. */
+  :root {
+    color-scheme: light;
+    --fondo: #ffffff;
+    --lateral: #f3f4f9;
+    --panel: #ffffff;
+    --ficha: #fbfbfd;
+    --relleno: rgb(11 16 48 / .045);
+    --activo: rgb(20 44 209 / .09);
+    --borde: rgb(11 16 48 / .08);
+    --borde-fuerte: rgb(11 16 48 / .14);
+    --texto: #0b1030;
+    --texto-sec: #565c7a;
+    --texto-ter: #9399b2;
+    --acento: #142cd1;
+    --acento-texto: #1428b8;
+    --acento-tenue: rgb(20 44 209 / .09);
+    --acento-borde: rgb(20 44 209 / .32);
+    --verde: #13865f;
+    --verde-tenue: rgb(29 158 117 / .12);
+    --ambar: #b8650e;
+    --ambar-tenue: rgb(239 159 39 / .16);
+    --rojo: #d62e4b;
+    --rojo-tenue: rgb(255 59 92 / .12);
+    --turquesa: #0b8f99;
+    --turquesa-tenue: rgb(123 233 228 / .28);
+    --violeta: #6b62d6;
+    --violeta-tenue: rgb(127 119 221 / .14);
+    --serie-1: #2a78d6;
+    --serie-2: #eb6834;
+    --serie-3: #1baf7a;
+    --serie-4: #eda100;
+    --serie-5: #e87ba4;
+    --sec-1: #cde2fb;
+    --sec-2: #86b6ef;
+    --sec-3: #3987e5;
+    --sec-4: #1c5cab;
+    --sec-5: #0d366b;
+    --tinta-sec-1: #0b1030;
+    --tinta-sec-2: #0b1030;
+    --tinta-sec-3: #ffffff;
+    --tinta-sec-4: #ffffff;
+    --tinta-sec-5: #ffffff;
+    --serie-gris: #b4b8ca;
+    --serie-gris-2: #dcdee8;
+    --sombra-1: 0 1px 2px rgb(7 14 52 / .06), 0 8px 24px rgb(7 14 52 / .08);
+    --sombra-2: 0 2px 6px rgb(7 14 52 / .08), 0 24px 60px rgb(7 14 52 / .18);
+  }
+
+  html, body { height: auto; overflow: visible; background: #fff; }
+  body {
+    font-size: 11.5px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .app { display: block; height: auto; }
+  .contenido { display: block; background: #fff; }
+  .cuerpo { overflow: visible; height: auto; }
+  .cuerpo-ancho, .vista-cabecera { width: auto; padding: 0; margin: 0; }
+  .vista-cabecera { padding-bottom: var(--e-3); }
+
+  .lateral, .panel, .panel-fondo, .arranque, .carga, .avisos, .vista-icono,
+  .detalle-barra, .analitica-filtros, .filtros, .kpis, .metodo, .tt,
+  .boton-pri, .boton-sec, .estrella, .mas { display: none !important; }
+  .solo-impresion { display: block; }
+
+  .impresion-cabecera {
+    margin-bottom: var(--e-3);
+    font-size: var(--txt-sm);
+    color: var(--texto-sec);
+  }
+  /* En bloque y no en rejilla: WebKit no respeta `break-inside` en los hijos de una
+     rejilla, y las tarjetas se partían entre dos páginas. Una columna, que en A4 es lo que
+     cabe de todas formas. */
+  .analitica, .analitica .pareja { display: block; }
+  .analitica .pareja > *, .analitica > * { margin-bottom: var(--e-2); }
+  .bloque, .cifra-clave, .tarjeta {
+    box-shadow: none;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .bloque { border-color: var(--borde-fuerte); }
+  .enlace-ficha { color: inherit; text-decoration: none; }
+}
