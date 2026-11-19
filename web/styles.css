@@ -443,6 +443,29 @@ html.nativa .lateral-nombre { display: none; }
   margin: 0 auto;
   padding: max(36px, calc(var(--franja) + 4px)) var(--e-7) var(--e-4);
 }
+/* «‹» Volver a la pantalla anterior: a la izquierda del icono de la vista, fuera de la
+   franja de la barra de título (que es de la ventana, no de la página). */
+.atras {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radio-lg);
+  background: none;
+  color: var(--texto-sec);
+  font-size: 18px;
+  cursor: default;
+  transition: background var(--transicion), color var(--transicion);
+}
+.atras:not(:disabled) { background: var(--relleno); color: var(--texto); }
+.atras:hover:not(:disabled) { background: var(--activo); color: var(--acento-texto); }
+.atras:disabled { opacity: .3; }
+.atras .ico { stroke-width: 2.2; }
 .vista-icono {
   display: inline-flex;
   align-items: center;
@@ -1093,7 +1116,7 @@ progress:not([value]) { opacity: .7; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--e-2);
   margin-bottom: var(--e-4);
 }
@@ -2194,7 +2217,7 @@ progress:not([value]) { opacity: .7; }
   .cuerpo-ancho, .vista-cabecera { width: auto; padding: 0; margin: 0; }
   .vista-cabecera { padding-bottom: var(--e-3); }
 
-  .lateral, .panel, .panel-fondo, .arranque, .carga, .avisos, .vista-icono,
+  .lateral, .panel, .panel-fondo, .arranque, .carga, .avisos, .vista-icono, .atras,
   .detalle-barra, .analitica-filtros, .filtros, .kpis, .metodo, .tt,
   .boton-pri, .boton-sec, .estrella, .mas { display: none !important; }
   .solo-impresion { display: block; }
