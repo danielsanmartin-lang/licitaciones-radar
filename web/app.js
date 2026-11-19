@@ -69,6 +69,10 @@ let cierranEnDias = '';
 // El otro filtro que solo pone un contador: «sin vencer» deja fuera lo vencido.
 let sinVencidas = '';
 let kpiActivo = 'en_plazo';
+// El filtro que pone una cifra de «Qué tengo de verdad hoy» (Analítica): `{ etiqueta,
+// params }`. No tiene control propio en la barra de filtros, así que se dice en «Filtrando
+// por» con su botón para quitarlo.
+let filtroAnalitica = null;
 
 // Cada contador de la cabecera y el filtro que aplica. Tiene que coincidir con lo
 // que calcula consultas.resumen() o el número volvería a no cuadrar con la lista.
@@ -107,6 +111,7 @@ function filtros() {
     cierran_en_dias: cierranEnDias,
     sin_vencidas: sinVencidas,
     con_plazo: $('con-plazo').checked ? '1' : '',
+    ...(filtroAnalitica ? filtroAnalitica.params : {}),
   };
 }
 
@@ -114,6 +119,7 @@ function aplicarKpi(clave) {
   const kpi = KPIS.find((k) => k.clave === clave);
   if (!kpi) return;
   kpiActivo = clave;
+  filtroAnalitica = null;
   cierranEnDias = kpi.filtro.cierran_en_dias || '';
   sinVencidas = kpi.filtro.sin_vencidas || '';
   $('vivas').checked = kpi.filtro.vivas === '1';
@@ -127,6 +133,7 @@ function aplicarKpi(clave) {
 
 function limpiarFiltros() {
   kpiActivo = null;
+  filtroAnalitica = null;
   cierranEnDias = '';
   sinVencidas = '';
   soloNovedades = false;
@@ -146,6 +153,7 @@ function limpiarFiltros() {
 // abiertas" seguía marcada. Ahora los filtros activos se dicen en voz alta.
 function describirFiltros() {
   const partes = [];
+  if (filtroAnalitica) partes.push(`desde la Analítica: ${filtroAnalitica.etiqueta}`);
   if ($('vivas').checked) partes.push('solo abiertas (plazo sin vencer)');
   if (cierranEnDias) partes.push(`cierran en ${cierranEnDias} días`);
   if (sinVencidas) partes.push('sin las de plazo vencido');
@@ -735,6 +743,13 @@ async function cargarLista(reset = true) {
     btn.textContent = 'ver todas';
     btn.addEventListener('click', limpiarFiltros);
     fa.appendChild(btn);
+    if (filtroAnalitica) {
+      const quitar = document.createElement('button');
+      quitar.className = 'quitar';
+      quitar.textContent = 'quitar el de la Analítica';
+      quitar.addEventListener('click', () => { filtroAnalitica = null; cargarLista(); });
+      fa.appendChild(quitar);
+    }
   } else {
     fa.hidden = true;
   }
@@ -1449,27 +1464,37 @@ function avisarIcono(n) {
   nativa.postMessage({ accion: 'insignia', numero });
 }
 
-// Con la aplicación abierta todo el día, el número del icono solo sirve si alguien sigue
-// buscando. Cada cuarto de hora se refrescan las cifras —por si la tarea de las mañanas
-// ha traído algo— y, si la última búsqueda tiene más de HORAS_ENTRE_BUSQUEDAS, se lanza
-// otra, la misma que «Buscar ahora». Nada de esto corre con la pantalla de arranque
-// delante ni con una búsqueda en marcha: ahí ya se está esperando a una.
-const HORAS_ENTRE_BUSQUEDAS = 4;
-const MINUTOS_ENTRE_REPASOS = 15;
-// La hora del último intento propio, aparte de la de la última búsqueda que fue bien: sin
-// red, «la última búsqueda» no avanza nunca y se volvería a intentar cada cuarto de hora.
-let ultimoIntentoSolo = Date.now();
+// Con la aplicación abierta todo el día, quien busca cada N horas es el servidor
+// (`radar/automatica.py`), no esta página: con la ventana cerrada WebKit ralentiza los
+// temporizadores de una página que no se ve. Aquí solo se está atento a dos cosas:
+//   - si hay una búsqueda en marcha que nadie está vigilando —la ha lanzado el servidor,
+//     la tarea de las mañanas o `start.command`—, se vigila, para que la cabecera cuente
+//     cómo va y al terminar salga «Búsqueda terminada: N nuevas»;
+//   - cada pocos minutos se refrescan las cifras y el número del icono.
+// Nada de esto corre con la pantalla de arranque delante: ahí ya se está esperando.
+const SEGUNDOS_ENTRE_MIRADAS = 60;
+const MIRADAS_POR_REFRESCO = 5;
+let miradas = 0;
 setInterval(async () => {
   if (enArranque || vigilancia) return;
-  await cargarResumen();
-  const d = ultimoResumen;
-  const horas = HORAS_ENTRE_BUSQUEDAS * 3600 * 1000;
-  if (d && !buscadoHaceMenosDe(d.ultima_busqueda, HORAS_ENTRE_BUSQUEDAS * 60)
-      && Date.now() - ultimoIntentoSolo > horas) {
-    ultimoIntentoSolo = Date.now();
-    lanzarBusqueda();
+  const d = await estadoBusqueda();
+  if (d && d.en_marcha) {
+    vigilarBusqueda();
+    return;
   }
-}, MINUTOS_ENTRE_REPASOS * 60 * 1000);
+  if (++miradas % MIRADAS_POR_REFRESCO === 0) cargarResumen();
+}, SEGUNDOS_ENTRE_MIRADAS * 1000);
+
+// Lo llama la ventana de macOS al pulsar el aviso de «N licitaciones nuevas»: la
+// Bandeja con solo lo nuevo, que es lo que el aviso acaba de contar.
+window.verNovedades = async () => {
+  if (enArranque) return;
+  await cargarResumen();
+  soloNovedades = true;
+  $('tab-novedades').classList.add('activo');
+  mostrarVista('bandeja');
+  await cargarLista();
+};
 
 async function reiniciarConVersion(version, appNueva) {
   const nativa = ventanaNativa();
@@ -2648,11 +2673,155 @@ async function cargarAdjudicatarios() {
         <span><b>${fmtImporte(e.importe)}</b></span>
       </div>`;
     el.querySelector('h3').textContent = e.empresa;
+    el.prepend(botonEstrella('empresa', e.empresa, e.favorito));
     // Con el mismo ámbito que el ranking: si no, la ficha de una empresa de cloud
     // enseñaría solo lo que casa con los perfiles y no cuadraría con su cifra.
     el.addEventListener('click', () => abrirFicha('competidor', e.empresa, ambitoAdjudicatarios));
     cont.appendChild(el);
   }
+}
+
+// --- Favoritos -------------------------------------------------------------------
+//
+// Empresas y organismos marcados con la estrella: una fila de botones encima de cada
+// listado, y cada uno abre su ficha con el ámbito del listado. Los guarda el servidor.
+
+let favoritosActuales = { empresa: [], organismo: [] };
+const FAVORITOS = {
+  empresa: { cont: 'adjudicatarios-favoritos', ficha: 'competidor',
+             ambito: () => ambitoAdjudicatarios,
+             vacio: 'Pulsa ☆ junto a una empresa para tenerla aquí a un clic.' },
+  organismo: { cont: 'organismos-favoritos', ficha: 'organismo',
+               ambito: () => ambitoOrganismos,
+               vacio: 'Pulsa ☆ junto a un organismo para tenerlo aquí a un clic.' },
+};
+
+async function cargarFavoritos() {
+  try {
+    favoritosActuales = await pedirJSON('/api/favoritos');
+  } catch { /* sin favoritos se ve el listado igual */ }
+  pintarFavoritos('empresa');
+  pintarFavoritos('organismo');
+}
+
+function pintarFavoritos(tipo) {
+  const conf = FAVORITOS[tipo];
+  const cont = $(conf.cont);
+  cont.innerHTML = '';
+  cont.appendChild(crear('span', 'favoritos-titulo', '★ Favoritos'));
+  const lista = favoritosActuales[tipo] || [];
+  if (!lista.length) {
+    cont.appendChild(crear('span', 'pista', conf.vacio));
+    return;
+  }
+  for (const f of lista) {
+    const b = crear('button', 'favorito', f.nombre);
+    b.title = `Abrir la ficha de ${f.nombre}`;
+    b.addEventListener('click', () => abrirFicha(conf.ficha, f.nombre, conf.ambito()));
+    cont.appendChild(b);
+  }
+}
+
+async function cambiarFavorito(tipo, nombre, favorito) {
+  const r = await fetch('/api/favoritos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo, nombre, favorito }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'No se ha podido guardar el favorito.');
+  favoritosActuales = d;
+  pintarFavoritos(tipo);
+}
+
+// La estrella de cada fila. No abre la ficha: la fila sí.
+function botonEstrella(tipo, nombre, activo) {
+  const b = crear('button', 'estrella');
+  let marcado = Boolean(activo);
+  const pintar = () => {
+    b.textContent = marcado ? '★' : '☆';
+    b.classList.toggle('activa', marcado);
+    b.setAttribute('aria-pressed', marcado ? 'true' : 'false');
+    b.title = marcado ? 'Quitar de favoritos' : 'Añadir a favoritos';
+    b.setAttribute('aria-label', `${b.title}: ${nombre}`);
+  };
+  pintar();
+  b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await cambiarFavorito(tipo, nombre, !marcado);
+      marcado = !marcado;
+      pintar();
+    } catch { /* se queda como estaba, que es la verdad */ }
+  });
+  return b;
+}
+
+// El botón de la cabecera de la ficha. `nombre` es el de la ficha y no el pulsado: en la
+// de una empresa, la razón social más larga de las que se juntan.
+function pintarFavoritoFicha(tipoFicha, nombre, activo) {
+  const tipo = tipoFicha === 'organismo' ? 'organismo' : 'empresa';
+  const b = $(`${tipoFicha}-favorito`);
+  let marcado = Boolean(activo);
+  const pintar = () => {
+    b.textContent = marcado ? '★ En favoritos' : '☆ Añadir a favoritos';
+    b.classList.toggle('activa', marcado);
+    b.setAttribute('aria-pressed', marcado ? 'true' : 'false');
+  };
+  pintar();
+  b.hidden = false;
+  b.onclick = async () => {
+    try {
+      await cambiarFavorito(tipo, nombre, !marcado);
+      marcado = !marcado;
+      pintar();
+    } catch { /* se queda como estaba */ }
+  };
+}
+
+// --- Exportar PDF ----------------------------------------------------------------
+//
+// La Analítica y las fichas de organismo y de competidor se exportan imprimiendo la
+// propia página con la hoja de impresión de `styles.css`. En la app de macOS lo hace la
+// ventana (pregunta dónde guardar y deja el PDF); en el navegador, su diálogo de imprimir,
+// donde está «Guardar como PDF».
+
+function trozoNombre(texto) {
+  return (texto || '').replace(/[\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
+}
+
+function exportarPdf(partes, cabecera) {
+  const hoy = new Date();
+  const fecha = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-` +
+    String(hoy.getDate()).padStart(2, '0');
+  $('impresion-cabecera').textContent = ['Radar de Licitaciones', ...cabecera,
+    `exportado el ${hoy.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}`]
+    .filter(Boolean).join(' · ');
+  tooltip().hidden = true;
+  const nombre = [...partes.map(trozoNombre).filter(Boolean), fecha].join(' - ') + '.pdf';
+  const nativa = ventanaNativa();
+  if (nativa) nativa.postMessage({ accion: 'pdf', nombre });
+  else window.print();
+}
+
+function textoAmbito(select) {
+  const op = select.options[select.selectedIndex];
+  return op ? op.textContent.trim() : '';
+}
+
+$('analitica-pdf').addEventListener('click', () => {
+  const rango = rangosAnalitica().find((r) => r.clave === rangoAnalitica);
+  const ambito = textoAmbito($('analitica-perfil'));
+  exportarPdf(['Analitica', ambito, rango && rango.etiqueta],
+    ['Analítica', `ámbito: ${ambito}`, rango && `periodo: ${rango.etiqueta}`]);
+});
+for (const tipo of ['organismo', 'competidor']) {
+  $(`${tipo}-pdf`).addEventListener('click', () => {
+    if (!fichaActual) return;
+    const ambito = textoAmbito($(`${tipo}-ambito`));
+    exportarPdf([tipo === 'organismo' ? 'Organismo' : 'Competidor', $('vista-titulo').textContent],
+      [tipo === 'organismo' ? 'Ficha de organismo' : 'Ficha de competidor', `ámbito: ${ambito}`]);
+  });
 }
 
 // --- Organismos -------------------------------------------------------------------
@@ -2688,6 +2857,7 @@ async function cargarOrganismos() {
   }
   for (const o of d.items) {
     const el = crear('article', 'tarjeta fila-organismo');
+    el.appendChild(botonEstrella('organismo', o.organo, o.favorito));
     const izq = crear('div');
     izq.appendChild(crear('h3', '', o.organo));
     izq.appendChild(crear('div', 'organo', o.ultimo
@@ -2721,6 +2891,7 @@ async function cargarFicha() {
   const pasada = ++pasadaFicha;
   const id = `ficha-${f.tipo}`;
   $(`${f.tipo}-ambito`).value = f.ambito;
+  $(`${f.tipo}-favorito`).hidden = true;
   $('vista-titulo').textContent = f.nombre;
   $('vista-sub').textContent = '';
   const carga = empezarCarga(id, esMercado(f.ambito)
@@ -2741,6 +2912,7 @@ async function cargarFicha() {
     cont.appendChild(crear('p', 'vacio', `${d.error} Prueba con otro ámbito en el desplegable.`));
     return;
   }
+  pintarFavoritoFicha(f.tipo, f.tipo === 'organismo' ? d.organo : d.empresa, d.favorito);
   if (f.tipo === 'organismo') pintarFichaOrganismo(cont, d, f.ambito);
   else pintarFichaCompetidor(cont, d, f.ambito);
 }
@@ -2819,6 +2991,263 @@ function bloqueTarjetas(titulo, pregunta, items, vacio, resto = 0) {
   return el;
 }
 
+// --- Bloques de «quién repite» y de precio, compartidos por las dos fichas ----------
+//
+// Las renovaciones las empareja el servidor (`_sucesiones`): mismo órgano, objeto
+// parecido y publicada al menos tres meses después. Aquí solo se cuentan y se enlazan.
+
+// Las empresas de un lado de la pareja, cada una enlazada a su ficha.
+function empresasEnlazadas(lado, ambito) {
+  const frag = document.createDocumentFragment();
+  lado.empresas.forEach((e, i) => {
+    if (i) frag.appendChild(document.createTextNode(' / '));
+    frag.appendChild(enlaceFicha(e.nombre, 'competidor', e.nombre, ambito));
+  });
+  if (!lado.empresas.length) frag.appendChild(document.createTextNode('sin adjudicar todavía'));
+  return frag;
+}
+
+// Una renovación: el contrato nuevo (que abre su ficha), su fecha y quién lo tenía antes y
+// quién ahora. `conOrgano` en la del competidor, donde cada una es de un órgano distinto.
+function filaSucesion(p, ambito, conOrgano) {
+  const fila = crear('div', 'fila-ficha');
+  fila.appendChild(enlaceTexto(p.siguiente.objeto || '(sin objeto)', p.siguiente.id));
+  fila.appendChild(crear('span', 'cifra', fmtFecha(p.siguiente.fecha)));
+  const det = crear('span', 'detalle');
+  if (conOrgano) {
+    det.appendChild(enlaceFicha(p.organo, 'organismo', p.organo, ambito));
+    det.appendChild(document.createTextNode(' · '));
+  }
+  det.appendChild(document.createTextNode('antes: '));
+  det.appendChild(empresasEnlazadas(p.previo, ambito));
+  det.appendChild(document.createTextNode(' → ahora: '));
+  det.appendChild(empresasEnlazadas(p.siguiente, ambito));
+  fila.appendChild(det);
+  return fila;
+}
+
+function listaSucesiones(el, titulo, pares, ambito, conOrgano, tope = 10) {
+  if (!pares.length) return;
+  el.appendChild(crear('h4', '', titulo));
+  const lista = crear('div', 'lista-ficha');
+  for (const p of pares.slice(0, tope)) lista.appendChild(filaSucesion(p, ambito, conOrgano));
+  el.appendChild(lista);
+  if (pares.length > tope) nota(el, `Y ${pares.length - tope} más.`);
+}
+
+function metodoSucesiones(el) {
+  const m = metodo(el);
+  nota(m, 'La fuente no dice qué contrato renueva a cuál, así que se deduce: el mismo ' +
+          'órgano, publicado al menos tres meses después y con un objeto parecido (palabras ' +
+          'en común). De los candidatos se toma el más parecido, y cada contrato se empareja ' +
+          'una sola vez. Es una aproximación: dos contratos parecidos del mismo órgano no ' +
+          'siempre son el mismo servicio.');
+  return m;
+}
+
+function bloqueRetencion(d, ambito) {
+  const el = bloqueAnalitica('Clientes que retiene y que pierde',
+    '¿Cuando le toca renovar, se queda el contrato?');
+  const r = d.retencion;
+  if (!r.resueltos && !r.ganados_a_otros.length && !r.en_marcha.length) {
+    nota(el, 'Ninguno de sus contratos tiene todavía una renovación identificada en este ámbito.');
+    metodoSucesiones(el);
+    return el;
+  }
+  if (r.resueltos) {
+    titular(el, `${fmtEntero(r.retenidos)} de ${fmtEntero(r.resueltos)}`,
+      r.resueltos === 1 ? 'renovación que se quedó' : 'renovaciones que se quedó');
+  }
+  listaSucesiones(el, 'Los que perdió', r.perdidos, ambito, true);
+  listaSucesiones(el, 'Los que ganó a otro', r.ganados_a_otros, ambito, true);
+  listaSucesiones(el, 'Renovación en marcha', r.en_marcha, ambito, true);
+  metodoSucesiones(el);
+  return el;
+}
+
+// Una tabla de tres columnas con cabecera: lo de la empresa al lado de lo del mercado.
+function tablaComparada(el, cabecera, filas) {
+  const tabla = crear('table', 'tabla-escueta tabla-comparada');
+  const thead = crear('thead');
+  const tr = crear('tr');
+  cabecera.forEach((t, i) => tr.appendChild(crear('th', i ? 'num' : '', t)));
+  thead.appendChild(tr);
+  tabla.appendChild(thead);
+  const cuerpo = crear('tbody');
+  for (const fila of filas) {
+    const f = crear('tr');
+    fila.forEach((t, i) => f.appendChild(crear('td', i ? 'num' : '', t)));
+    cuerpo.appendChild(f);
+  }
+  tabla.appendChild(cuerpo);
+  el.appendChild(tabla);
+  return tabla;
+}
+
+function bloquePrecio(d) {
+  const el = bloqueAnalitica('Precio y tamaño frente al mercado',
+    '¿Compite en precio? ¿En qué tamaño de contrato juega?');
+  const ella = d.precio.empresa;
+  const mercado = d.precio.mercado;
+  const mediana = (x, campo, n, formato) =>
+    (x[n] >= MINIMO_MEDIANA_FICHA && x[campo] !== null) ? formato(x[campo]) : '—';
+  tablaComparada(el, ['', 'Ella', 'Mercado'], [
+    ['Importe mediano',
+     mediana(ella, 'importe_mediano', 'importes', fmtImporteCorto),
+     mediana(mercado, 'importe_mediano', 'importes', fmtImporteCorto)],
+    ['Baja mediana',
+     mediana(ella, 'baja_mediana', 'baja_comparables', (v) => `${fmtDecimal(v)} %`),
+     mediana(mercado, 'baja_mediana', 'baja_comparables', (v) => `${fmtDecimal(v)} %`)],
+  ]);
+  const procs = new Map(mercado.procedimientos.map((x) => [x.procedimiento, [null, x.pct]]));
+  for (const x of ella.procedimientos) {
+    procs.set(x.procedimiento, [x.pct, (procs.get(x.procedimiento) || [])[1] ?? null]);
+  }
+  const filas = [...procs.entries()]
+    .sort((a, b) => (b[1][0] ?? -1) - (a[1][0] ?? -1) || (b[1][1] ?? -1) - (a[1][1] ?? -1))
+    .map(([nombre, [suyo, total]]) =>
+      [nombre, suyo === null ? '—' : `${suyo} %`, total === null ? '—' : `${total} %`]);
+  if (filas.length) {
+    el.appendChild(crear('h4', '', 'Por qué procedimiento gana'));
+    tablaComparada(el, ['', 'Ella', 'Mercado'], filas);
+  }
+  const m = metodo(el);
+  nota(m, `El mercado es lo adjudicado en el mismo ámbito (${fmtEntero(mercado.expedientes)} ` +
+          `expedientes). Las medianas necesitan al menos ${MINIMO_MEDIANA_FICHA} casos; con ` +
+          `menos sale «—». Una baja más alta que la del mercado es que entra más barato.`);
+  return el;
+}
+
+function bloqueRivales(d, ambito) {
+  const el = bloqueAnalitica('Rivales y socios',
+    '¿Quién más gana en sus clientes, y con quién va en UTE?');
+  const { rivales, socios } = d.rivales;
+  if (!rivales.length) {
+    nota(el, 'Nadie más gana en sus organismos dentro de este ámbito.');
+  } else {
+    const tope = Math.max(1, ...rivales.map((x) => x.organismos));
+    for (const x of rivales) {
+      el.appendChild(filaBarra(x.empresa, 100 * x.organismos / tope,
+        `${fmtEntero(x.organismos)} en común · ${fmtEntero(x.expedientes)} contratos`,
+        { apilada: true, alPulsar: () => abrirFicha('competidor', x.empresa, ambito) }));
+    }
+  }
+  if (socios.length) {
+    el.appendChild(crear('h4', '', 'UTE en las que aparece'));
+    const lista = crear('div', 'lista-ficha');
+    for (const x of socios) {
+      const fila = crear('div', 'fila-ficha');
+      fila.appendChild(enlaceFicha(x.empresa, 'competidor', x.empresa, ambito));
+      fila.appendChild(crear('span', 'cifra', `${fmtEntero(x.expedientes)} contratos`));
+      lista.appendChild(fila);
+    }
+    el.appendChild(lista);
+  }
+  const m = metodo(el);
+  nota(m, '«En común» son los organismos donde las dos han ganado algo en este ámbito. Las ' +
+          'UTE son las adjudicatarias cuyo nombre la incluye y dice UTE o unión temporal.');
+  return el;
+}
+
+function bloqueDondeTeGano(d, ambito) {
+  const el = bloqueAnalitica('Dónde te ha ganado',
+    '¿Qué te ha quitado de lo que presentaste?');
+  const t = d.donde_te_gano;
+  if (!t.presentadas_adjudicadas && !t.incumbente_atado.length) {
+    nota(el, 'Nada de lo que has marcado como «Presentada» está adjudicado todavía, y no has ' +
+             'descartado nada por «incumbente atado» en sus organismos.');
+    return el;
+  }
+  if (t.presentadas_adjudicadas) {
+    titular(el, `${fmtEntero(t.ganadas_por_ella)} de ${fmtEntero(t.presentadas_adjudicadas)}`,
+      'de lo que presentaste y ya está adjudicado');
+  }
+  const fila = (x) => {
+    const f = crear('div', 'fila-ficha');
+    f.appendChild(enlaceTexto(x.objeto || '(sin objeto)', x.id));
+    f.appendChild(crear('span', 'cifra', fmtFecha(x.fecha)));
+    const det = crear('span', 'detalle');
+    det.appendChild(enlaceFicha(x.organo || '(sin órgano)', 'organismo', x.organo, ambito));
+    f.appendChild(det);
+    return f;
+  };
+  for (const [titulo, items] of [['Se las llevó ella', t.le_gano],
+    ['Descartaste por «incumbente atado» donde ya tenía contrato', t.incumbente_atado]]) {
+    if (!items.length) continue;
+    el.appendChild(crear('h4', '', titulo));
+    const lista = crear('div', 'lista-ficha');
+    items.slice(0, 10).forEach((x) => lista.appendChild(fila(x)));
+    el.appendChild(lista);
+  }
+  const m = metodo(el);
+  nota(m, 'Sale de tu triaje, en cualquier ámbito. Lo de «incumbente atado» es aproximado: ' +
+          'que tuviera un contrato anterior en ese organismo no prueba que fuera el de ese pliego.');
+  return el;
+}
+
+function bloqueProveedor(d, ambito) {
+  const el = bloqueAnalitica('¿Cambia de proveedor?',
+    '¿Cuando renueva un contrato, repite con la misma empresa?');
+  const p = d.proveedor;
+  if (!p.resueltos && !p.en_marcha.length) {
+    nota(el, 'Todavía no hay ninguna renovación identificada de sus contratos en este ámbito.');
+    metodoSucesiones(el);
+    return el;
+  }
+  if (p.resueltos) {
+    titular(el, `${fmtEntero(p.repite)} de ${fmtEntero(p.resueltos)}`,
+      p.resueltos === 1 ? 'renovación con la misma empresa' : 'renovaciones con la misma empresa');
+  }
+  listaSucesiones(el, 'Sus renovaciones', p.parejas, ambito, false);
+  listaSucesiones(el, 'Renovación en marcha', p.en_marcha, ambito, false);
+  metodoSucesiones(el);
+  return el;
+}
+
+function bloqueComoCompra(d, ambito) {
+  const el = bloqueAnalitica('Cómo compra',
+    '¿Por qué procedimiento, cuánto duran sus contratos y cuánto tarda en decidir?');
+  const c = d.como_compra;
+  const filas = [];
+  if (c.duraciones >= MINIMO_MEDIANA_FICHA) {
+    filas.push(['Duración de sus contratos', `${fmtEntero(c.duracion_mediana)} meses`]);
+  }
+  if (c.recorridos >= MINIMO_MEDIANA_FICHA) {
+    filas.push(['De la publicación a la adjudicación', `${fmtEntero(c.dias_adjudicar)} días`]);
+  }
+  if (c.lotes_sabidos) {
+    filas.push(['Divide en lotes', `${fmtEntero(c.con_lotes)} de ${fmtEntero(c.lotes_sabidos)}`]);
+  }
+  if (filas.length) tablaEscueta(el, filas);
+  if (c.procedimientos.length) {
+    el.appendChild(crear('h4', '', 'Procedimiento'));
+    const tope = Math.max(1, ...c.procedimientos.map((x) => x.expedientes));
+    for (const x of c.procedimientos) {
+      el.appendChild(filaBarra(x.procedimiento, 100 * x.expedientes / tope,
+        `${fmtEntero(x.expedientes)} · ${x.pct} %`, { apilada: true }));
+    }
+  }
+  el.appendChild(crear('h4', '', 'Consultas previas abiertas'));
+  if (!c.consultas_abiertas.length) {
+    nota(el, 'Ninguna ahora mismo.');
+  } else {
+    const lista = crear('div', 'lista-ficha');
+    for (const x of c.consultas_abiertas) {
+      const f = crear('div', 'fila-ficha');
+      f.appendChild(enlaceTexto(x.objeto || '(sin objeto)', x.id));
+      f.appendChild(crear('span', 'cifra', fmtFecha(x.fecha)));
+      lista.appendChild(f);
+    }
+    el.appendChild(lista);
+    nota(el, 'Es el aviso más temprano de un pliego: el órgano preguntando al mercado antes de escribirlo.');
+  }
+  const m = metodo(el);
+  nota(m, `Las medianas necesitan al menos ${MINIMO_MEDIANA_FICHA} expedientes. Los días hasta ` +
+          'adjudicar se miden como en la Analítica, sobre el cambio de estado publicado. Los ' +
+          'lotes, sobre lo que viene de PLACSP o de Cataluña: TED no lo dice.');
+  return el;
+}
+
 function pintarFichaOrganismo(cont, d, ambito) {
   $('vista-sub').textContent = [
     d.nifs.length ? `NIF ${d.nifs.join(', ')}` : '',
@@ -2866,6 +3295,7 @@ function pintarFichaOrganismo(cont, d, ambito) {
 
   parejas(cont, [
     [meses, gana],
+    [bloqueProveedor(d, ambito), bloqueComoCompra(d, ambito)],
     [bloqueVencen(d, ambito, '¿Qué contratos suyos se acaban y quién los tiene ahora?')],
   ]);
   cont.appendChild(bloqueTarjetas('Qué tiene abierto', '¿Qué se le puede presentar hoy?',
@@ -2943,6 +3373,8 @@ function pintarFichaCompetidor(cont, d, ambito) {
     [anios, donde],
     [clientes, bloqueVencen(d, ambito,
       '¿Qué contratos suyos se acaban? Es la ocasión de quitárselos.', true)],
+    [bloqueRetencion(d, ambito), bloqueRivales(d, ambito)],
+    [bloquePrecio(d), bloqueDondeTeGano(d, ambito)],
     [contratos],
   ]);
 }
@@ -2968,7 +3400,66 @@ const CAMPOS_TERMINOS = [
 
 let perfilesOriginales = null;
 
+// --- Búsqueda automática y avisos -------------------------------------------
+//
+// Al final de «Términos de búsqueda». Lo guarda el servidor, que es quien busca, y lo
+// lee la ventana de macOS antes de poner un aviso.
+
+function pintarAutomatica(d) {
+  $('auto-intervalo').value = String(d.intervalo_min);
+  $('auto-avisos').checked = Boolean(d.avisos);
+  $('auto-sonido').checked = Boolean(d.sonido);
+  $('auto-sonido').disabled = !d.avisos;
+  const partes = [];
+  if (d.ultima_iniciada) partes.push(`Última búsqueda: ${fmtFechaHora(d.ultima_iniciada)}.`);
+  if (!d.intervalo_min) {
+    partes.push('No busca sola: solo al abrir la aplicación, con «Buscar ahora» y con la tarea de las mañanas, si la tienes.');
+  } else if (d.proxima) {
+    partes.push(`Siguiente: hacia las ${new Date(d.proxima).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.`);
+  } else if (!d.activa) {
+    // Sin planificador: `start.command` de una versión vieja o RADAR_SIN_AUTOMATICA.
+    partes.push('Este servidor no tiene la búsqueda automática en marcha.');
+  }
+  if (!ventanaNativa() && d.avisos) {
+    partes.push('Los avisos con sonido los pone la aplicación del Mac; en el navegador no salen.');
+  }
+  $('auto-cuando').textContent = partes.join(' ');
+}
+
+async function cargarAutomatica() {
+  try {
+    pintarAutomatica(await pedirJSON('/api/preferencias'));
+  } catch {
+    $('auto-cuando').textContent = 'No se ha podido leer cómo está la búsqueda automática.';
+  }
+}
+
+async function guardarAutomatica(cambio) {
+  $('auto-aviso').textContent = '';
+  let r, d;
+  try {
+    r = await fetch('/api/preferencias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cambio),
+    });
+    d = await r.json();
+  } catch {
+    $('auto-aviso').textContent = 'No se ha podido guardar.';
+    return;
+  }
+  if (!r.ok) {
+    $('auto-aviso').textContent = d.error || 'No se ha podido guardar.';
+    return;
+  }
+  pintarAutomatica(d);
+  // El aviso de «guardado» va y viene: lo que importa es lo que dice la línea de arriba.
+  $('auto-aviso').textContent = 'Guardado.';
+  setTimeout(() => { $('auto-aviso').textContent = ''; }, 2500);
+}
+
 async function cargarAjustes() {
+  cargarAutomatica();
   const carga = empezarCarga('lista-perfiles');
   let d;
   try {
@@ -3272,8 +3763,8 @@ function mostrarVista(vista, { conservarPila = false } = {}) {
     otras: cargarOtras,
     siguiendo: cargarSiguiendo,
     vencimientos: cargarVencimientos,
-    adjudicatarios: cargarAdjudicatarios,
-    organismos: cargarOrganismos,
+    adjudicatarios: () => { cargarFavoritos(); return cargarAdjudicatarios(); },
+    organismos: () => { cargarFavoritos(); return cargarOrganismos(); },
     organismo: cargarFicha,
     competidor: cargarFicha,
     analitica: cargarAnalitica,
@@ -3799,6 +4290,10 @@ $('terminada-ver').addEventListener('click', () => {
 });
 $('terminada-cerrar').addEventListener('click', () => { $('busqueda-terminada').hidden = true; });
 $('previsualizar').addEventListener('click', () => previsualizarAjustes());
+$('auto-intervalo').addEventListener('change', (e) =>
+  guardarAutomatica({ intervalo_min: Number(e.target.value) }));
+$('auto-avisos').addEventListener('change', (e) => guardarAutomatica({ avisos: e.target.checked }));
+$('auto-sonido').addEventListener('change', (e) => guardarAutomatica({ sonido: e.target.checked }));
 $('guardar-perfiles').addEventListener('click', () => guardarAjustes());
 $('tab-novedades').addEventListener('click', async () => {
   soloNovedades = !soloNovedades;
@@ -4162,6 +4657,18 @@ function barraApilada(partes) {
     li.appendChild(crear('strong', '', fmtEntero(p.valor)));
     li.appendChild(crear('span', 'apilada-pct', porcentaje));
     lista.appendChild(li);
+    // Con `alPulsar`, el tramo y su fila de la leyenda llevan a esas fichas.
+    if (p.alPulsar) {
+      for (const el of [seg, li]) {
+        el.classList.add('pulsable');
+        el.setAttribute('role', 'button');
+        el.addEventListener('click', p.alPulsar);
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); p.alPulsar(); }
+        });
+      }
+      li.tabIndex = 0;
+    }
   }
   caja.appendChild(barra);
   caja.appendChild(lista);
@@ -4801,6 +5308,56 @@ function pintarCuota(d) {
   return el;
 }
 
+// ¿Se puede desbancar al incumbente? Con las mismas parejas contrato → renovación que las
+// fichas (`_sucesiones` en el servidor).
+function pintarIncumbentes(d) {
+  const el = bloqueAnalitica('¿Se puede desbancar al incumbente?',
+    '¿Cuando un contrato se renueva, se lo queda la misma empresa?', 'incumbentes');
+  if (!d.renovaciones) {
+    nota(el, 'Todavía no hay ninguna renovación identificada en este ámbito y periodo.');
+    metodoSucesiones(el);
+    return el;
+  }
+  if (d.suficiente) {
+    const pct = Math.round(100 * d.repite / d.renovaciones);
+    titular(el, `${pct} %`, `de ${fmtEntero(d.renovaciones)} renovaciones se las quedó el mismo`);
+    el.appendChild(barraApilada([
+      { nombre: 'Repite el incumbente', valor: d.repite, clase: 'serie-1' },
+      { nombre: 'Cambia de empresa', valor: d.renovaciones - d.repite, clase: 'serie-gris' },
+    ]));
+  } else {
+    nota(el, `Solo hay ${fmtEntero(d.renovaciones)} renovaciones identificadas, ${fmtEntero(d.repite)} ` +
+             `con la misma empresa; hacen falta ${d.minimo} para dar un porcentaje.`);
+  }
+  if (d.incumbentes.length) {
+    el.appendChild(crear('h4', '', 'Los incumbentes, y cuántas renovaciones retuvieron'));
+    const tope = Math.max(1, ...d.incumbentes.map((x) => x.contratos));
+    for (const x of d.incumbentes) {
+      el.appendChild(filaBarra(x.empresa, 100 * x.retenidos / tope,
+        `${fmtEntero(x.retenidos)} de ${fmtEntero(x.contratos)}`,
+        { apilada: true,
+          alPulsar: () => abrirFicha('competidor', x.empresa, ambitoAnalitica) }));
+    }
+  }
+  if (d.organos_que_cambian.length) {
+    el.appendChild(crear('h4', '', 'Los organismos que más cambian'));
+    const tope = Math.max(1, ...d.organos_que_cambian.map((x) => x.renovaciones));
+    for (const x of d.organos_que_cambian) {
+      el.appendChild(filaBarra(x.organo, 100 * x.cambios / tope,
+        `${fmtEntero(x.cambios)} de ${fmtEntero(x.renovaciones)}`,
+        { apilada: true,
+          alPulsar: () => abrirFicha('organismo', x.organo, ambitoAnalitica) }));
+    }
+  }
+  if (d.en_marcha) {
+    nota(el, `${fmtEntero(d.en_marcha)} ${d.en_marcha === 1 ? 'renovación publicada sigue' : 'renovaciones publicadas siguen'} sin adjudicar.`);
+  }
+  const m = metodoSucesiones(el);
+  nota(m, 'El periodo se aplica a la renovación: cuándo se publicó la segunda, que es cuando ' +
+          'se decidió si el incumbente seguía.');
+  return el;
+}
+
 function pintarConsultas(d) {
   const el = bloqueAnalitica('De consulta previa a pliego',
     '¿Cuánto margen da una consulta preliminar de mercado antes de que salga la licitación?',
@@ -4879,50 +5436,94 @@ function pintarAdjudicatarios(d) {
 // Los estados de la fuente, juntados en cuatro momentos de la vida de un expediente. El
 // color sigue al momento y no al puesto: lo abierto es siempre el azul, aunque sea lo que
 // menos haya, y lo cerrado va en gris porque es lo que menos se puede trabajar.
-const MOMENTOS = [
-  { clave: 'abiertas', nombre: 'Abiertas o por salir', clase: 'serie-1',
-    estados: ['publicada', 'previo'] },
-  { clave: 'evaluacion', nombre: 'En evaluación', clase: 'serie-2', estados: ['evaluacion'] },
-  { clave: 'cerradas', nombre: 'Adjudicadas o cerradas', clase: 'serie-gris',
-    estados: ['adjudicada', 'formalizada', 'resuelta'] },
-  { clave: 'otras', nombre: 'Anuladas o sin estado', clase: 'serie-gris-2', estados: [] },
-];
+// Los tramos de la barra. El reparto lo hace el servidor (`FASES_CARTERA`), que es el
+// mismo que usa el filtro `fase` de la bandeja: aquí solo el nombre y el color.
+const MOMENTOS = {
+  abiertas: { nombre: 'Publicadas o por salir', clase: 'serie-1' },
+  evaluacion: { nombre: 'En evaluación', clase: 'serie-2' },
+  adjudicadas: { nombre: 'Adjudicadas o cerradas', clase: 'serie-gris' },
+  otras: { nombre: 'Anuladas o sin estado', clase: 'serie-gris-2' },
+};
+
+// Lleva a la Bandeja con exactamente las fichas de una cifra de «Qué tengo de verdad
+// hoy». Se quitan los demás filtros —texto, comunidad, importe, «ocultar sin plazo»—
+// porque si no el número de la lista no sería el que se acaba de pulsar, y el perfil es
+// el del ámbito de la Analítica. `solo_casan` deja fuera lo que sigues y ya no casa, que
+// el bloque tampoco cuenta.
+function irDesdeCartera(etiqueta, params, { vivas = false, orden = null } = {}) {
+  kpiActivo = null;
+  cierranEnDias = '';
+  sinVencidas = '';
+  soloNovedades = false;
+  $('tab-novedades').classList.remove('activo');
+  ponerConPlazo(false);
+  $('q').value = '';
+  $('estado').value = '';
+  $('ccaa').value = '';
+  $('importe_min').value = '';
+  const perfil = ambitoAnalitica.startsWith('perfil:') ? ambitoAnalitica.slice(7) : '';
+  $('perfil').value = [...$('perfil').options].some((o) => o.value === perfil) ? perfil : '';
+  $('vivas').checked = vivas;
+  if (orden) $('orden').value = orden;
+  filtroAnalitica = { etiqueta, params: { solo_casan: '1', ...params } };
+  for (const b of $('kpis').querySelectorAll('button.kpi')) b.classList.remove('activo');
+  mostrarVista('bandeja');
+  cargarLista();
+}
 
 function pintarCartera(d) {
   const el = bloqueAnalitica('Qué tengo de verdad hoy',
     '¿Esto es un pipeline o un archivo histórico?', 'cartera');
   const fila = crear('div', 'cifras-fila');
+  const corte = fmtDecimal(d.puntuacion_lista_corta);
+  // En el orden en que se trabaja: lo que se puede presentar hoy, primero. Los nombres
+  // dicen de qué periodo es cada cifra porque «413 coincidencias» se leía como pipeline,
+  // y es todo lo que ha casado desde que hay datos, abierto o no.
   const cifras = [
-    ['coincidencias', d.expedientes, ''],
-    [`puntúan más de ${fmtDecimal(d.puntuacion_lista_corta)}`, d.lista_corta, ''],
-    ['con plazo abierto', d.con_plazo_abierto, 'ojo'],
-    ['ya cerradas o adjudicadas', d.expedientes - d.con_plazo_abierto, ''],
+    ['con plazo abierto', 'se puede presentar hoy', d.con_plazo_abierto, 'ojo',
+     () => irDesdeCartera('con plazo abierto', {}, { vivas: true })],
+    ['coincidencias', 'desde que hay datos, abiertas o no', d.expedientes, '',
+     () => irDesdeCartera('todas las coincidencias', {})],
+    [`puntúan más de ${corte}`, 'las que mejor encajan', d.lista_corta, '',
+     () => irDesdeCartera(`puntúan más de ${corte}`,
+       { puntuacion_min: String(d.puntuacion_lista_corta) }, { orden: 'puntuacion' })],
+    ['sin plazo abierto', 'cerradas, adjudicadas o vencidas', d.sin_plazo_abierto, '',
+     () => irDesdeCartera('sin plazo abierto', { cerradas: '1' })],
   ];
-  for (const [etiqueta, valor, clase] of cifras) {
-    const c = crear('div', clase);
+  for (const [etiqueta, pie, valor, clase, alPulsar] of cifras) {
+    const c = crear('button', `cifra-cartera ${clase}`.trim());
+    c.title = 'Ver estas licitaciones en la Bandeja';
     c.appendChild(crear('span', '', etiqueta));
     c.appendChild(crear('b', '', valor.toLocaleString('es-ES')));
+    c.appendChild(crear('span', 'pie', pie));
+    c.addEventListener('click', alPulsar);
     fila.appendChild(c);
   }
   el.appendChild(fila);
 
-  const porMomento = Object.fromEntries(MOMENTOS.map((m) => [m.clave, 0]));
-  for (const e of d.estados) {
-    const momento = MOMENTOS.find((m) => m.estados.includes(e.estado)) || MOMENTOS[3];
-    porMomento[momento.clave] += e.expedientes;
-  }
-  el.appendChild(barraApilada(MOMENTOS.map((m) => ({
-    nombre: m.nombre, valor: porMomento[m.clave], clase: m.clase,
+  el.appendChild(barraApilada(d.fases.map((f) => ({
+    nombre: MOMENTOS[f.clave].nombre,
+    valor: f.expedientes,
+    clase: MOMENTOS[f.clave].clase,
+    alPulsar: () => irDesdeCartera(MOMENTOS[f.clave].nombre.toLowerCase(), { fase: f.clave }),
   }))));
 
   // La frase sale del dato: el día que esto sea un pipeline de verdad, dejará de decir
   // que es un archivo.
+  const publicadas = (d.fases.find((f) => f.clave === 'abiertas') || {}).expedientes || 0;
   nota(el, d.es_archivo_historico
     ? `De ${d.expedientes.toLocaleString('es-ES')} coincidencias, ${d.con_plazo_abierto} ` +
       'tienen el plazo abierto: esto es sobre todo un archivo histórico, y su valor está ' +
       'en los otros bloques, no en presentar ofertas hoy.'
     : `${d.con_plazo_abierto} coincidencias tienen el plazo abierto: hay pipeline vivo que ` +
       'trabajar en la bandeja.');
+  if (publicadas > d.con_plazo_abierto) {
+    nota(el, `«Publicadas o por salir» (${publicadas}) es el estado que publica la fuente: ` +
+      `de ellas, solo las que siguen en plazo cuentan como «con plazo abierto». Pulsa ` +
+      'cualquier cifra o tramo para ver esas licitaciones en la Bandeja.');
+  } else {
+    nota(el, 'Pulsa cualquier cifra o tramo para ver esas licitaciones en la Bandeja.');
+  }
   const m = metodo(el, 'Ver cada estado');
   if (d.consultas_previas_sin_importe) {
     nota(m, `${d.consultas_previas_sin_importe} son consultas previas al mercado sin ` +
@@ -5110,7 +5711,7 @@ async function cargarAnalitica() {
     [pintarEstacionalidad(d.estacionalidad)],
     [pintarCuota(d.cuota)],
     [pintarCpv(d.cpv), pintarProcedimiento(d.procedimiento)],
-    [pintarConsultas(d.consultas)],
+    [pintarConsultas(d.consultas), pintarIncumbentes(d.incumbentes)],
     // La cartera, con tu triaje y tus puntuaciones, solo existe para tus perfiles: con
     // una temática el servidor la manda vacía y las renovaciones se quedan solas.
     d.cartera ? [pintarRenovaciones(d.renovaciones, g.mercado), pintarCartera(d.cartera)]

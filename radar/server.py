@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import busqueda, categorias, consultas, db, enlaces, pipeline, rutas
+from . import automatica, busqueda, categorias, consultas, db, enlaces, pipeline, rutas
 from .db import ESTADOS_REVISION
 from .sources.base import NUTS2_CCAA
 
@@ -65,6 +65,34 @@ def _perfiles_activos() -> list[str]:
         p["nombre"] for p in datos.get("perfiles", [])
         if isinstance(p, dict) and p.get("nombre") and p.get("activo", True)
     ]
+
+
+def _filtros_bandeja(params: dict) -> dict:
+    """Los filtros de la bandeja tal como llegan en la URL. Los comparten la lista y el
+    CSV, para que «Exportar CSV» baje exactamente lo que se ve."""
+    return dict(
+        perfil=params.get("perfil") or None,
+        estado_revision=params.get("estado") or None,
+        solo_vivas=params.get("vivas", "1") == "1",
+        ccaa=params.get("ccaa") or None,
+        fuente=params.get("fuente") or None,
+        importe_min=float(params["importe_min"]) if params.get("importe_min") else None,
+        cierran_en_dias=(
+            int(params["cierran_en_dias"]) if params.get("cierran_en_dias") else None
+        ),
+        busqueda=params.get("q") or None,
+        solo_novedades=params.get("novedades") == "1",
+        con_plazo=params.get("con_plazo") == "1",
+        sin_vencidas=params.get("sin_vencidas") == "1",
+        # Los de «Qué tengo de verdad hoy» (Analítica).
+        solo_casan=params.get("solo_casan") == "1",
+        puntuacion_min=(
+            float(params["puntuacion_min"]) if params.get("puntuacion_min") else None
+        ),
+        cerradas=params.get("cerradas") == "1",
+        fase=params.get("fase") or None,
+        orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
+    )
 
 
 class Manejador(BaseHTTPRequestHandler):
@@ -166,21 +194,7 @@ class Manejador(BaseHTTPRequestHandler):
         elif partes.path == "/api/bandeja":
             try:
                 self._json(consultas.bandeja(
-                    self.con,
-                    perfil=params.get("perfil") or None,
-                    estado_revision=params.get("estado") or None,
-                    solo_vivas=params.get("vivas", "1") == "1",
-                    ccaa=params.get("ccaa") or None,
-                    fuente=params.get("fuente") or None,
-                    importe_min=float(params["importe_min"]) if params.get("importe_min") else None,
-                    cierran_en_dias=(
-                        int(params["cierran_en_dias"]) if params.get("cierran_en_dias") else None
-                    ),
-                    busqueda=params.get("q") or None,
-                    solo_novedades=params.get("novedades") == "1",
-                    con_plazo=params.get("con_plazo") == "1",
-                    sin_vencidas=params.get("sin_vencidas") == "1",
-                    orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
+                    self.con, **_filtros_bandeja(params),
                     limite=min(int(params.get("limite", 200)), 1000),
                     offset=int(params.get("offset", 0)),
                 ))
@@ -247,8 +261,16 @@ class Manejador(BaseHTTPRequestHandler):
                 ambito = consultas.Ambito.de(params.get("perfil"), params.get("categoria"))
             except ValueError as exc:
                 return self._error(str(exc))
-            self._json(consultas.adjudicatarios(self.con, ambito=ambito, limite=limite,
-                                                q=params.get("q") or None))
+            datos = consultas.adjudicatarios(self.con, ambito=ambito, limite=limite,
+                                             q=params.get("q") or None)
+            favoritas = consultas.claves_favoritas(self.con, "empresa")
+            datos["items"] = [
+                {**it, "favorito": consultas.normalizar_empresa(it["empresa"]) in favoritas}
+                for it in datos["items"]]
+            self._json(datos)
+
+        elif partes.path == "/api/favoritos":
+            self._json(consultas.favoritos(self.con))
 
         elif partes.path == "/api/contratos-empresa":
             empresa = params.get("empresa")
@@ -266,8 +288,11 @@ class Manejador(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._error(str(exc))
             if partes.path == "/api/organismos":
-                return self._json(consultas.organismos(
-                    self.con, ambito=ambito, q=params.get("q") or None))
+                datos = consultas.organismos(self.con, ambito=ambito, q=params.get("q") or None)
+                favoritos = consultas.claves_favoritas(self.con, "organismo")
+                datos["items"] = [{**it, "favorito": it["organo"] in favoritos}
+                                  for it in datos["items"]]
+                return self._json(datos)
             if partes.path == "/api/organismo":
                 nombre = params.get("nombre")
                 if not nombre:
@@ -283,7 +308,11 @@ class Manejador(BaseHTTPRequestHandler):
             if ficha is None:
                 # 404 y no una ficha vacía: la pantalla lo dice, y sugiere cambiar el ámbito.
                 return self._error(f"No hay expedientes de {quien} en «{ambito.etiqueta}».", 404)
-            self._json(ficha)
+            # Aparte de la ficha, que va en caché: marcar o desmarcar no la invalida.
+            tipo = "organismo" if partes.path == "/api/organismo" else "empresa"
+            nombre = ficha.get("organo") if tipo == "organismo" else ficha.get("empresa")
+            self._json({**ficha, "favorito": consultas.clave_favorito(tipo, nombre)
+                        in consultas.claves_favoritas(self.con, tipo)})
 
         elif partes.path == "/api/motivos-descarte":
             self._json({"items": consultas.motivos_descarte(self.con)})
@@ -341,6 +370,17 @@ class Manejador(BaseHTTPRequestHandler):
                 "etapas_pendientes": db.etapas_pendientes(
                     self.con, len(pipeline.ETAPAS_PRIMERA_CARGA)),
             })
+
+        elif partes.path == "/api/preferencias":
+            # Búsqueda automática y avisos: lo que se elige al final de «Términos de
+            # búsqueda», con la hora de la última búsqueda y la de la siguiente.
+            self._json(automatica.estado(self.con))
+
+        elif partes.path == "/api/avisos":
+            # Lo pregunta la ventana de macOS cada minuto para poner el aviso con sonido
+            # (`Radar.swift`). Barato a propósito: casi siempre no hay búsquedas nuevas.
+            self._json(automatica.avisos_pendientes(
+                self.con, perfiles_activos=_perfiles_activos()))
 
         elif partes.path == "/api/resumen-novedades":
             try:
@@ -431,15 +471,14 @@ class Manejador(BaseHTTPRequestHandler):
             self._json(d)
 
         elif partes.path == "/api/export.csv":
-            columnas, filas = consultas.para_csv(
-                self.con,
-                perfil=params.get("perfil") or None,
-                estado_revision=params.get("estado") or None,
-                solo_vivas=params.get("vivas", "1") == "1",
-                busqueda=params.get("q") or None,
-                con_plazo=params.get("con_plazo") == "1",
-                sin_vencidas=params.get("sin_vencidas") == "1",
-            )
+            # Los mismos filtros que la lista: antes se quedaba con seis y el CSV traía
+            # más filas de las que se veían (sin comunidad, importe mínimo ni «cierran en»).
+            try:
+                columnas, filas = consultas.para_csv(self.con, **_filtros_bandeja(params))
+            except sqlite3.OperationalError as exc:
+                return self._error(f"Búsqueda no válida: {exc}")
+            except ValueError as exc:
+                return self._error(str(exc))
             self._csv(columnas, filas, "licitaciones.csv")
 
         elif partes.path == "/api/vencimientos.xlsx":
@@ -619,6 +658,31 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._error(f"No se pudo lanzar la búsqueda: {exc}", 500)
             self._json({"ok": True, **datos})
 
+        elif partes.path == "/api/favoritos":
+            if not isinstance(cuerpo.get("favorito"), bool):
+                return self._error("favorito debe ser true o false")
+            try:
+                self._json(consultas.fijar_favorito(
+                    self.con, str(cuerpo.get("tipo") or ""), str(cuerpo.get("nombre") or ""),
+                    cuerpo["favorito"]))
+            except ValueError as exc:
+                self._error(str(exc))
+
+        elif partes.path == "/api/preferencias":
+            try:
+                self._json(automatica.fijar_preferencias(self.con, cuerpo))
+            except ValueError as exc:
+                self._error(str(exc))
+
+        elif partes.path == "/api/avisos/entregados":
+            # Después de enseñar el aviso (o de decidir que no había nada que enseñar),
+            # para no volver a avisar de las mismas búsquedas.
+            try:
+                hasta = int(cuerpo["hasta"])
+            except (KeyError, TypeError, ValueError):
+                return self._error("falta hasta")
+            self._json({"ok": True, "marca": automatica.marcar_entregados(self.con, hasta)})
+
         elif partes.path == "/api/cancelar-busqueda":
             self._json({"ok": busqueda.cancelar()})
 
@@ -641,6 +705,11 @@ def arrancar(puerto: int = 8811, ruta_bd: Path | None = None) -> ThreadingHTTPSe
     Manejador.ruta_bd = ruta_bd or db.BD_POR_DEFECTO
     # Se prepara la base aquí, una vez, antes de atender a nadie: esquema y migraciones.
     # Las peticiones solo abren (`Manejador.con`).
-    db.conectar(Manejador.ruta_bd).close()
+    con = db.conectar(Manejador.ruta_bd)
+    try:
+        # Desde aquí se avisa de lo que llegue, no del histórico (ver `automatica`).
+        automatica.preparar_marca(con)
+    finally:
+        con.close()
     servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Manejador)
     return servidor

@@ -248,6 +248,19 @@ CREATE TABLE IF NOT EXISTS prospeccion (
     nota           TEXT,
     actualizado_en TEXT NOT NULL
 );
+
+-- Empresas y organismos favoritos: botones encima de Adjudicatarios y Organismos para
+-- tener su ficha a un clic. `clave` es por lo que se reconoce: la razón social
+-- normalizada (`consultas.normalizar_empresa`, la misma que junta sus variantes en el
+-- ranking) o el nombre exacto del órgano, que es lo que usa su ficha. `nombre` es lo que
+-- se enseña en el botón.
+CREATE TABLE IF NOT EXISTS favoritos (
+    tipo      TEXT NOT NULL CHECK (tipo IN ('empresa', 'organismo')),
+    clave     TEXT NOT NULL,
+    nombre    TEXT NOT NULL,
+    creado_en TEXT NOT NULL,
+    PRIMARY KEY (tipo, clave)
+);
 """
 
 # «vista» es lo que deja «Limpiar sin revisar»: ya no cuenta como pendiente, pero sigue en

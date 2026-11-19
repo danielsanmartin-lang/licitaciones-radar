@@ -325,6 +325,11 @@ def cmd_serve(args) -> int:
         print("Aviso: no hay coincidencias todavía. Lanza 'python3 radar.py ingest' primero.\n")
 
     servidor = server.arrancar(args.puerto, args.bd)
+    # La búsqueda cada N horas, desde aquí y no desde la página: con la ventana cerrada
+    # la página no tiene hora fiable (ver `radar/automatica.py`).
+    from radar import automatica
+
+    automatica.iniciar(args.bd or db.BD_POR_DEFECTO, bd=args.bd)
     url = f"http://127.0.0.1:{args.puerto}/"
     print(f"Bandeja en {url}   (Ctrl+C para parar)")
     if not args.sin_navegador:

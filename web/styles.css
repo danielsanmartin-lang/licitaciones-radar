@@ -1097,6 +1097,53 @@ progress:not([value]) { opacity: .7; }
   gap: var(--e-2);
   margin-bottom: var(--e-4);
 }
+.detalle-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: var(--e-2); }
+
+/* --- Favoritos ---------------------------------------------------------------
+ *
+ * Encima de Adjudicatarios y Organismos, una fila de botones con los favoritos: un clic
+ * y se abre su ficha. La estrella va al principio de cada fila del listado y en la
+ * cabecera de la ficha. */
+.favoritos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e-2);
+  margin: 0 0 var(--e-3);
+}
+.favoritos-titulo { font-size: var(--txt-sm); font-weight: 600; color: var(--ambar); margin-right: var(--e-1); }
+.favorito {
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: 28px;
+  padding: 0 var(--e-3);
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  background: var(--panel);
+  font: inherit;
+  font-size: var(--txt-sm);
+  color: var(--texto);
+  cursor: default;
+  transition: border-color var(--transicion);
+}
+.favorito:hover { border-color: var(--acento-borde); }
+.fila-empresa, .fila-organismo { grid-template-columns: auto 1fr auto; align-items: center; }
+.estrella {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radio-sm);
+  background: none;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--texto-ter);
+  cursor: default;
+}
+.estrella:hover { background: var(--relleno); color: var(--ambar); }
+.estrella.activa, .boton-favorito.activa { color: var(--ambar); }
+
 /* Una fila del listado de organismos: el nombre y sus cifras, como las de empresa. */
 .fila-organismo .cifras { display: flex; gap: var(--e-5); font-variant-numeric: tabular-nums; color: var(--texto-sec); font-size: var(--txt-sm); }
 .fila-organismo .cifras b { font-weight: 600; color: var(--texto); }
@@ -1347,6 +1394,15 @@ progress:not([value]) { opacity: .7; }
   line-height: 1.5;
 }
 .busqueda-progreso progress { margin-top: var(--e-1); }
+/* Cada cuánto busca sola y si avisa: debajo de «Buscar ahora», con el mismo recuadro. */
+.automatica { margin-top: var(--e-3); align-items: flex-start; }
+.auto-controles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--e-2);
+}
+.auto-controles select { margin-left: var(--e-1); }
 
 /* --- Pantalla de arranque --------------------------------------------------
  *
@@ -1879,17 +1935,35 @@ progress:not([value]) { opacity: .7; }
 .apilada-leyenda strong { font-weight: 600; font-variant-numeric: tabular-nums; }
 .apilada-pct { min-width: 3em; text-align: right; color: var(--texto-ter); font-variant-numeric: tabular-nums; }
 
-/* Las cifras de la cartera, como fichas de cifra. */
+/* Las cifras de la cartera, como fichas de cifra. Son botones: cada una lleva a la Bandeja
+   con exactamente esas licitaciones. */
 .bloque .cifras-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--e-2); }
-.bloque .cifras-fila div {
+.bloque .cifras-fila div,
+.cifra-cartera {
   padding: var(--e-2) var(--e-3);
   background: var(--relleno);
   border-radius: var(--radio-lg);
   font-size: var(--txt-xs);
   color: var(--texto-ter);
 }
+.cifra-cartera {
+  border: 1px solid transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: default;
+  transition: border-color var(--transicion);
+}
+/* El mismo aviso de «se puede pulsar» que las cifras clave de arriba. */
+.cifra-cartera:hover { border-color: var(--acento-borde); }
+.cifra-cartera:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.cifra-cartera .pie { display: block; margin-top: 2px; color: var(--texto-ter); }
 .bloque .cifras-fila b { display: block; margin-top: 2px; font: 600 var(--txt-xl)/1.3 var(--letra-titulo); color: var(--texto); }
 .bloque .cifras-fila .ojo b { color: var(--ambar); }
+/* Los tramos y las filas de la leyenda que llevan a la Bandeja. */
+.apilada .pulsable { cursor: default; }
+.apilada-leyenda li.pulsable { border-radius: var(--radio-sm); padding: 1px 4px; margin: -1px -4px; }
+.apilada-leyenda li.pulsable:hover { background: var(--relleno); }
+.apilada-leyenda li.pulsable:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
 
 /* Tabla escueta para los cinco mayores, los CPV y los datos de cada gráfica: sin bordes de
    celda, que aquí lo que se compara son las cifras. */
@@ -1899,6 +1973,16 @@ progress:not([value]) { opacity: .7; }
 .tabla-escueta tr:last-child td { border-bottom: 0; }
 .tabla-escueta td.num { padding-left: var(--e-3); text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tabla-escueta .apagado { color: var(--texto-sec); }
+/* La de la ficha de competidor: lo suyo al lado de lo del mercado, con cabecera. */
+.tabla-comparada th {
+  padding: 0 0 4px;
+  font-size: var(--txt-xs);
+  font-weight: 600;
+  color: var(--texto-ter);
+  text-align: left;
+  border-bottom: 1px solid var(--borde);
+}
+.tabla-comparada th.num { padding-left: var(--e-3); text-align: right; }
 
 /* --- El tooltip -------------------------------------------------------------- *
  * Uno para toda la pestaña, fijo sobre la ventana. El valor delante y en negrita; la
@@ -2036,3 +2120,100 @@ progress:not([value]) { opacity: .7; }
 /* El calendario de renovaciones de Vencimientos va en su propia tarjeta. */
 #calendario-vencimientos:empty { display: none; }
 #calendario-vencimientos { margin-bottom: var(--e-4); }
+
+/* --- Impresión y PDF ----------------------------------------------------------
+ *
+ * «Exportar PDF» (Analítica y fichas de organismo y competidor) imprime la propia página:
+ * en la app, `Radar.swift` la manda a un PDF; en el navegador, `window.print()`. Aquí se
+ * deja solo el contenido —sin barra lateral, filtros, botones ni «Cómo se calcula»—, en
+ * claro aunque el Mac esté en oscuro, y fluyendo en páginas en lugar de dentro de `.cuerpo`,
+ * que es lo que hace scroll en pantalla. */
+.solo-impresion { display: none; }
+
+@media print {
+  @page { size: A4 portrait; }
+  /* Los mismos valores que el `:root` claro: van después del bloque oscuro, así que ganan
+     aunque el sistema esté en oscuro. */
+  :root {
+    color-scheme: light;
+    --fondo: #ffffff;
+    --lateral: #f3f4f9;
+    --panel: #ffffff;
+    --ficha: #fbfbfd;
+    --relleno: rgb(11 16 48 / .045);
+    --activo: rgb(20 44 209 / .09);
+    --borde: rgb(11 16 48 / .08);
+    --borde-fuerte: rgb(11 16 48 / .14);
+    --texto: #0b1030;
+    --texto-sec: #565c7a;
+    --texto-ter: #9399b2;
+    --acento: #142cd1;
+    --acento-texto: #1428b8;
+    --acento-tenue: rgb(20 44 209 / .09);
+    --acento-borde: rgb(20 44 209 / .32);
+    --verde: #13865f;
+    --verde-tenue: rgb(29 158 117 / .12);
+    --ambar: #b8650e;
+    --ambar-tenue: rgb(239 159 39 / .16);
+    --rojo: #d62e4b;
+    --rojo-tenue: rgb(255 59 92 / .12);
+    --turquesa: #0b8f99;
+    --turquesa-tenue: rgb(123 233 228 / .28);
+    --violeta: #6b62d6;
+    --violeta-tenue: rgb(127 119 221 / .14);
+    --serie-1: #2a78d6;
+    --serie-2: #eb6834;
+    --serie-3: #1baf7a;
+    --serie-4: #eda100;
+    --serie-5: #e87ba4;
+    --sec-1: #cde2fb;
+    --sec-2: #86b6ef;
+    --sec-3: #3987e5;
+    --sec-4: #1c5cab;
+    --sec-5: #0d366b;
+    --tinta-sec-1: #0b1030;
+    --tinta-sec-2: #0b1030;
+    --tinta-sec-3: #ffffff;
+    --tinta-sec-4: #ffffff;
+    --tinta-sec-5: #ffffff;
+    --serie-gris: #b4b8ca;
+    --serie-gris-2: #dcdee8;
+    --sombra-1: 0 1px 2px rgb(7 14 52 / .06), 0 8px 24px rgb(7 14 52 / .08);
+    --sombra-2: 0 2px 6px rgb(7 14 52 / .08), 0 24px 60px rgb(7 14 52 / .18);
+  }
+
+  html, body { height: auto; overflow: visible; background: #fff; }
+  body {
+    font-size: 11.5px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .app { display: block; height: auto; }
+  .contenido { display: block; background: #fff; }
+  .cuerpo { overflow: visible; height: auto; }
+  .cuerpo-ancho, .vista-cabecera { width: auto; padding: 0; margin: 0; }
+  .vista-cabecera { padding-bottom: var(--e-3); }
+
+  .lateral, .panel, .panel-fondo, .arranque, .carga, .avisos, .vista-icono,
+  .detalle-barra, .analitica-filtros, .filtros, .kpis, .metodo, .tt,
+  .boton-pri, .boton-sec, .estrella, .mas { display: none !important; }
+  .solo-impresion { display: block; }
+
+  .impresion-cabecera {
+    margin-bottom: var(--e-3);
+    font-size: var(--txt-sm);
+    color: var(--texto-sec);
+  }
+  /* En bloque y no en rejilla: WebKit no respeta `break-inside` en los hijos de una
+     rejilla, y las tarjetas se partían entre dos páginas. Una columna, que en A4 es lo que
+     cabe de todas formas. */
+  .analitica, .analitica .pareja { display: block; }
+  .analitica .pareja > *, .analitica > * { margin-bottom: var(--e-2); }
+  .bloque, .cifra-clave, .tarjeta {
+    box-shadow: none;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .bloque { border-color: var(--borde-fuerte); }
+  .enlace-ficha { color: inherit; text-decoration: none; }
+}

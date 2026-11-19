@@ -253,6 +253,9 @@
 
       <div class="cuerpo" id="cuerpo">
         <div class="cuerpo-ancho">
+          <!-- Solo sale en el PDF: de qué ámbito y qué día es lo que se ha exportado. Lo
+               rellena `exportarPdf()` justo antes de imprimir. -->
+          <p id="impresion-cabecera" class="solo-impresion impresion-cabecera"></p>
           <!-- Carga en segundo plano. Se rellena desde /api/busqueda-estado: la ingesta corre
                en otro proceso y la base va creciendo mientras se trabaja aquí. -->
           <div id="carga" class="carga" hidden>
@@ -469,6 +472,7 @@
                 Quién se lleva estos contratos. Agrupa las variantes de razón social; pulsa una
                 empresa para ver su ficha.
               </p>
+              <div id="adjudicatarios-favoritos" class="favoritos"></div>
               <div class="filtros">
                 <input type="search" id="adjudicatarios-q" placeholder="Buscar una empresa…" autocomplete="off">
                 <select id="adjudicatarios-ambito" class="selector-ambito" aria-label="Ámbito"></select>
@@ -484,6 +488,7 @@
                 Quién compra en tu ámbito, de más a menos expedientes. Pulsa uno para ver su
                 ficha: cuándo publica, a quién adjudica y qué le vence.
               </p>
+              <div id="organismos-favoritos" class="favoritos"></div>
               <div class="filtros">
                 <input type="search" id="organismos-q" placeholder="Buscar un organismo…" autocomplete="off">
                 <select id="organismos-ambito" class="selector-ambito" aria-label="Ámbito"></select>
@@ -500,7 +505,11 @@
               <p class="intro">Lo que el radar sabe de este órgano en el ámbito elegido.</p>
               <div class="detalle-barra">
                 <button class="boton-sec" data-volver>← Volver</button>
-                <select id="organismo-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                <div class="detalle-acciones">
+                  <button id="organismo-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
+                  <button id="organismo-pdf" class="boton-sec">Exportar PDF</button>
+                  <select id="organismo-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                </div>
               </div>
               <div id="ficha-organismo" class="analitica"></div>
             </section>
@@ -509,7 +518,11 @@
               <p class="intro">Lo que ha ganado esta empresa en el ámbito elegido.</p>
               <div class="detalle-barra">
                 <button class="boton-sec" data-volver>← Volver</button>
-                <select id="competidor-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                <div class="detalle-acciones">
+                  <button id="competidor-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
+                  <button id="competidor-pdf" class="boton-sec">Exportar PDF</button>
+                  <select id="competidor-ambito" class="selector-ambito" aria-label="Ámbito"></select>
+                </div>
               </div>
               <div id="ficha-competidor" class="analitica"></div>
             </section>
@@ -525,6 +538,7 @@
               <div class="analitica-filtros">
                 <div class="ventanas" id="analitica-rango"></div>
                 <select id="analitica-perfil" class="selector-ambito" aria-label="Ámbito"></select>
+                <button id="analitica-pdf" class="boton-sec">Exportar PDF</button>
               </div>
               <p class="total-ventana" id="analitica-resumen"></p>
               <div id="analitica" class="analitica"></div>
@@ -574,8 +588,9 @@
               <div class="buscar-manual">
                 <div>
                   <strong>Buscar ahora</strong>
-                  <p class="pista">El radar busca solo al abrir la aplicación y cada mañana.
-                    Esto fuerza una búsqueda ahora mismo: trae lo publicado desde la última.</p>
+                  <p class="pista">El radar busca solo al abrir la aplicación y cada pocas horas
+                    mientras está abierta (lo eliges abajo). Esto fuerza una búsqueda ahora
+                    mismo: trae lo publicado desde la última.</p>
                 </div>
                 <button id="buscar-ahora" class="boton-sec"><svg class="ico" aria-hidden="true"><use href="#ico-buscar"/></svg><span id="buscar-ahora-txt">Buscar ahora</span></button>
 
@@ -587,6 +602,32 @@
                      aria-live="polite" hidden>
                   <p id="busqueda-frase"></p>
                   <progress id="busqueda-barra" max="100"></progress>
+                </div>
+              </div>
+
+              <!-- Cada cuánto busca sola y si avisa. Lo guarda el servidor, que es quien
+                   busca (`radar/automatica.py`), y la ventana de macOS lo lee al avisar. -->
+              <div class="buscar-manual automatica">
+                <div>
+                  <strong>Búsqueda automática y avisos</strong>
+                  <p class="pista">Mientras la aplicación está abierta —también con la ventana
+                    cerrada, en el Dock— busca sola y te avisa con una notificación de macOS
+                    cuando entra algo que encaja con tus perfiles.</p>
+                  <p class="pista" id="auto-cuando"></p>
+                </div>
+                <div class="auto-controles">
+                  <label class="check">Buscar
+                    <select id="auto-intervalo" aria-label="Cada cuánto buscar">
+                      <option value="60">cada hora</option>
+                      <option value="120">cada 2 horas</option>
+                      <option value="240">cada 4 horas</option>
+                      <option value="480">cada 8 horas</option>
+                      <option value="0">nunca</option>
+                    </select>
+                  </label>
+                  <label class="check"><input type="checkbox" id="auto-avisos"> Avisarme cuando entre algo nuevo</label>
+                  <label class="check"><input type="checkbox" id="auto-sonido"> Con sonido</label>
+                  <span id="auto-aviso" class="pista"></span>
                 </div>
               </div>
             </section>

@@ -8,10 +8,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from . import categorias, db, enlaces
-from .model import (ESTADO_ADJUDICADA, ESTADO_ANULADA, ESTADO_FORMALIZADA,
+from .model import (ESTADO_ADJUDICADA, ESTADO_ANULADA, ESTADO_EVALUACION,
+                    ESTADO_FORMALIZADA, ESTADO_PREVIO, ESTADO_PUBLICADA,
                     ESTADO_RESUELTA, ESTADOS_VIVOS, ORIGEN_FIN_APROXIMADA,
                     ORIGEN_FIN_ESTIMADA, ORIGEN_FIN_PUBLICADA, normalizar)
 
@@ -188,8 +189,18 @@ def _condiciones(
     solo_novedades: bool = False,
     con_plazo: bool = False,
     sin_vencidas: bool = False,
+    solo_casan: bool = False,
+    puntuacion_min: float | None = None,
+    cerradas: bool = False,
+    fase: str | None = None,
 ) -> tuple[list[str], list]:
     """Construye el WHERE de la bandeja. Lo comparten la lista y los contadores.
+
+    Los cuatro últimos son los de «Qué tengo de verdad hoy» (Analítica): cada cifra y
+    cada tramo de su barra llevan a la bandeja con exactamente esas fichas, y para que
+    el número cuadre se calculan con la misma entrada que el bloque
+    (`_entrada_expedientes`), no con una parecida. `solo_casan` deja fuera lo que sigues
+    sin que case ya con ningún perfil, que el bloque no cuenta.
 
     Está extraído a propósito: los contadores de la cabecera tenían sus propias
     consultas y acabaron contando otra cosa que la lista (decían 945 sin revisar
@@ -252,8 +263,61 @@ def _condiciones(
         if marca is not None:
             where.append("l.id > ?")
             params.append(marca)
+    if solo_casan:
+        where.append("m.licitacion_id IS NOT NULL")
+    if puntuacion_min is not None:
+        # Estricto, como `lista_corta` en la cartera: «más de 5,0».
+        where.append("m.puntuacion > ?")
+        params.append(float(puntuacion_min))
+    if cerradas or fase:
+        # Por expediente, no por anuncio: el subquery tiene su propio `l` y devuelve los
+        # grupos que cumplen; fuera solo se mira si el de la fila está entre ellos.
+        entrada, p_entrada = _entrada_expedientes(Ambito.de(perfil=perfil))
+        if cerradas:
+            # Ningún anuncio del expediente está en plazo: es «coincidencias» menos «con
+            # plazo abierto», con las mismas dos condiciones (`_condicion_viva`).
+            viva, p_viva = _condicion_viva()
+            where.append(f"{_GRUPO} NOT IN (SELECT {_GRUPO} {entrada} AND {viva})")
+            params.extend(p_entrada + p_viva)
+        if fase:
+            # El estado del anuncio más reciente del expediente: el de la barra.
+            cond, p_fase = _condicion_fase(fase)
+            where.append(
+                f"{_GRUPO} IN (SELECT g FROM ("
+                f"  SELECT {_GRUPO} AS g, l.estado AS estado,"
+                f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+                "                             ORDER BY l.fecha_publicacion DESC, l.id DESC) AS rn"
+                f"  {entrada}) WHERE rn = 1 AND {cond})")
+            params.extend(p_entrada + p_fase)
 
     return where, params
+
+
+# Los tramos de la barra de «Qué tengo de verdad hoy», por el estado del último anuncio
+# de cada expediente. `otras` es todo lo demás: anuladas, sin estado conocido o sin estado.
+FASES_CARTERA = {
+    "abiertas": (ESTADO_PUBLICADA, ESTADO_PREVIO),
+    "evaluacion": (ESTADO_EVALUACION,),
+    "adjudicadas": (ESTADO_ADJUDICADA, ESTADO_FORMALIZADA, ESTADO_RESUELTA),
+    "otras": (),
+}
+
+
+def fase_de(estado: str | None) -> str:
+    for clave, estados in FASES_CARTERA.items():
+        if estado in estados:
+            return clave
+    return "otras"
+
+
+def _condicion_fase(fase: str) -> tuple[str, list]:
+    if fase not in FASES_CARTERA:
+        raise ValueError(f"fase no válida: {fase}. Válidas: {', '.join(FASES_CARTERA)}")
+    if fase != "otras":
+        estados = list(FASES_CARTERA[fase])
+        return f"estado IN ({', '.join('?' * len(estados))})", estados
+    conocidos = [e for v in FASES_CARTERA.values() for e in v]
+    return f"COALESCE(estado, '') NOT IN ({', '.join('?' * len(conocidos))})", conocidos
 
 
 def contar(con: sqlite3.Connection, **filtros) -> int:
@@ -284,6 +348,10 @@ def bandeja(
     solo_novedades: bool = False,
     con_plazo: bool = False,
     sin_vencidas: bool = False,
+    solo_casan: bool = False,
+    puntuacion_min: float | None = None,
+    cerradas: bool = False,
+    fase: str | None = None,
     orden: str = ORDEN_POR_DEFECTO,
     limite: int = 200,
     offset: int = 0,
@@ -297,7 +365,8 @@ def bandeja(
         perfil=perfil, estado_revision=estado_revision, solo_vivas=solo_vivas,
         cierran_en_dias=cierran_en_dias, ccaa=ccaa, fuente=fuente,
         importe_min=importe_min, busqueda=busqueda, solo_novedades=solo_novedades,
-        con_plazo=con_plazo, sin_vencidas=sin_vencidas,
+        con_plazo=con_plazo, sin_vencidas=sin_vencidas, solo_casan=solo_casan,
+        puntuacion_min=puntuacion_min, cerradas=cerradas, fase=fase,
     )
     where, params = _condiciones(con, **filtros)
     orden_sql = ORDENES.get(orden, ORDENES[ORDEN_POR_DEFECTO])
@@ -1209,10 +1278,27 @@ def resumen_novedades(con: sqlite3.Connection, periodo: str = "busqueda", *,
         raise ValueError(
             f"periodo no válido: {periodo}. Válidos: {', '.join(PERIODOS_RESUMEN)}"
         )
-    v = _ventana(con, periodo)
+    return _resumen_de_ventana(con, _ventana(con, periodo), periodo,
+                               perfiles_activos=perfiles_activos)
+
+
+def novedades_entre(con: sqlite3.Connection, desde_id: int, hasta_id: int, *,
+                    perfiles_activos: list[str] | None = None) -> dict:
+    """Lo mismo que `resumen_novedades`, para un tramo de ids cualquiera.
+
+    Es lo que cuentan los avisos de macOS (`automatica.avisos_pendientes`), que juntan
+    las búsquedas terminadas desde el último aviso: con la ventana cerrada puede haber
+    corrido más de una.
+    """
+    return _resumen_de_ventana(con, {"desde_id": desde_id, "hasta_id": hasta_id}, None,
+                               perfiles_activos=perfiles_activos)
+
+
+def _resumen_de_ventana(con: sqlite3.Connection, v: dict, periodo: str | None, *,
+                        perfiles_activos: list[str] | None = None) -> dict:
     salida: dict = {
         "periodo": periodo,
-        "etiqueta": PERIODOS_RESUMEN[periodo],
+        "etiqueta": PERIODOS_RESUMEN.get(periodo or ""),
         "total": 0,
         "por_perfil": [],
         "por_tematica": [],
@@ -1394,6 +1480,51 @@ def normalizar_empresa(nombre: str | None) -> str | None:
     for sufijo in _SUFIJOS:
         t = re.sub(rf"(^|\s){re.escape(sufijo)}(\s|$)", " ", t)
     return re.sub(r"\s+", " ", t).strip() or None
+
+
+# --- Favoritos ----------------------------------------------------------------------
+#
+# Empresas y organismos que se quieren tener a mano. Van en la base, como el triaje: son
+# decisiones de quien usa la herramienta y tienen que sobrevivir a reinstalar la app.
+
+TIPOS_FAVORITO = ("empresa", "organismo")
+
+
+def clave_favorito(tipo: str, nombre: str | None) -> str | None:
+    if tipo == "empresa":
+        return normalizar_empresa(nombre)
+    return (nombre or "").strip() or None
+
+
+def favoritos(con: sqlite3.Connection) -> dict:
+    """Los favoritos de cada tipo, por orden alfabético, que es como se buscan."""
+    salida: dict = {t: [] for t in TIPOS_FAVORITO}
+    for f in con.execute(
+            "SELECT tipo, clave, nombre FROM favoritos ORDER BY nombre COLLATE NOCASE"):
+        salida[f["tipo"]].append({"nombre": f["nombre"], "clave": f["clave"]})
+    return salida
+
+
+def claves_favoritas(con: sqlite3.Connection, tipo: str) -> set[str]:
+    return {f[0] for f in con.execute("SELECT clave FROM favoritos WHERE tipo = ?", (tipo,))}
+
+
+def fijar_favorito(con: sqlite3.Connection, tipo: str, nombre: str, favorito: bool) -> dict:
+    """Añade o quita un favorito. Devuelve todos, para repintar los botones de una vez."""
+    if tipo not in TIPOS_FAVORITO:
+        raise ValueError(f"tipo no válido: {tipo}. Válidos: {', '.join(TIPOS_FAVORITO)}")
+    clave = clave_favorito(tipo, nombre)
+    if not clave:
+        raise ValueError("falta el nombre")
+    if favorito:
+        con.execute(
+            """INSERT INTO favoritos (tipo, clave, nombre, creado_en) VALUES (?, ?, ?, ?)
+               ON CONFLICT(tipo, clave) DO UPDATE SET nombre = excluded.nombre""",
+            (tipo, clave, nombre.strip(), db.ahora()))
+    else:
+        con.execute("DELETE FROM favoritos WHERE tipo = ? AND clave = ?", (tipo, clave))
+    con.commit()
+    return favoritos(con)
 
 
 def _fichas_del_ambito(ambito: Ambito | None) -> tuple[str, list]:
@@ -2623,23 +2754,8 @@ def _bloque_ciclo(con, ambito, desde, hasta) -> dict:
     0,1% (1 caso de 981) y la mediana queda en 78 días. Lo que se mide es un recorrido
     observado, no la resta de dos fichas que no se hablan.
     """
-    entrada, params = _entrada_expedientes(
-        ambito, joins=" JOIN licitaciones_versiones v ON v.licitacion_id = l.id")
     filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
-    filas = con.execute(
-        "SELECT CAST(julianday(substr(adj, 1, 10))"
-        "          - julianday(substr(pub, 1, 10)) AS INTEGER) AS dias FROM ("
-        f"  SELECT {_GRUPO} AS g,"
-        "          MIN(CASE WHEN v.estado_anterior IS NULL THEN v.fecha_cambio END) AS pub,"
-        "          MIN(CASE WHEN v.estado = 'adjudicada'"
-        "                    AND v.estado_anterior IS NOT NULL"
-        "                   THEN v.fecha_cambio END) AS adj"
-        f"  {entrada}{filtro} AND v.fecha_cambio IS NOT NULL"
-        "   GROUP BY g"
-        ") WHERE pub IS NOT NULL AND adj IS NOT NULL"
-        " ORDER BY dias", params + p_rango
-    ).fetchall()
-
+    filas = _recorridos(con, ambito, filtro, p_rango)
     dias = sorted(f["dias"] for f in filas if f["dias"] is not None and f["dias"] > 0)
     return {
         "expedientes": len(dias),
@@ -2651,6 +2767,27 @@ def _bloque_ciclo(con, ambito, desde, hasta) -> dict:
         "suficiente": len(dias) >= MINIMO_EXPEDIENTES_CICLO,
         "minimo_expedientes": MINIMO_EXPEDIENTES_CICLO,
     }
+
+
+def _recorridos(con, ambito, filtro: str = "", p_filtro: list | None = None) -> list:
+    """Días de la publicación a la adjudicación de cada expediente, con las reglas de
+    `_bloque_ciclo`. `filtro` acota por filas (un rango, un órgano). La usa también la
+    ficha de organismo («Cómo compra»)."""
+    entrada, params = _entrada_expedientes(
+        ambito, joins=" JOIN licitaciones_versiones v ON v.licitacion_id = l.id")
+    return con.execute(
+        "SELECT CAST(julianday(substr(adj, 1, 10))"
+        "          - julianday(substr(pub, 1, 10)) AS INTEGER) AS dias FROM ("
+        f"  SELECT {_GRUPO} AS g,"
+        "          MIN(CASE WHEN v.estado_anterior IS NULL THEN v.fecha_cambio END) AS pub,"
+        "          MIN(CASE WHEN v.estado = 'adjudicada'"
+        "                    AND v.estado_anterior IS NOT NULL"
+        "                   THEN v.fecha_cambio END) AS adj"
+        f"  {entrada}{filtro} AND v.fecha_cambio IS NOT NULL"
+        "   GROUP BY g"
+        ") WHERE pub IS NOT NULL AND adj IS NOT NULL"
+        " ORDER BY dias", params + (p_filtro or [])
+    ).fetchall()
 
 
 def _bloque_cpv(con, ambito, desde, hasta) -> dict:
@@ -2720,6 +2857,7 @@ def _bloque_cartera(con, ambito) -> dict:
         "       COUNT(CASE WHEN punt > ? AND punt <= ? THEN 1 END) AS intermedios,"
         "       COUNT(CASE WHEN punt <= ? THEN 1 END) AS resto,"
         "       COUNT(CASE WHEN abierta = 1 THEN 1 END) AS con_plazo_abierto,"
+        "       COUNT(CASE WHEN abierta = 0 THEN 1 END) AS sin_plazo_abierto,"
         "       COUNT(CASE WHEN consulta = 1 AND imp IS NULL THEN 1 END)"
         "           AS consultas_previas_sin_importe"
         "  FROM ("
@@ -2752,6 +2890,13 @@ def _bloque_cartera(con, ambito) -> dict:
 
     datos = {k: f[k] for k in f.keys()}
     datos["estados"] = estados
+    # Los tramos de la barra, sumados aquí y no en la interfaz, con el mismo reparto que
+    # el filtro `fase` de la bandeja: si cada lado agrupara por su cuenta, pulsar un
+    # tramo podría dar otro número.
+    fases = {clave: 0 for clave in FASES_CARTERA}
+    for e in estados:
+        fases[fase_de(e["estado"])] += e["expedientes"]
+    datos["fases"] = [{"clave": c, "expedientes": n} for c, n in fases.items()]
     datos["puntuacion_lista_corta"] = PUNTUACION_LISTA_CORTA
     datos["siempre_a_fecha_de_hoy"] = True
     # La frase sale del dato y no escrita a mano: el día que el usuario ingeste a diario
@@ -3400,6 +3545,7 @@ def analitica(con: sqlite3.Connection, *, perfil: str | None = None,
         "cuota": _bloque_cuota(con, ambito),
         "estacionalidad": _bloque_estacionalidad(con, ambito, desde, hasta),
         "consultas": _bloque_consultas(con, ambito),
+        "incumbentes": bloque_incumbentes(con, ambito, desde, hasta),
         # Solo con «lo que va de año», que es el único rango con un año anterior
         # comparable: «los últimos 24 meses» no tiene un «antes» de la misma forma.
         "comparacion": _comparacion(con, ambito, hoy)
@@ -3451,6 +3597,7 @@ def _anuncios_del_ambito(con, ambito: Ambito | None, condicion: str = "",
     viva, p_viva = _condicion_viva()
     return con.execute(
         f"SELECT l.id, {_GRUPO} AS g, l.organo, l.nif_organo, l.ccaa, l.objeto,"
+        " l.fuente, l.estado, l.procedimiento,"
         " l.fecha_publicacion, l.fecha_limite_presentacion, l.adjudicatario,"
         " l.importe_adjudicacion, l.importe_referencia, l.importe_sin_iva,"
         " l.fecha_adjudicacion, l.fecha_fin_prevista,"
@@ -3662,6 +3809,8 @@ def ficha_organismo(con: sqlite3.Connection, nombre: str, *,
             "anteriores": _tarjetas(
                 con, [e for e in recientes if not e["viva"]][:LIMITE_EXPEDIENTES_FICHA]),
             "anteriores_total": sum(1 for e in expedientes if not e["viva"]),
+            "proveedor": _cambios_de_proveedor(_sucesiones(con, ambito), nombre),
+            "como_compra": _como_compra(con, ambito, nombre, expedientes),
         }
 
     return _memo_fichas(con, ("organismo", nombre, ambito), calcular)
@@ -3724,6 +3873,9 @@ def ficha_competidor(con: sqlite3.Connection, empresa: str, *,
             return sorted(({nombre: k, **v} for k, v in d.items()),
                           key=lambda x: (-x["expedientes"], -x["importe"], x[nombre]))
 
+        mercado = _mercado(con, ambito)
+        organos = {(e["anuncios_filas"][0]["organo"] or "").strip() for e in expedientes}
+
         return {
             "empresa": max(variantes, key=len),
             "variantes": variantes,
@@ -3744,6 +3896,447 @@ def ficha_competidor(con: sqlite3.Connection, empresa: str, *,
             "meses_vencen": MESES_RENOVACION_FICHA,
             "contratos": contratos[:LIMITE_EXPEDIENTES_FICHA],
             "contratos_total": len(contratos),
+            "donde_te_gano": _donde_te_gano(con, clave, expedientes),
+            "retencion": _retencion_de(_sucesiones(con, ambito), clave),
+            "precio": {"empresa": _precio_y_tamano(expedientes), "mercado": mercado["precio"]},
+            "rivales": _rivales_y_socios(mercado, clave, organos - {""}),
         }
 
     return _memo_fichas(con, ("competidor", clave, ambito), calcular)
+
+
+# --- Quién repite: cada contrato y su renovación -------------------------------------
+#
+# Para saber si un órgano cambia de proveedor, si una empresa retiene a sus clientes o si
+# se puede desbancar al incumbente, hace falta emparejar cada contrato con su renovación.
+# La fuente no lo dice, así que se deduce: el MISMO órgano, publicado al menos
+# DIAS_MINIMOS_SUCESION después, con un objeto PARECIDO —palabras en común, como las
+# consultas previas (`enlaces.palabras`)— y, de los candidatos, el más parecido. Cada
+# contrato y cada renovación se emparejan una sola vez.
+#
+# Medido sobre la base real con todos los perfiles: tomar «lo siguiente que publique el
+# órgano» emparejaba un software con una formación (LANTIK) y daba que el incumbente
+# repite el 33%; exigiendo objeto parecido quedan 53 parejas creíbles y repite el 58%.
+# Son pocas, así que cada bloque dice sobre cuántas se calcula y la Analítica no da el
+# porcentaje por debajo de MINIMO_SUCESIONES_ANALITICA.
+
+DIAS_MINIMOS_SUCESION = 90
+PARECIDO_MINIMO_SUCESION = 0.25
+# Lo que sale en casi cualquier objeto y no dice qué se contrata. «España» y «servicios»
+# son el principio de cada título de TED, y con ellos dos pliegos cualesquiera de TED se
+# parecían.
+_VACIAS_SUCESION = frozenset(
+    "espana servicios servicio suministro suministros prestacion adquisicion lote lotes"
+    .split())
+MINIMO_SUCESIONES_ANALITICA = 10
+TOP_SUCESIONES = 8
+# En un órgano con muchos expedientes, las palabras que salen en más de la mitad de ellos
+# son su vocabulario de siempre —«formación» en una escuela de formación— y no distinguen
+# un contrato de otro. Se apagan, como hace el peso de las consultas previas. Además es lo
+# que hace que «toda la IT» no tarde: con ellas, cada expediente de un ministerio se
+# comparaba con todos los demás (22 s medidos).
+ORGANO_GRANDE_SUCESION = 20
+
+
+def _ganadores(e: dict, normalizadas: dict | None = None) -> dict:
+    """Quién se llevó un expediente: {razón social normalizada: el nombre más largo}.
+
+    Puede haber más de una: un expediente por lotes se adjudica a varias empresas.
+    `normalizadas` memoriza `normalizar_empresa` por nombre: en toda la IT son decenas de
+    miles de anuncios y unos pocos miles de nombres.
+    """
+    nombres: dict = {}
+    for f in e["adjudicados"]:
+        if normalizadas is None:
+            clave = normalizar_empresa(f["adjudicatario"])
+        else:
+            if f["adjudicatario"] not in normalizadas:
+                normalizadas[f["adjudicatario"]] = normalizar_empresa(f["adjudicatario"])
+            clave = normalizadas[f["adjudicatario"]]
+        nombre = (f["adjudicatario"] or "").strip()
+        if clave and len(nombre) > len(nombres.get(clave, "")):
+            nombres[clave] = nombre
+    return nombres
+
+
+def _palabras_objeto(e: dict) -> set:
+    from .enlaces import palabras
+
+    return palabras(" ".join(f["objeto"] or "" for f in e["anuncios_filas"])) - _VACIAS_SUCESION
+
+
+def _etiquetas_de(con, ambito: Ambito, expedientes: list[dict]) -> dict | None:
+    """Con qué perfiles (o temáticas) casa cada expediente, para no tomar por renovación
+    de un contrato de formación uno de correo del mismo órgano. Con un solo perfil o una
+    sola temática no hace falta: todos comparten la suya."""
+    if ambito.perfil or (ambito.categoria and ambito.categoria != categorias.TODA_LA_IT):
+        return None
+    tabla, campo = ("categorias", "categoria") if ambito.categoria else ("matches", "perfil")
+    grupo_de = {f["id"]: e["g"] for e in expedientes for f in e["anuncios_filas"]}
+    salida: dict = {}
+    for tanda in db._por_tandas(list(grupo_de)):
+        marcas = ", ".join("?" * len(tanda))
+        for f in con.execute(
+                f"SELECT licitacion_id, {campo} FROM {tabla}"
+                f" WHERE licitacion_id IN ({marcas})", tanda):
+            salida.setdefault(grupo_de[f[0]], set()).add(f[1])
+    return salida
+
+
+def _resumen_sucesion(e: dict, ganadores: dict) -> dict:
+    ultimo = next(f for f in e["anuncios_filas"] if f["id"] == e["id"])
+    return {
+        "id": e["id"],
+        "objeto": ultimo["objeto"],
+        "fecha": (e["primera_publicacion"] or "")[:10] or None,
+        "empresas": [{"clave": c, "nombre": n} for c, n in sorted(ganadores.items())],
+    }
+
+
+def _sucesiones(con, ambito: Ambito | None = None) -> list[dict]:
+    """Las parejas contrato → renovación del ámbito (ver arriba).
+
+    `repite` es True si alguna empresa del contrato se lleva también la renovación, False
+    si no, y None si la renovación aún no está adjudicada: entonces está en marcha, que
+    para quien tiene el contrato es la noticia.
+    """
+    ambito = ambito or Ambito()
+
+    def calcular():
+        expedientes = _por_expediente(_anuncios_del_ambito(con, ambito))
+        etiquetas = _etiquetas_de(con, ambito, expedientes)
+        por_organo: dict = {}
+        for e in expedientes:
+            organo = (e["anuncios_filas"][0]["organo"] or "").strip()
+            if organo and _a_fecha(e["primera_publicacion"]):
+                por_organo.setdefault(organo, []).append(e)
+
+        pares = []
+        normalizadas: dict = {}
+        for organo, lista in por_organo.items():
+            if len(lista) < 2:
+                continue
+            lista.sort(key=lambda e: (e["primera_publicacion"], e["g"]))
+            fechas = [_a_fecha(e["primera_publicacion"]) for e in lista]
+            ganadores = [_ganadores(e, normalizadas) for e in lista]
+            objetos = [_palabras_objeto(e) for e in lista]
+            if len(lista) >= ORGANO_GRANDE_SUCESION:
+                frecuencia: dict = {}
+                for palabras in objetos:
+                    for w in palabras:
+                        frecuencia[w] = frecuencia.get(w, 0) + 1
+                comunes = {w for w, n in frecuencia.items() if n > len(lista) / 2}
+                objetos = [palabras - comunes for palabras in objetos]
+            # Solo se comparan los que comparten alguna palabra: el índice da, para cada
+            # expediente, cuántas comparte con cada uno de los posteriores.
+            indice: dict = {}
+            for j, palabras in enumerate(objetos):
+                for w in palabras:
+                    indice.setdefault(w, []).append(j)
+            candidatos = []
+            for i, previo in enumerate(lista):
+                a = objetos[i]
+                if not ganadores[i] or not a:
+                    continue
+                desde = fechas[i] + timedelta(days=DIAS_MINIMOS_SUCESION)
+                comunes_con: dict = {}
+                for w in a:
+                    for j in indice[w]:
+                        if j > i:
+                            comunes_con[j] = comunes_con.get(j, 0) + 1
+                for j, comunes_n in comunes_con.items():
+                    if fechas[j] < desde:
+                        continue
+                    parecido = comunes_n / (len(a) + len(objetos[j]) - comunes_n)
+                    if parecido < PARECIDO_MINIMO_SUCESION:
+                        continue
+                    siguiente = lista[j]
+                    if etiquetas is not None and not (
+                            etiquetas.get(previo["g"], set()) & etiquetas.get(siguiente["g"], set())):
+                        continue
+                    candidatos.append((-parecido, (fechas[j] - fechas[i]).days, i, j))
+            # Los más parecidos primero, y a igualdad el más cercano en el tiempo.
+            usados_previo: set = set()
+            usados_siguiente: set = set()
+            for menos_parecido, _, i, j in sorted(candidatos):
+                if i in usados_previo or j in usados_siguiente:
+                    continue
+                usados_previo.add(i)
+                usados_siguiente.add(j)
+                antes, despues = ganadores[i], ganadores[j]
+                pares.append({
+                    "organo": organo,
+                    "previo": _resumen_sucesion(lista[i], antes),
+                    "siguiente": _resumen_sucesion(lista[j], despues),
+                    "repite": bool(set(antes) & set(despues)) if despues else None,
+                    "parecido": round(-menos_parecido, 2),
+                })
+        pares.sort(key=lambda p: (p["siguiente"]["fecha"] or "", p["organo"]), reverse=True)
+        return pares
+
+    return _memo_fichas(con, ("sucesiones", ambito), calcular)
+
+
+def _claves(lado: dict) -> set:
+    return {e["clave"] for e in lado["empresas"]}
+
+
+def _retencion_de(pares: list[dict], clave: str) -> dict:
+    """Para la ficha de competidor: los contratos suyos que se renovaron, si los retuvo,
+    y los que ganó a otro."""
+    suyos = [p for p in pares if clave in _claves(p["previo"])]
+    resueltos = [p for p in suyos if p["repite"] is not None]
+    return {
+        "resueltos": len(resueltos),
+        "retenidos": sum(1 for p in resueltos if clave in _claves(p["siguiente"])),
+        "perdidos": [p for p in resueltos if clave not in _claves(p["siguiente"])],
+        "ganados_a_otros": [p for p in pares if p["repite"] is not None
+                            and clave in _claves(p["siguiente"])
+                            and clave not in _claves(p["previo"])],
+        "en_marcha": [p for p in suyos if p["repite"] is None],
+    }
+
+
+def _cambios_de_proveedor(pares: list[dict], organo: str) -> dict:
+    """Para la ficha de organismo: sus renovaciones, cuántas repitieron y cuáles no."""
+    suyos = [p for p in pares if p["organo"] == organo]
+    resueltos = [p for p in suyos if p["repite"] is not None]
+    return {
+        "resueltos": len(resueltos),
+        "repite": sum(1 for p in resueltos if p["repite"]),
+        "parejas": resueltos,
+        "en_marcha": [p for p in suyos if p["repite"] is None],
+    }
+
+
+def bloque_incumbentes(con, ambito: Ambito | None, desde: str | None,
+                       hasta: str | None) -> dict:
+    """¿Se puede desbancar al incumbente? Para la Analítica.
+
+    El rango se aplica a la renovación (cuándo se publicó la segunda), que es cuando se
+    decidió si el incumbente seguía.
+    """
+    pares = [p for p in _sucesiones(con, ambito)
+             if (not desde or (p["siguiente"]["fecha"] or "")[:7] >= desde)
+             and (not hasta or (p["siguiente"]["fecha"] or "")[:7] <= hasta)]
+    resueltos = [p for p in pares if p["repite"] is not None]
+    repite = sum(1 for p in resueltos if p["repite"])
+
+    incumbentes: dict = {}
+    for p in resueltos:
+        for e in p["previo"]["empresas"]:
+            d = incumbentes.setdefault(e["clave"], {"empresa": e["nombre"], "contratos": 0,
+                                                    "retenidos": 0})
+            d["contratos"] += 1
+            d["retenidos"] += 1 if e["clave"] in _claves(p["siguiente"]) else 0
+    organos: dict = {}
+    for p in resueltos:
+        d = organos.setdefault(p["organo"], {"organo": p["organo"], "renovaciones": 0,
+                                              "cambios": 0})
+        d["renovaciones"] += 1
+        d["cambios"] += 0 if p["repite"] else 1
+    return {
+        "renovaciones": len(resueltos),
+        "repite": repite,
+        "en_marcha": sum(1 for p in pares if p["repite"] is None),
+        "suficiente": len(resueltos) >= MINIMO_SUCESIONES_ANALITICA,
+        "minimo": MINIMO_SUCESIONES_ANALITICA,
+        "incumbentes": sorted(incumbentes.values(),
+                              key=lambda d: (-d["contratos"], -d["retenidos"], d["empresa"])
+                              )[:TOP_SUCESIONES],
+        "organos_que_cambian": sorted(
+            (d for d in organos.values() if d["cambios"]),
+            key=lambda d: (-d["cambios"], -d["renovaciones"], d["organo"]))[:TOP_SUCESIONES],
+        "ultimas": resueltos[:TOP_SUCESIONES],
+    }
+
+
+# --- Lo que va en las fichas además de lo de siempre ----------------------------------
+
+def _procedimiento_de(e: dict) -> str | None:
+    for f in e["anuncios_filas"]:
+        crudo = (f["procedimiento"] or "").strip()
+        if crudo:
+            return PROCEDIMIENTOS_EN_CASTELLANO.get(crudo.lower(), crudo)
+    return None
+
+
+def _reparto_procedimientos(expedientes: list[dict]) -> list[dict]:
+    cuenta: dict = {}
+    for e in expedientes:
+        nombre = _procedimiento_de(e)
+        if nombre:
+            cuenta[nombre] = cuenta.get(nombre, 0) + 1
+    total = sum(cuenta.values())
+    return [{"procedimiento": k, "expedientes": n, "pct": round(100 * n / total)}
+            for k, n in sorted(cuenta.items(), key=lambda x: (-x[1], x[0]))][:TOP_PROCEDIMIENTOS]
+
+
+def _precio_y_tamano(expedientes: list[dict]) -> dict:
+    """Importe mediano, baja mediana y por qué procedimiento, de unos expedientes ya
+    adjudicados. Lo mismo para la empresa que para el mercado, para poder ponerlos al lado."""
+    importes = sorted(e["imp"] for e in expedientes if e["imp"] is not None)
+    bajas = _clasificar_bajas(e["baja"] for e in expedientes if e["baja"])[0]
+    return {
+        "expedientes": len(expedientes),
+        "importe_mediano": _mediana_redondeada(importes),
+        "importes": len(importes),
+        "baja_mediana": _mediana_redondeada(bajas, 1),
+        "baja_comparables": len(bajas),
+        "procedimientos": _reparto_procedimientos(expedientes),
+    }
+
+
+def _mercado(con, ambito: Ambito) -> dict:
+    """Lo que las fichas de competidor comparan con el mercado del mismo ámbito: el precio
+    y el tamaño de lo adjudicado, y quién gana en cada órgano. Se calcula una vez por
+    ámbito, no una por ficha."""
+    def calcular():
+        adjudicados = [e for e in _por_expediente(_anuncios_del_ambito(con, ambito))
+                       if e["adjudicados"]]
+        ganan: dict = {}
+        nombres: dict = {}
+        for e in adjudicados:
+            organo = (e["anuncios_filas"][0]["organo"] or "").strip()
+            for clave, nombre in _ganadores(e).items():
+                ganan.setdefault(organo, {}).setdefault(clave, 0)
+                ganan[organo][clave] += 1
+                if len(nombre) > len(nombres.get(clave, "")):
+                    nombres[clave] = nombre
+        return {"precio": _precio_y_tamano(adjudicados), "ganan": ganan, "nombres": nombres}
+
+    return _memo_fichas(con, ("mercado", ambito), calcular)
+
+
+def _es_ute(nombre: str) -> bool:
+    """Si la adjudicataria es una UTE. Sobre el nombre tal cual y no sobre la clave:
+    `normalizar_empresa` quita «UTE» como quita «S.L.»."""
+    import re
+
+    texto = re.sub(r"[.,;:()\"'\-]", " ", _normalizar_busqueda(nombre))
+    return bool(re.search(r"(^|\s)(ute|u\s+t\s+e|union temporal)(\s|$)", texto))
+
+
+def _rivales_y_socios(mercado: dict, clave: str, organos: set) -> dict:
+    """Quién más gana en los órganos donde gana ella, y en qué UTE aparece."""
+    import re
+
+    patron = re.compile(rf"(^|\s){re.escape(clave)}(\s|$)")
+    rivales: dict = {}
+    for organo in organos:
+        for otra, n in mercado["ganan"].get(organo, {}).items():
+            if otra == clave or patron.search(otra):
+                continue
+            d = rivales.setdefault(otra, {"empresa": mercado["nombres"][otra],
+                                          "organismos": 0, "expedientes": 0})
+            d["organismos"] += 1
+            d["expedientes"] += n
+    socios: dict = {}
+    for organo_ganan in mercado["ganan"].values():
+        for otra, n in organo_ganan.items():
+            if otra != clave and patron.search(otra) and _es_ute(mercado["nombres"][otra]):
+                d = socios.setdefault(otra, {"empresa": mercado["nombres"][otra], "expedientes": 0})
+                d["expedientes"] += n
+    return {
+        "rivales": sorted(rivales.values(),
+                          key=lambda d: (-d["organismos"], -d["expedientes"], d["empresa"])
+                          )[:TOP_SUCESIONES],
+        "socios": sorted(socios.values(), key=lambda d: (-d["expedientes"], d["empresa"])),
+    }
+
+
+def _donde_te_gano(con, clave: str, expedientes_suyos: list[dict]) -> dict:
+    """Lo que has presentado y se llevó ella, y lo que descartaste por «incumbente atado»
+    en órganos donde ella ya tenía un contrato de antes.
+
+    No depende del ámbito: tu triaje es tuyo en todos. Lo de «incumbente atado» es una
+    aproximación —que tuviera un contrato anterior en ese órgano no prueba que fuera el de
+    ese pliego— y la pantalla lo dice.
+    """
+    filas = con.execute(
+        f"""SELECT l.id, {_GRUPO} AS g, l.objeto, l.organo, l.adjudicatario,
+                   l.fecha_publicacion, r.estado, r.motivo_descarte
+              FROM revisiones r JOIN licitaciones l ON l.id = r.licitacion_id
+             WHERE r.estado = 'presentada'
+                OR (r.estado = 'descartado' AND r.motivo_descarte = 'incumbente atado')"""
+    ).fetchall()
+    grupos: dict = {}
+    for f in filas:
+        grupos.setdefault(f["g"], []).append(f)
+
+    suyos_por_organo: dict = {}
+    for e in expedientes_suyos:
+        organo = (e["anuncios_filas"][0]["organo"] or "").strip()
+        fecha = e["primera_publicacion"] or ""
+        if organo and (organo not in suyos_por_organo or fecha < suyos_por_organo[organo]):
+            suyos_por_organo[organo] = fecha
+
+    presentadas = ganadas = 0
+    le_gano, atado = [], []
+    for anuncios in grupos.values():
+        primero = min(anuncios, key=lambda f: (f["fecha_publicacion"] or "9999", f["id"]))
+        ultimo = max(anuncios, key=lambda f: (f["fecha_publicacion"] or "", f["id"]))
+        item = {"id": ultimo["id"], "objeto": ultimo["objeto"], "organo": ultimo["organo"],
+                "fecha": (primero["fecha_publicacion"] or "")[:10] or None}
+        if primero["estado"] == "presentada":
+            claves = {normalizar_empresa(f["adjudicatario"]) for f in anuncios if f["adjudicatario"]}
+            if claves:
+                presentadas += 1
+                if clave in claves:
+                    ganadas += 1
+                    le_gano.append(item)
+        else:
+            organo = (primero["organo"] or "").strip()
+            desde = suyos_por_organo.get(organo)
+            if desde is not None and desde < (primero["fecha_publicacion"] or ""):
+                atado.append(item)
+    orden = lambda i: (i["fecha"] or "", i["id"])  # noqa: E731
+    return {
+        "presentadas_adjudicadas": presentadas,
+        "ganadas_por_ella": ganadas,
+        "le_gano": sorted(le_gano, key=orden, reverse=True),
+        "incumbente_atado": sorted(atado, key=orden, reverse=True),
+    }
+
+
+def _como_compra(con, ambito: Ambito, nombre: str, expedientes: list[dict]) -> dict:
+    """Para la ficha de organismo: por qué procedimiento, cuánto duran sus contratos,
+    cuánto tarda en adjudicar, si divide en lotes y sus consultas previas abiertas."""
+    duraciones = sorted(
+        d for d in (max((f["duracion_meses"] or 0 for f in e["anuncios_filas"]), default=0)
+                    for e in expedientes) if d > 0)
+    dias = sorted(f["dias"] for f in _recorridos(con, ambito, " AND l.organo = ?", [nombre])
+                  if f["dias"] is not None and f["dias"] > 0)
+
+    # Los lotes: PLACSP los lleva en `raw` y Cataluña publica una fila por lote. TED no lo
+    # dice, así que se cuenta sobre los que sí lo podrían decir.
+    ids = {f["id"]: e["g"] for e in expedientes for f in e["anuncios_filas"]
+           if (f["fuente"] or "").startswith(("placsp:licitaciones", "placsp:agregadas",
+                                              "catalunya"))}
+    con_lotes: set = set()
+    for tanda in db._por_tandas(list(ids)):
+        marcas = ", ".join("?" * len(tanda))
+        for f in con.execute(
+                f"""SELECT id FROM licitaciones WHERE id IN ({marcas})
+                     AND (lote_num IS NOT NULL
+                          OR COALESCE(json_array_length(json_extract(raw, '$.lotes')), 0) > 1)""",
+                tanda):
+            con_lotes.add(ids[f[0]])
+    sabidos = len(set(ids.values()))
+
+    consultas = [e for e in expedientes if e["viva"] and any(
+        f["fuente"] == "placsp:consultas_previas" for f in e["anuncios_filas"])]
+    return {
+        "procedimientos": _reparto_procedimientos(expedientes),
+        "duracion_mediana": _mediana_redondeada(duraciones),
+        "duraciones": len(duraciones),
+        "dias_adjudicar": _mediana_redondeada(dias),
+        "recorridos": len(dias),
+        "con_lotes": len(con_lotes),
+        "lotes_sabidos": sabidos,
+        "consultas_abiertas": [
+            {"id": e["id"], "objeto": next(f["objeto"] for f in e["anuncios_filas"]
+                                           if f["id"] == e["id"]),
+             "fecha": (e["primera_publicacion"] or "")[:10] or None}
+            for e in sorted(consultas, key=lambda e: e["primera_publicacion"] or "", reverse=True)],
+    }
