@@ -1209,10 +1209,27 @@ def resumen_novedades(con: sqlite3.Connection, periodo: str = "busqueda", *,
         raise ValueError(
             f"periodo no válido: {periodo}. Válidos: {', '.join(PERIODOS_RESUMEN)}"
         )
-    v = _ventana(con, periodo)
+    return _resumen_de_ventana(con, _ventana(con, periodo), periodo,
+                               perfiles_activos=perfiles_activos)
+
+
+def novedades_entre(con: sqlite3.Connection, desde_id: int, hasta_id: int, *,
+                    perfiles_activos: list[str] | None = None) -> dict:
+    """Lo mismo que `resumen_novedades`, para un tramo de ids cualquiera.
+
+    Es lo que cuentan los avisos de macOS (`automatica.avisos_pendientes`), que juntan
+    las búsquedas terminadas desde el último aviso: con la ventana cerrada puede haber
+    corrido más de una.
+    """
+    return _resumen_de_ventana(con, {"desde_id": desde_id, "hasta_id": hasta_id}, None,
+                               perfiles_activos=perfiles_activos)
+
+
+def _resumen_de_ventana(con: sqlite3.Connection, v: dict, periodo: str | None, *,
+                        perfiles_activos: list[str] | None = None) -> dict:
     salida: dict = {
         "periodo": periodo,
-        "etiqueta": PERIODOS_RESUMEN[periodo],
+        "etiqueta": PERIODOS_RESUMEN.get(periodo or ""),
         "total": 0,
         "por_perfil": [],
         "por_tematica": [],

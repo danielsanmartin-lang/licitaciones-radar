@@ -1347,6 +1347,15 @@ progress:not([value]) { opacity: .7; }
   line-height: 1.5;
 }
 .busqueda-progreso progress { margin-top: var(--e-1); }
+/* Cada cuánto busca sola y si avisa: debajo de «Buscar ahora», con el mismo recuadro. */
+.automatica { margin-top: var(--e-3); align-items: flex-start; }
+.auto-controles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--e-2);
+}
+.auto-controles select { margin-left: var(--e-1); }
 
 /* --- Pantalla de arranque --------------------------------------------------
  *

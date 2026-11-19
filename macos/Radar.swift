@@ -17,8 +17,14 @@
 // Dos cosas que parecen detalles y no lo son, explicadas donde ocurren: el menú
 // «Edición» hay que construirlo a mano o no funcionan ⌘C y ⌘V dentro de la web, y al
 // salir hay que matar el servidor pero NO la ingesta.
+//
+// Desde la 2.4, además, cerrar la ventana no cierra la aplicación —se queda en el Dock,
+// como Slack o Mail— porque el servidor busca solo cada pocas horas y esta ventana es la
+// que pone el aviso de macOS cuando llega algo (ver «Avisos»). ⌘Q sí lo para todo.
 
 import AppKit
+import UniformTypeIdentifiers
+import UserNotifications
 import WebKit
 
 // MARK: - Registro
@@ -40,6 +46,27 @@ enum Ajustes {
     static let puerto = 8811
     static let host = "127.0.0.1"
     static var base: URL { URL(string: "http://\(host):\(puerto)/")! }
+
+    /// La última carpeta en la que se guardó una exportación (Excel, CSV o PDF). La
+    /// próxima vez el diálogo de guardar se abre ahí; la primera, en Descargas.
+    static let claveCarpetaExportar = "carpetaExportar"
+
+    static func carpetaExportar() -> URL {
+        if let ruta = UserDefaults.standard.string(forKey: claveCarpetaExportar) {
+            var esCarpeta: ObjCBool = false
+            if FileManager.default.fileExists(atPath: ruta, isDirectory: &esCarpeta),
+               esCarpeta.boolValue {
+                return URL(fileURLWithPath: ruta, isDirectory: true)
+            }
+        }
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+    }
+
+    static func recordarCarpeta(de fichero: URL) {
+        UserDefaults.standard.set(fichero.deletingLastPathComponent().path,
+                                  forKey: claveCarpetaExportar)
+    }
 
     /// Donde está el programa: la carpeta que tiene `radar.py`.
     ///
@@ -374,11 +401,16 @@ final class ZonaArrastre: NSView {
 // MARK: - La aplicación
 
 final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
-                      WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
+                      WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler,
+                      UNUserNotificationCenterDelegate {
     private let servidor = Servidor()
     private var ventana: NSWindow!
     private var web: WKWebView!
     private var aviso: NSTextField!
+    /// Pregunta al servidor cada minuto si hay algo que avisar (ver «Avisos»).
+    private var relojAvisos: Timer?
+    /// Que App Nap no duerma el reloj de los avisos con la ventana cerrada.
+    private var actividad: NSObjectProtocol?
 
     // MARK: Ciclo de vida
 
@@ -413,6 +445,7 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 self.aviso.isHidden = true
                 self.web.isHidden = false
                 self.web.load(URLRequest(url: Ajustes.base))
+                self.empezarAvisos()
             case .failure(let error):
                 self.mostrarFalloYSalir(error)
             }
@@ -420,13 +453,32 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        relojAvisos?.invalidate()
+        if let actividad { ProcessInfo.processInfo.endActivity(actividad) }
         servidor.parar()
     }
 
-    /// Es una app de una sola ventana: sin ella no hay nada que representar, y dejarla
-    /// viva dejaría el servidor de Python corriendo sin que se vea por ningún sitio.
+    /// Cerrar la ventana NO cierra la aplicación, como en Slack o en Mail. Hasta la 2.3
+    /// sí: era una app de una sola ventana y dejarla viva dejaba el servidor corriendo
+    /// sin que se viera. Ahora ese servidor busca solo cada pocas horas y esta ventana es
+    /// la que avisa de lo que llega, así que tiene que seguir viva con la ventana
+    /// cerrada. Se ve igual que cualquier otra: el punto bajo el icono del Dock. ⌘Q la
+    /// cierra de verdad y para el servidor (`applicationWillTerminate`).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    /// Un clic en el icono del Dock con la ventana cerrada la vuelve a abrir.
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { mostrarVentana() }
+        return true
+    }
+
+    private func mostrarVentana() {
+        if ventana.isMiniaturized { ventana.deminiaturize(nil) }
+        ventana.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: Ventana
@@ -451,6 +503,9 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         ventana.minSize = NSSize(width: 820, height: 560)
         // Recuerda tamaño y posición sin que haya que guardar preferencias a mano.
         ventana.setFrameAutosaveName("ventana-radar")
+        // Al cerrarla solo se esconde: la aplicación sigue en el Dock y la reabre igual
+        // que estaba, con la misma página cargada (ver `applicationShouldHandleReopen`).
+        ventana.isReleasedWhenClosed = false
 
         let configuracion = WKWebViewConfiguration()
         // El servidor manda `Cache-Control: no-store`, pero un almacén persistente
@@ -461,6 +516,12 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         // web la que sabe que ha terminado y la ventana la única que puede cerrarse y
         // volver a abrirse. `window.webkit.messageHandlers.radar.postMessage(…)`.
         configuracion.userContentController.add(self, name: "radar")
+
+        // Sin esto, el PDF sale sin las barras de los gráficos: son fondos de color, y al
+        // imprimir WebKit los quita para ahorrar tinta.
+        if #available(macOS 13.3, *) {
+            configuracion.preferences.shouldPrintBackgrounds = true
+        }
 
         web = WKWebView(frame: ventana.contentView!.bounds, configuration: configuracion)
         web.autoresizingMask = [.width, .height]
@@ -802,6 +863,188 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         NSApp.terminate(nil)
     }
 
+    // MARK: Avisos
+    //
+    // El servidor busca solo cada pocas horas (`radar/automatica.py`) y apunta qué ha
+    // traído cada búsqueda. Esto pregunta cada minuto si hay algo de lo que no se haya
+    // avisado todavía y, si lo hay, pone el aviso de macOS con sonido —«3 licitaciones
+    // nuevas», el reparto por perfil y los primeros títulos—. El texto lo escribe Python:
+    // aquí solo se enseña.
+    //
+    // Con la aplicación delante no sale el aviso, solo el sonido: la propia bandeja ya
+    // enseña «Búsqueda terminada: N nuevas», y un globo encima de la ventana que lo
+    // está diciendo sobra.
+    //
+    // La app va firmada ad hoc, y macOS puede negarle los avisos. Entonces queda lo que
+    // no necesita permiso: el sonido y el rebote del icono en el Dock, además del número.
+
+    private func empezarAvisos() {
+        guard relojAvisos == nil else { return }
+        // `UNUserNotificationCenter` aborta si el binario no está dentro de un bundle con
+        // identificador, que es lo que pasa al ejecutarlo suelto para depurar.
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = self
+        }
+        actividad = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Avisar de las licitaciones nuevas que trae la búsqueda automática")
+        let reloj = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            self?.mirarAvisos()
+        }
+        reloj.tolerance = 10
+        RunLoop.main.add(reloj, forMode: .common)
+        relojAvisos = reloj
+    }
+
+    private func mirarAvisos() {
+        let url = Ajustes.base.appendingPathComponent("api/avisos")
+        URLSession.shared.dataTask(with: url) { [weak self] datos, _, _ in
+            guard let datos,
+                  let json = try? JSONSerialization.jsonObject(with: datos) as? [String: Any],
+                  let hasta = (json["hasta"] as? NSNumber)?.intValue
+            else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let total = (json["total"] as? NSNumber)?.intValue ?? 0
+                let avisar = json["avisos"] as? Bool ?? true
+                if total > 0 && avisar {
+                    self.avisar(titulo: json["titulo"] as? String ?? "Licitaciones nuevas",
+                                cuerpo: json["cuerpo"] as? String ?? "",
+                                sonido: json["sonido"] as? Bool ?? true,
+                                id: hasta)
+                }
+                self.marcarAvisado(hasta: hasta)
+            }
+        }.resume()
+    }
+
+    private func marcarAvisado(hasta: Int) {
+        var peticion = URLRequest(url: Ajustes.base.appendingPathComponent("api/avisos/entregados"))
+        peticion.httpMethod = "POST"
+        peticion.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        peticion.httpBody = try? JSONSerialization.data(withJSONObject: ["hasta": hasta])
+        URLSession.shared.dataTask(with: peticion).resume()
+    }
+
+    private func avisar(titulo: String, cuerpo: String, sonido: Bool, id: Int) {
+        if NSApp.isActive && ventana.isVisible && !ventana.isMiniaturized {
+            if sonido { NSSound(named: "Glass")?.play() }
+            return
+        }
+        guard Bundle.main.bundleIdentifier != nil else {
+            avisoSinPermiso(sonido: sonido)
+            return
+        }
+        let centro = UNUserNotificationCenter.current()
+        // La primera vez macOS pregunta; las siguientes contesta en el acto con lo que
+        // se eligió (y con lo que se haya cambiado después en Ajustes del Sistema).
+        centro.requestAuthorization(options: [.alert, .sound, .badge]) { concedido, error in
+            DispatchQueue.main.async {
+                guard concedido else {
+                    traza("sin permiso para avisos: \(error?.localizedDescription ?? "denegado")")
+                    self.avisoSinPermiso(sonido: sonido)
+                    return
+                }
+                let contenido = UNMutableNotificationContent()
+                contenido.title = titulo
+                contenido.body = cuerpo
+                if sonido { contenido.sound = .default }
+                let peticion = UNNotificationRequest(identifier: "novedades-\(id)",
+                                                     content: contenido, trigger: nil)
+                centro.add(peticion) { error in
+                    guard let error else { return }
+                    traza("no se ha podido poner el aviso: \(error.localizedDescription)")
+                    DispatchQueue.main.async { self.avisoSinPermiso(sonido: sonido) }
+                }
+            }
+        }
+    }
+
+    private func avisoSinPermiso(sonido: Bool) {
+        if sonido { NSSound(named: "Glass")?.play() }
+        NSApp.requestUserAttention(.informationalRequest)
+    }
+
+    /// Con la aplicación delante, el aviso que llegue igualmente (de otra búsqueda que
+    /// acaba de terminar, por ejemplo) se enseña: si ha llegado aquí es que se decidió
+    /// ponerlo.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler:
+                                    @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
+
+    /// Pulsar el aviso abre la ventana en la Bandeja con solo lo nuevo.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            self.mostrarVentana()
+            self.web.evaluateJavaScript("window.verNovedades && window.verNovedades()")
+            completionHandler()
+        }
+    }
+
+    // MARK: PDF
+    //
+    // «Exportar PDF» en la Analítica y en las fichas de organismo y de competidor. Lo que
+    // se imprime es la propia página, con la hoja de impresión de `styles.css` (sin barra
+    // lateral ni botones, en claro aunque el Mac esté en oscuro, partida en páginas A4).
+
+    private func exportarPDF(nombre: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = nombre
+        panel.allowedContentTypes = [.pdf]
+        panel.directoryURL = Ajustes.carpetaExportar()
+        panel.canCreateDirectories = true
+        panel.beginSheetModal(for: ventana) { [weak self] respuesta in
+            guard let self, respuesta == .OK, let destino = panel.url else { return }
+            Ajustes.recordarCarpeta(de: destino)
+            // El panel ya ha preguntado si sustituirlo; la impresión no sobrescribe.
+            try? FileManager.default.removeItem(at: destino)
+            // Fuera de este bloque: la hoja del panel tiene que haberse ido antes de que
+            // empiece la de la impresión.
+            DispatchQueue.main.async { self.imprimir(en: destino) }
+        }
+    }
+
+    private func imprimir(en destino: URL) {
+        let info = NSPrintInfo(dictionary: [.jobSavingURL: destino])
+        info.jobDisposition = .save
+        info.paperSize = NSSize(width: 595.28, height: 841.89)  // A4, en puntos
+        info.topMargin = 34
+        info.bottomMargin = 34
+        info.leftMargin = 34
+        info.rightMargin = 34
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        let operacion = web.printOperation(with: info)
+        operacion.showsPrintPanel = false
+        operacion.showsProgressPanel = true
+        operacion.jobTitle = destino.deletingPathExtension().lastPathComponent
+        // Las dos cosas que evitan un PDF en blanco: la vista de impresión de WKWebView
+        // nace con tamaño cero, y `run()` no le da tiempo a pintar; `runModal` sí.
+        operacion.view?.frame = web.bounds
+        operacion.runModal(for: ventana, delegate: self,
+                           didRun: #selector(impresionTerminada(_:success:contextInfo:)),
+                           contextInfo: nil)
+    }
+
+    @objc private func impresionTerminada(_ operacion: NSPrintOperation, success: Bool,
+                                          contextInfo: UnsafeMutableRawPointer?) {
+        let destino = operacion.printInfo.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL]
+            as? URL
+        guard success, let destino, FileManager.default.fileExists(atPath: destino.path) else {
+            simpleAlerta("No se ha podido guardar el PDF",
+                         "La impresión no ha terminado. Prueba otra vez.")
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([destino])
+    }
+
     // MARK: Mensajes de la web
 
     func userContentController(_ controlador: WKUserContentController,
@@ -820,6 +1063,8 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
             reiniciarTrasActualizar(version: version)
         case "instalar-app":
             instalarAppNueva(ruta: datos["ruta"] as? String ?? "", version: version)
+        case "pdf":
+            exportarPDF(nombre: datos["nombre"] as? String ?? "Radar de Licitaciones.pdf")
         case "insignia":
             // El número del icono en el Dock: lo nuevo desde la última visita. Cero lo
             // quita. Solo existe mientras la aplicación está abierta: macOS no deja
@@ -973,34 +1218,44 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
     }
 
+    /// Pregunta dónde guardarlo, como cualquier app de Mac. Hasta la 2.3 iba directo a
+    /// Descargas sin preguntar. El diálogo se abre en la última carpeta elegida.
     func download(_ download: WKDownload,
                   decideDestinationUsing response: URLResponse,
                   suggestedFilename: String,
                   completionHandler: @escaping (URL?) -> Void) {
-        let descargas = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
-        var destino = descargas.appendingPathComponent(suggestedFilename)
-        // Sin esto, exportar dos veces falla en silencio: WebKit cancela la descarga si
-        // el fichero ya existe en lugar de sobrescribirlo.
-        var n = 2
-        let base = destino.deletingPathExtension().lastPathComponent
-        let ext = destino.pathExtension
-        while FileManager.default.fileExists(atPath: destino.path) {
-            destino = descargas.appendingPathComponent(
-                ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)")
-            n += 1
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedFilename
+        panel.directoryURL = Ajustes.carpetaExportar()
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        let ext = (suggestedFilename as NSString).pathExtension
+        if !ext.isEmpty, let tipo = UTType(filenameExtension: ext) {
+            panel.allowedContentTypes = [tipo]
         }
-        completionHandler(destino)
+        panel.beginSheetModal(for: ventana) { respuesta in
+            guard respuesta == .OK, let destino = panel.url else {
+                completionHandler(nil)  // cancela la descarga
+                return
+            }
+            Ajustes.recordarCarpeta(de: destino)
+            // Si ya existía, el panel ha preguntado si sustituirlo y se ha dicho que sí.
+            // WebKit, en cambio, cancela la descarga si el fichero existe.
+            try? FileManager.default.removeItem(at: destino)
+            completionHandler(destino)
+        }
     }
 
     func downloadDidFinish(_ download: WKDownload) {
         guard let url = download.progress.fileURL else { return }
-        // Rebote en el Dock, que es lo que dice «ya está» en una app de Mac.
+        // El Finder con el fichero seleccionado, que es lo que dice «ya está».
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error,
                   resumeData: Data?) {
+        // Cancelar en el diálogo de guardar también llega aquí, y eso no es un fallo.
+        if (error as NSError).code == NSURLErrorCancelled { return }
         simpleAlerta("No se ha podido guardar el fichero", error.localizedDescription)
     }
 }

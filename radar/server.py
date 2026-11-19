@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import busqueda, categorias, consultas, db, enlaces, pipeline, rutas
+from . import automatica, busqueda, categorias, consultas, db, enlaces, pipeline, rutas
 from .db import ESTADOS_REVISION
 from .sources.base import NUTS2_CCAA
 
@@ -342,6 +342,17 @@ class Manejador(BaseHTTPRequestHandler):
                     self.con, len(pipeline.ETAPAS_PRIMERA_CARGA)),
             })
 
+        elif partes.path == "/api/preferencias":
+            # Búsqueda automática y avisos: lo que se elige al final de «Términos de
+            # búsqueda», con la hora de la última búsqueda y la de la siguiente.
+            self._json(automatica.estado(self.con))
+
+        elif partes.path == "/api/avisos":
+            # Lo pregunta la ventana de macOS cada minuto para poner el aviso con sonido
+            # (`Radar.swift`). Barato a propósito: casi siempre no hay búsquedas nuevas.
+            self._json(automatica.avisos_pendientes(
+                self.con, perfiles_activos=_perfiles_activos()))
+
         elif partes.path == "/api/resumen-novedades":
             try:
                 self._json(consultas.resumen_novedades(
@@ -619,6 +630,21 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._error(f"No se pudo lanzar la búsqueda: {exc}", 500)
             self._json({"ok": True, **datos})
 
+        elif partes.path == "/api/preferencias":
+            try:
+                self._json(automatica.fijar_preferencias(self.con, cuerpo))
+            except ValueError as exc:
+                self._error(str(exc))
+
+        elif partes.path == "/api/avisos/entregados":
+            # Después de enseñar el aviso (o de decidir que no había nada que enseñar),
+            # para no volver a avisar de las mismas búsquedas.
+            try:
+                hasta = int(cuerpo["hasta"])
+            except (KeyError, TypeError, ValueError):
+                return self._error("falta hasta")
+            self._json({"ok": True, "marca": automatica.marcar_entregados(self.con, hasta)})
+
         elif partes.path == "/api/cancelar-busqueda":
             self._json({"ok": busqueda.cancelar()})
 
@@ -641,6 +667,11 @@ def arrancar(puerto: int = 8811, ruta_bd: Path | None = None) -> ThreadingHTTPSe
     Manejador.ruta_bd = ruta_bd or db.BD_POR_DEFECTO
     # Se prepara la base aquí, una vez, antes de atender a nadie: esquema y migraciones.
     # Las peticiones solo abren (`Manejador.con`).
-    db.conectar(Manejador.ruta_bd).close()
+    con = db.conectar(Manejador.ruta_bd)
+    try:
+        # Desde aquí se avisa de lo que llegue, no del histórico (ver `automatica`).
+        automatica.preparar_marca(con)
+    finally:
+        con.close()
     servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Manejador)
     return servidor

@@ -1449,27 +1449,37 @@ function avisarIcono(n) {
   nativa.postMessage({ accion: 'insignia', numero });
 }
 
-// Con la aplicación abierta todo el día, el número del icono solo sirve si alguien sigue
-// buscando. Cada cuarto de hora se refrescan las cifras —por si la tarea de las mañanas
-// ha traído algo— y, si la última búsqueda tiene más de HORAS_ENTRE_BUSQUEDAS, se lanza
-// otra, la misma que «Buscar ahora». Nada de esto corre con la pantalla de arranque
-// delante ni con una búsqueda en marcha: ahí ya se está esperando a una.
-const HORAS_ENTRE_BUSQUEDAS = 4;
-const MINUTOS_ENTRE_REPASOS = 15;
-// La hora del último intento propio, aparte de la de la última búsqueda que fue bien: sin
-// red, «la última búsqueda» no avanza nunca y se volvería a intentar cada cuarto de hora.
-let ultimoIntentoSolo = Date.now();
+// Con la aplicación abierta todo el día, quien busca cada N horas es el servidor
+// (`radar/automatica.py`), no esta página: con la ventana cerrada WebKit ralentiza los
+// temporizadores de una página que no se ve. Aquí solo se está atento a dos cosas:
+//   - si hay una búsqueda en marcha que nadie está vigilando —la ha lanzado el servidor,
+//     la tarea de las mañanas o `start.command`—, se vigila, para que la cabecera cuente
+//     cómo va y al terminar salga «Búsqueda terminada: N nuevas»;
+//   - cada pocos minutos se refrescan las cifras y el número del icono.
+// Nada de esto corre con la pantalla de arranque delante: ahí ya se está esperando.
+const SEGUNDOS_ENTRE_MIRADAS = 60;
+const MIRADAS_POR_REFRESCO = 5;
+let miradas = 0;
 setInterval(async () => {
   if (enArranque || vigilancia) return;
-  await cargarResumen();
-  const d = ultimoResumen;
-  const horas = HORAS_ENTRE_BUSQUEDAS * 3600 * 1000;
-  if (d && !buscadoHaceMenosDe(d.ultima_busqueda, HORAS_ENTRE_BUSQUEDAS * 60)
-      && Date.now() - ultimoIntentoSolo > horas) {
-    ultimoIntentoSolo = Date.now();
-    lanzarBusqueda();
+  const d = await estadoBusqueda();
+  if (d && d.en_marcha) {
+    vigilarBusqueda();
+    return;
   }
-}, MINUTOS_ENTRE_REPASOS * 60 * 1000);
+  if (++miradas % MIRADAS_POR_REFRESCO === 0) cargarResumen();
+}, SEGUNDOS_ENTRE_MIRADAS * 1000);
+
+// Lo llama la ventana de macOS al pulsar el aviso de «N licitaciones nuevas»: la
+// Bandeja con solo lo nuevo, que es lo que el aviso acaba de contar.
+window.verNovedades = async () => {
+  if (enArranque) return;
+  await cargarResumen();
+  soloNovedades = true;
+  $('tab-novedades').classList.add('activo');
+  mostrarVista('bandeja');
+  await cargarLista();
+};
 
 async function reiniciarConVersion(version, appNueva) {
   const nativa = ventanaNativa();
@@ -2968,7 +2978,66 @@ const CAMPOS_TERMINOS = [
 
 let perfilesOriginales = null;
 
+// --- Búsqueda automática y avisos -------------------------------------------
+//
+// Al final de «Términos de búsqueda». Lo guarda el servidor, que es quien busca, y lo
+// lee la ventana de macOS antes de poner un aviso.
+
+function pintarAutomatica(d) {
+  $('auto-intervalo').value = String(d.intervalo_min);
+  $('auto-avisos').checked = Boolean(d.avisos);
+  $('auto-sonido').checked = Boolean(d.sonido);
+  $('auto-sonido').disabled = !d.avisos;
+  const partes = [];
+  if (d.ultima_iniciada) partes.push(`Última búsqueda: ${fmtFechaHora(d.ultima_iniciada)}.`);
+  if (!d.intervalo_min) {
+    partes.push('No busca sola: solo al abrir la aplicación, con «Buscar ahora» y con la tarea de las mañanas, si la tienes.');
+  } else if (d.proxima) {
+    partes.push(`Siguiente: hacia las ${new Date(d.proxima).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.`);
+  } else if (!d.activa) {
+    // Sin planificador: `start.command` de una versión vieja o RADAR_SIN_AUTOMATICA.
+    partes.push('Este servidor no tiene la búsqueda automática en marcha.');
+  }
+  if (!ventanaNativa() && d.avisos) {
+    partes.push('Los avisos con sonido los pone la aplicación del Mac; en el navegador no salen.');
+  }
+  $('auto-cuando').textContent = partes.join(' ');
+}
+
+async function cargarAutomatica() {
+  try {
+    pintarAutomatica(await pedirJSON('/api/preferencias'));
+  } catch {
+    $('auto-cuando').textContent = 'No se ha podido leer cómo está la búsqueda automática.';
+  }
+}
+
+async function guardarAutomatica(cambio) {
+  $('auto-aviso').textContent = '';
+  let r, d;
+  try {
+    r = await fetch('/api/preferencias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cambio),
+    });
+    d = await r.json();
+  } catch {
+    $('auto-aviso').textContent = 'No se ha podido guardar.';
+    return;
+  }
+  if (!r.ok) {
+    $('auto-aviso').textContent = d.error || 'No se ha podido guardar.';
+    return;
+  }
+  pintarAutomatica(d);
+  // El aviso de «guardado» va y viene: lo que importa es lo que dice la línea de arriba.
+  $('auto-aviso').textContent = 'Guardado.';
+  setTimeout(() => { $('auto-aviso').textContent = ''; }, 2500);
+}
+
 async function cargarAjustes() {
+  cargarAutomatica();
   const carga = empezarCarga('lista-perfiles');
   let d;
   try {
@@ -3799,6 +3868,10 @@ $('terminada-ver').addEventListener('click', () => {
 });
 $('terminada-cerrar').addEventListener('click', () => { $('busqueda-terminada').hidden = true; });
 $('previsualizar').addEventListener('click', () => previsualizarAjustes());
+$('auto-intervalo').addEventListener('change', (e) =>
+  guardarAutomatica({ intervalo_min: Number(e.target.value) }));
+$('auto-avisos').addEventListener('change', (e) => guardarAutomatica({ avisos: e.target.checked }));
+$('auto-sonido').addEventListener('change', (e) => guardarAutomatica({ sonido: e.target.checked }));
 $('guardar-perfiles').addEventListener('click', () => guardarAjustes());
 $('tab-novedades').addEventListener('click', async () => {
   soloNovedades = !soloNovedades;
