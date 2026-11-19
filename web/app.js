@@ -1447,6 +1447,13 @@ async function instalarVersionNueva() {
 }
 
 // El puente con la ventana de macOS, si la hay. En el navegador no existe.
+// Lo que sabe hacer la ventana nativa. Lo declara ella al cargar la página
+// (`window.radarVentana`, ver `Radar.swift`); las de antes de la 2.4.1 no declaran nada.
+function ventanaPuede(capacidad) {
+  const v = window.radarVentana;
+  return Boolean(v && Array.isArray(v.puede) && v.puede.includes(capacidad));
+}
+
 function ventanaNativa() {
   return window.webkit && window.webkit.messageHandlers &&
     window.webkit.messageHandlers.radar;
@@ -2800,8 +2807,19 @@ function exportarPdf(partes, cabecera) {
   tooltip().hidden = true;
   const nombre = [...partes.map(trozoNombre).filter(Boolean), fecha].join(' - ') + '.pdf';
   const nativa = ventanaNativa();
-  if (nativa) nativa.postMessage({ accion: 'pdf', nombre });
-  else window.print();
+  if (!nativa) {
+    window.print();
+    return;
+  }
+  // Una ventana de antes de la 2.4 recibe el mensaje y no hace nada. Pasaba con la copia
+  // de Aplicaciones que usa el código del repositorio: el código era el nuevo y la
+  // ventana, la vieja. Desde la 2.4.1 la ventana dice qué sabe hacer.
+  if (!ventanaPuede('pdf')) {
+    avisarLote('Esta ventana de la aplicación es de una versión anterior y no sabe guardar ' +
+      'PDF. Ciérrala con ⌘Q y vuelve a abrirla para ponerla al día.', false);
+    return;
+  }
+  nativa.postMessage({ accion: 'pdf', nombre });
 }
 
 function textoAmbito(select) {
@@ -3683,31 +3701,88 @@ const VISTAS = ['bandeja', 'resumen', 'otras', 'siguiendo', 'vencimientos', 'adj
 // Mientras se mira una, la barra lateral resalta la lista de la que es.
 const VISTAS_DETALLE = { organismo: 'organismos', competidor: 'adjudicatarios' };
 
-// Lo que hay que deshacer al pulsar «Volver»: de dónde se vino y por dónde se iba. Se
-// vacía al elegir una vista en la barra lateral, que es empezar de nuevo.
+// --- Volver a la pantalla anterior ------------------------------------------------
+//
+// Cada cambio de pantalla —una vista de la barra lateral, una ficha, la Bandeja desde una
+// cifra de la Analítica, el aviso de «N nuevas»…— apila de dónde se venía, y «‹» en la
+// cabecera (o ⌘[, o el botón «atrás» del ratón) lo deshace: la misma pantalla, a la misma
+// altura. Hasta la 2.4 solo las fichas tenían «Volver», y elegir una vista en la barra
+// lateral vaciaba la pila.
+//
+// De la Bandeja se guardan además sus filtros: si se sale de ella con «abiertas» y se
+// vuelve después de haber pulsado una cifra de la Analítica, tiene que volver a enseñar
+// las abiertas, no lo de la Analítica.
+const MAXIMO_PILA_VOLVER = 50;
 let pilaVolver = [];
 // La ficha que se está mirando: `{ tipo, nombre, ambito }`.
 let fichaActual = null;
 
+function estadoBandeja() {
+  return {
+    kpiActivo, cierranEnDias, sinVencidas, soloNovedades, filtroAnalitica,
+    q: $('q').value, perfil: $('perfil').value, estado: $('estado').value,
+    ccaa: $('ccaa').value, importe_min: $('importe_min').value, orden: $('orden').value,
+    vivas: $('vivas').checked, conPlazo: $('con-plazo').checked,
+  };
+}
+
+function restaurarBandeja(e) {
+  ({ kpiActivo, cierranEnDias, sinVencidas, soloNovedades, filtroAnalitica } = e);
+  $('q').value = e.q;
+  $('perfil').value = e.perfil;
+  $('estado').value = e.estado;
+  $('ccaa').value = e.ccaa;
+  $('importe_min').value = e.importe_min;
+  $('orden').value = e.orden;
+  $('vivas').checked = e.vivas;
+  if ($('con-plazo').checked !== e.conPlazo) ponerConPlazo(e.conPlazo);
+  $('tab-novedades').classList.toggle('activo', soloNovedades);
+  for (const b of $('kpis').querySelectorAll('button.kpi')) {
+    b.classList.toggle('activo', b.dataset.kpi === kpiActivo);
+  }
+}
+
+function mismaFicha(a, b) {
+  return (!a && !b) || Boolean(a && b && a.tipo === b.tipo && a.nombre === b.nombre);
+}
+
+// El nombre de una pantalla apilada, para el «Volver a …» del botón.
+function nombrePantalla(v) {
+  if (v.ficha) return v.ficha.nombre;
+  return $('vista-' + v.vista).dataset.titulo || '';
+}
+
+function pintarAtras() {
+  const b = $('atras');
+  const ultima = pilaVolver[pilaVolver.length - 1];
+  b.disabled = !ultima;
+  b.title = ultima ? `Volver a ${nombrePantalla(ultima)} (⌘[)` : 'No hay pantalla anterior';
+  b.setAttribute('aria-label', b.title);
+}
+
 function abrirFicha(tipo, nombre, ambito = '') {
   if (!nombre) return;
-  pilaVolver.push({ vista: vistaActual, ficha: fichaActual, scroll: $('cuerpo').scrollTop });
-  fichaActual = { tipo, nombre, ambito };
-  mostrarVista(tipo, { conservarPila: true });
+  mostrarVista(tipo, { ficha: { tipo, nombre, ambito } });
 }
 
 async function volver() {
+  if (enArranque) return;
   const v = pilaVolver.pop();
-  if (!v) {
-    mostrarVista(VISTAS_DETALLE[vistaActual] || 'bandeja');
-    return;
+  if (!v) return;
+  tooltip().hidden = true;
+  let recargarBandeja = false;
+  if (v.bandeja && JSON.stringify(v.bandeja) !== JSON.stringify(estadoBandeja())) {
+    restaurarBandeja(v.bandeja);
+    recargarBandeja = true;
   }
-  fichaActual = v.ficha;
   // Se espera a que la vista se pinte para devolver el scroll: hasta entonces no hay
-  // por dónde bajar.
-  await mostrarVista(v.vista, { conservarPila: true });
+  // por dónde bajar. La Bandeja no se recarga al mostrarla —su lista sigue ahí—, salvo
+  // que se le hayan cambiado los filtros mientras tanto.
+  await mostrarVista(v.vista, { ficha: v.ficha, apilar: false });
+  if (recargarBandeja) await cargarLista();
   $('cuerpo').scrollTop = v.scroll;
 }
+window.volverAtras = volver;
 
 // Un nombre que lleva a su ficha. Para dentro de una tarjeta, que ya abre la licitación
 // al pulsarla: el clic en el nombre se queda en el nombre.
@@ -3736,12 +3811,21 @@ function pintarCabecera(vista) {
 }
 
 // Devuelve la carga de la vista, para quien necesite esperarla (`volver()`).
-function mostrarVista(vista, { conservarPila = false } = {}) {
-  if (!conservarPila) {
-    pilaVolver = [];
-    fichaActual = null;
+// `ficha` para las vistas de ficha (`VISTAS_DETALLE`); `apilar: false` solo para «Volver»,
+// que es deshacer y no ir a otro sitio. Volver a pintar la pantalla en la que ya se está
+// (un filtro de la Bandeja, el aviso de «N nuevas» estando en ella) no apila nada.
+function mostrarVista(vista, { ficha = null, apilar = true } = {}) {
+  const destino = VISTAS_DETALLE[vista] ? ficha : null;
+  if (apilar && (vista !== vistaActual || !mismaFicha(destino, fichaActual))) {
+    pilaVolver.push({
+      vista: vistaActual, ficha: fichaActual, scroll: $('cuerpo').scrollTop,
+      bandeja: vistaActual === 'bandeja' ? estadoBandeja() : null,
+    });
+    if (pilaVolver.length > MAXIMO_PILA_VOLVER) pilaVolver.shift();
   }
+  fichaActual = destino;
   vistaActual = vista;
+  pintarAtras();
   for (const v of [...VISTAS, ...Object.keys(VISTAS_DETALLE)]) {
     $('vista-' + v).hidden = v !== vista;
   }
@@ -4268,7 +4352,14 @@ for (const tipo of Object.keys(VISTAS_DETALLE)) {
     cargarFicha();
   });
 }
-for (const b of document.querySelectorAll('[data-volver]')) b.addEventListener('click', volver);
+$('atras').addEventListener('click', volver);
+// El botón «atrás» de los ratones que lo tienen, como en el navegador.
+document.addEventListener('mouseup', (e) => {
+  if (e.button === 3) {
+    e.preventDefault();
+    volver();
+  }
+});
 let debounceOtras;
 $('otras-q').addEventListener('input', () => {
   clearTimeout(debounceOtras);
@@ -4308,6 +4399,13 @@ $('tab-novedades').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') cerrarCajon();
+  // ⌘[ es «Atrás» en todas las apps de Mac. En la ventana nativa lo sirve el menú Ver
+  // (`Radar.swift`), que llama a `volverAtras`; esto es para el navegador y las ventanas
+  // de antes de la 2.4.1.
+  if ((e.metaKey || e.ctrlKey) && e.key === '[') {
+    e.preventDefault();
+    volver();
+  }
   // ⌘1…⌘9 cambian de vista en el orden de la barra lateral, como en Zepo Desk. Con la
   // pantalla de arranque delante no: todavía no hay nada a lo que ir.
   if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key) && !enArranque) {

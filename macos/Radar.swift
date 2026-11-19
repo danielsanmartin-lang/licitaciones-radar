@@ -516,6 +516,14 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         // web la que sabe que ha terminado y la ventana la única que puede cerrarse y
         // volver a abrirse. `window.webkit.messageHandlers.radar.postMessage(…)`.
         configuracion.userContentController.add(self, name: "radar")
+        // Lo que sabe hacer esta ventana, para que la web no le pida lo que no sabe. Una
+        // ventana vieja con código nuevo —la copia de Aplicaciones que usa el repositorio
+        // antes de ponerse al día— recibía «pdf» y no hacía nada, sin decir por qué.
+        let capacidades = ["pdf", "avisos", "guardar-como", "atras"]
+            .map { "'\($0)'" }.joined(separator: ", ")
+        configuracion.userContentController.addUserScript(WKUserScript(
+            source: "window.radarVentana = { version: '\(versionDelBundle())', puede: [\(capacidades)] };",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
         // Sin esto, el PDF sale sin las barras de los gráficos: son fondos de color, y al
         // imprimir WebKit los quita para ahorrar tinta.
@@ -628,6 +636,7 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
         let mVer = NSMenuItem()
         let ver = NSMenu(title: "Ver")
+        ver.addItem(withTitle: "Atrás", action: #selector(atras), keyEquivalent: "[")
         ver.addItem(withTitle: "Recargar", action: #selector(recargar), keyEquivalent: "r")
         ver.addItem(.separator())
         ver.addItem(withTitle: "Aumentar el texto", action: #selector(masTexto), keyEquivalent: "+")
@@ -684,6 +693,11 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
 
     @objc private func recargar() { web.reload() }
+    /// La pantalla anterior, como «‹» en la cabecera de la página: el historial lo lleva
+    /// la web (`volverAtras` en `app.js`).
+    @objc private func atras() {
+        web.evaluateJavaScript("window.volverAtras && window.volverAtras()")
+    }
     @objc private func masTexto() { web.pageZoom = min(web.pageZoom + 0.1, 2.5) }
     @objc private func menosTexto() { web.pageZoom = max(web.pageZoom - 0.1, 0.6) }
     @objc private func textoNormal() { web.pageZoom = 1 }
@@ -758,9 +772,11 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         }
         traza("versión: bundle \(delBundle) · proyecto \(delProyecto)")
         guard delProyecto != delBundle,
-              !CommandLine.arguments.contains(Delegado.marcaRelanzada),
-              sePuedeRehacer()
+              !CommandLine.arguments.contains(Delegado.marcaRelanzada)
         else { return false }
+        if !sePuedeRehacer() {
+            return ponerAlDiaFueraDelRepositorio(version: delProyecto)
+        }
 
         traza("el bundle se ha quedado atrás; lo rehago")
         aviso.isHidden = false
@@ -773,6 +789,56 @@ final class Delegado: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 traza("no se pudo rehacer: \(texto.suffix(400))")
                 self.arrancarServidor()
             }
+        }
+        return true
+    }
+
+    /// La copia que está fuera del repositorio pero usa su código (la de Aplicaciones, ver
+    /// `Ajustes.raizProyecto`) también se pone al día: se rehace la del repositorio y se
+    /// pone en el sitio de esta. Hasta la 2.4.1 no se hacía, y la ventana se quedaba en la
+    /// versión con la que se copió mientras el código avanzaba: en la 2.4.0, «Exportar
+    /// PDF» no hacía nada porque la ventana de la 2.3.3 no sabía qué era.
+    ///
+    /// Si la carpeta de esta copia no deja escribir, no se intenta (se sigue con la
+    /// vieja, que funciona salvo en lo nuevo). Y si el cambio falla, se apunta la versión
+    /// para no rehacerla en cada arranque.
+    private static let claveFalloPonerAlDia = "ponerAlDiaFallida"
+
+    private func ponerAlDiaFueraDelRepositorio(version: String) -> Bool {
+        let fm = FileManager.default
+        guard let raiz = Ajustes.raizProyecto(),
+              raiz.standardizedFileURL != Bundle.main.resourceURL?.standardizedFileURL,
+              fm.fileExists(atPath: raiz.appendingPathComponent("herramientas/construir_app.py").path),
+              fm.isWritableFile(atPath: Bundle.main.bundleURL.deletingLastPathComponent().path),
+              UserDefaults.standard.string(forKey: Delegado.claveFalloPonerAlDia) != version
+        else { return false }
+
+        traza("copia fuera del repositorio y atrasada; rehago la del repositorio y la cambio")
+        aviso.isHidden = false
+        aviso.stringValue = "Poniendo al día la ventana para la versión \(version)…"
+        rehacerApp { [weak self] ok, texto in
+            guard let self else { return }
+            let hecha = raiz.appendingPathComponent("Radar de Licitaciones.app")
+            let temporal = fm.temporaryDirectory
+                .appendingPathComponent("radar-ventana-\(ProcessInfo.processInfo.processIdentifier)")
+            let copia = temporal.appendingPathComponent("Radar de Licitaciones.app")
+            do {
+                guard ok else { throw NSError(domain: "radar", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: String(texto.suffix(400))]) }
+                try? fm.removeItem(at: temporal)
+                try fm.createDirectory(at: temporal, withIntermediateDirectories: true)
+                // Una copia y no la del repositorio: el cambio la mueve a su sitio, y la del
+                // repositorio tiene que quedarse donde está.
+                try fm.copyItem(at: hecha, to: copia)
+            } catch {
+                traza("no se pudo poner al día: \(error.localizedDescription)")
+                UserDefaults.standard.set(version, forKey: Delegado.claveFalloPonerAlDia)
+                self.arrancarServidor()
+                return
+            }
+            UserDefaults.standard.removeObject(forKey: Delegado.claveFalloPonerAlDia)
+            self.relanzar(sustituyendoPor: copia, version: version,
+                          fallo: temporal.appendingPathComponent("fallo.txt"))
         }
         return true
     }

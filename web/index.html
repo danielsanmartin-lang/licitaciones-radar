@@ -72,6 +72,7 @@
       <!-- Doble marca, como un mensaje leído: «vista» no es presentada (la marca sola). -->
       <symbol id="ico-leida" viewBox="0 0 24 24"><path d="M2 12.5l4.5 4.5 9.5-10.5"/><path d="M11.5 16.5l.5.5 9.5-10.5"/></symbol>
       <symbol id="ico-cruz" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="ico-atras" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
       <symbol id="ico-punto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></symbol>
       <symbol id="ico-capas" viewBox="0 0 24 24">
         <path d="M12 4 3.5 8.5 12 13l8.5-4.5z"/>
@@ -244,6 +245,7 @@
            `data-icono`, el `data-tono` y el párrafo `.intro` de la sección que se abre:
            así el texto de cada vista vive al lado de su marcado y no en el JavaScript. -->
       <header class="vista-cabecera">
+        <button id="atras" class="atras" type="button" disabled title="No hay pantalla anterior" aria-label="No hay pantalla anterior"><svg class="ico" aria-hidden="true"><use href="#ico-atras"/></svg></button>
         <span class="vista-icono tono-acento" id="vista-icono"><svg class="ico" aria-hidden="true"><use id="vista-icono-uso" href="#ico-bandeja"/></svg></span>
         <div class="vista-titulos">
           <h1 id="vista-titulo">Bandeja</h1>
@@ -504,7 +506,6 @@
                      data-icono="ico-organo" data-tono="ambar">
               <p class="intro">Lo que el radar sabe de este órgano en el ámbito elegido.</p>
               <div class="detalle-barra">
-                <button class="boton-sec" data-volver>← Volver</button>
                 <div class="detalle-acciones">
                   <button id="organismo-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
                   <button id="organismo-pdf" class="boton-sec">Exportar PDF</button>
@@ -517,7 +518,6 @@
                      data-icono="ico-trofeo" data-tono="verde">
               <p class="intro">Lo que ha ganado esta empresa en el ámbito elegido.</p>
               <div class="detalle-barra">
-                <button class="boton-sec" data-volver>← Volver</button>
                 <div class="detalle-acciones">
                   <button id="competidor-favorito" class="boton-sec boton-favorito" aria-pressed="false" hidden>☆ Añadir a favoritos</button>
                   <button id="competidor-pdf" class="boton-sec">Exportar PDF</button>

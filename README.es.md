@@ -272,6 +272,13 @@ licitaciones arriba; Siguiendo, Vencimientos, Adjudicatarios, Organismos y Anal�
 «Mercado»; y Términos de búsqueda, Qué cubre y qué no e Historial de versiones al pie,
 junto al estado del radar (la última búsqueda, cómo van las fuentes y la versión). **⌘1…⌘9** cambian de vista en ese mismo orden.
 
+**«‹» vuelve a la pantalla anterior**, como el «atrás» de un navegador: está a la izquierda
+del título de cada vista, y también con **⌘[** (menú Ver → Atrás) o el botón «atrás» del
+ratón. Vuelve a la misma altura de la página y, en la Bandeja, con los filtros que tenía:
+de la Analítica a la Bandeja pulsando una cifra, «‹» te devuelve a la Analítica justo en
+esa tarjeta, y otra vez «‹», a la Bandeja como la dejaste. Recuerda las últimas cincuenta
+pantallas.
+
 Al pulsar una licitación, su **ficha se abre a la derecha** y la lista se estrecha para
 dejarle sitio, con la fila marcada; en una ventana estrecha la ficha flota encima. Escape
 la cierra. La aplicación sigue el modo claro u oscuro de macOS.
@@ -656,12 +663,19 @@ Es una aproximación, y cada bloque dice sobre cuántas renovaciones se calcula.
 
 **Exportar PDF**, en la cabecera de cada ficha, la guarda en un PDF donde elijas: sin la
 barra lateral ni los botones, en claro aunque el Mac esté en oscuro y en páginas A4 sin
-partir las tarjetas.
+partir las tarjetas. Si la ventana de la aplicación es de una versión anterior a la 2.4 y no
+sabe guardar PDF, lo dice en lugar de no hacer nada.
+
+**La copia de Aplicaciones se pone al día sola.** Si usas la app desde Aplicaciones con el
+código del repositorio (ver [Dónde viven tus datos](#dónde-viven-tus-datos)), desde la 2.4.1
+la ventana se rehace y se cambia sola cuando el código avanza, igual que la de la carpeta
+del proyecto. Hasta entonces se quedaba en la versión con la que se copió: con una ventana
+de la 2.3.3 y el código de la 2.4.0, «Exportar PDF» no hacía nada.
 
 Se llega a ellas desde las filas de Organismos y Adjudicatarios, desde «Quién compra» y
 «Quién gana» de la Analítica, desde el órgano y el incumbente de Vencimientos y desde el
 órgano y el adjudicatario de la ficha de cualquier licitación. Todo nombre de una ficha
-lleva a la suya, y **«Volver»** deshace el camino hasta donde estabas, con su posición en
+lleva a la suya, y **«‹»** deshace el camino hasta donde estabas, con su posición en
 la página. Desde una licitación que no casa con tus perfiles, la ficha se abre con toda
 la IT.
 

@@ -114,6 +114,25 @@ class TestEstilos(unittest.TestCase):
         self.assertEqual(sorted(usados - definidos), [])
 
 
+class TestLaVentanaYLaWeb(unittest.TestCase):
+    """Lo que la web pide a la ventana nativa tiene que estar en lo que la ventana declara
+    que sabe hacer. Si no, la web enseña «esta ventana es de una versión anterior» en una
+    ventana que sí es la nueva (o al revés: pide algo que nadie atiende, que es lo que le
+    pasaba a «Exportar PDF» con la ventana de la 2.3.3)."""
+
+    def test_la_ventana_declara_lo_que_la_web_le_pide(self):
+        pedidas = set(re.findall(r"ventanaPuede\('([\w-]+)'\)", JS))
+        m = re.search(r"let capacidades = \[([^\]]+)\]", SWIFT)
+        self.assertIsNotNone(m)
+        declaradas = set(re.findall(r'"([\w-]+)"', m.group(1)))
+        self.assertTrue(pedidas)
+        self.assertLessEqual(pedidas, declaradas)
+
+    def test_el_menu_atras_llama_a_lo_que_exporta_la_web(self):
+        self.assertIn("window.volverAtras && window.volverAtras()", SWIFT)
+        self.assertIn("window.volverAtras = volver;", JS)
+
+
 class TestValoresCompartidos(unittest.TestCase):
     def test_la_franja_de_la_barra_de_titulo_mide_lo_mismo_en_css_y_en_swift(self):
         css = re.search(r"html\.nativa\s*\{\s*--franja:\s*(\d+)px", CSS_SIN_COMENTARIOS)

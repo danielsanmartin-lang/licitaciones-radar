@@ -292,6 +292,13 @@ Qué cubre y qué no (What it covers) and Historial de versiones (Version histor
 bottom, next to the radar's status (last search, how the sources are doing and the
 version). **⌘1…⌘9** switch views in that same order.
 
+**«‹» goes back to the previous screen**, like a browser's back button: it sits to the left
+of each view's title, and also works with **⌘[** (View → Back menu) or a mouse's back
+button. It returns to the same place on the page and, in the Inbox, with the filters it
+had: from Analytics to the Inbox by clicking a figure, «‹» takes you back to Analytics right
+at that card, and «‹» again to the Inbox as you left it. It remembers the last fifty
+screens.
+
 Clicking a tender **opens its record on the right** and the list narrows to make room,
 with the row highlighted; in a narrow window the record floats on top. Escape closes it.
 
@@ -696,12 +703,19 @@ it 58%. It is an approximation, and each block says how many renewals it is base
 
 **Exportar PDF**, in each profile's header, saves it to a PDF wherever you choose: without
 the sidebar or buttons, light even if the Mac is in dark mode, and on A4 pages without
-splitting the cards.
+splitting the cards. If the app's window is from a version before 2.4 and cannot save PDFs,
+it says so instead of doing nothing.
+
+**The copy in Applications updates itself.** If you use the app from Applications with the
+repository's code (see [Where your data lives](#where-your-data-lives)), from 2.4.1 its
+window is rebuilt and swapped automatically when the code moves on, just like the one in
+the project folder. Until then it stayed at the version it was copied at: with a 2.3.3
+window and 2.4.0 code, «Exportar PDF» did nothing.
 
 You reach them from the rows of Organismos and Adjudicatarios, from «Quién compra» and
 «Quién gana» in Analytics, from the body and the incumbent in Vencimientos, and from the
 body and the winner in any tender's detail. Every name in a profile leads to its own,
-and **«Volver»** (Back) retraces your steps to where you were, with your place on the
+and **«‹»** (Back) retraces your steps to where you were, with your place on the
 page. From a tender that does not match your profiles, the profile opens with all of IT.
 
 ### Analítica (Analytics)
