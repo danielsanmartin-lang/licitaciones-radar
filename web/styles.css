@@ -1973,6 +1973,16 @@ progress:not([value]) { opacity: .7; }
 .tabla-escueta tr:last-child td { border-bottom: 0; }
 .tabla-escueta td.num { padding-left: var(--e-3); text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tabla-escueta .apagado { color: var(--texto-sec); }
+/* La de la ficha de competidor: lo suyo al lado de lo del mercado, con cabecera. */
+.tabla-comparada th {
+  padding: 0 0 4px;
+  font-size: var(--txt-xs);
+  font-weight: 600;
+  color: var(--texto-ter);
+  text-align: left;
+  border-bottom: 1px solid var(--borde);
+}
+.tabla-comparada th.num { padding-left: var(--e-3); text-align: right; }
 
 /* --- El tooltip -------------------------------------------------------------- *
  * Uno para toda la pestaña, fijo sobre la ventana. El valor delante y en negrita; la

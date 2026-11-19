@@ -2991,6 +2991,263 @@ function bloqueTarjetas(titulo, pregunta, items, vacio, resto = 0) {
   return el;
 }
 
+// --- Bloques de «quién repite» y de precio, compartidos por las dos fichas ----------
+//
+// Las renovaciones las empareja el servidor (`_sucesiones`): mismo órgano, objeto
+// parecido y publicada al menos tres meses después. Aquí solo se cuentan y se enlazan.
+
+// Las empresas de un lado de la pareja, cada una enlazada a su ficha.
+function empresasEnlazadas(lado, ambito) {
+  const frag = document.createDocumentFragment();
+  lado.empresas.forEach((e, i) => {
+    if (i) frag.appendChild(document.createTextNode(' / '));
+    frag.appendChild(enlaceFicha(e.nombre, 'competidor', e.nombre, ambito));
+  });
+  if (!lado.empresas.length) frag.appendChild(document.createTextNode('sin adjudicar todavía'));
+  return frag;
+}
+
+// Una renovación: el contrato nuevo (que abre su ficha), su fecha y quién lo tenía antes y
+// quién ahora. `conOrgano` en la del competidor, donde cada una es de un órgano distinto.
+function filaSucesion(p, ambito, conOrgano) {
+  const fila = crear('div', 'fila-ficha');
+  fila.appendChild(enlaceTexto(p.siguiente.objeto || '(sin objeto)', p.siguiente.id));
+  fila.appendChild(crear('span', 'cifra', fmtFecha(p.siguiente.fecha)));
+  const det = crear('span', 'detalle');
+  if (conOrgano) {
+    det.appendChild(enlaceFicha(p.organo, 'organismo', p.organo, ambito));
+    det.appendChild(document.createTextNode(' · '));
+  }
+  det.appendChild(document.createTextNode('antes: '));
+  det.appendChild(empresasEnlazadas(p.previo, ambito));
+  det.appendChild(document.createTextNode(' → ahora: '));
+  det.appendChild(empresasEnlazadas(p.siguiente, ambito));
+  fila.appendChild(det);
+  return fila;
+}
+
+function listaSucesiones(el, titulo, pares, ambito, conOrgano, tope = 10) {
+  if (!pares.length) return;
+  el.appendChild(crear('h4', '', titulo));
+  const lista = crear('div', 'lista-ficha');
+  for (const p of pares.slice(0, tope)) lista.appendChild(filaSucesion(p, ambito, conOrgano));
+  el.appendChild(lista);
+  if (pares.length > tope) nota(el, `Y ${pares.length - tope} más.`);
+}
+
+function metodoSucesiones(el) {
+  const m = metodo(el);
+  nota(m, 'La fuente no dice qué contrato renueva a cuál, así que se deduce: el mismo ' +
+          'órgano, publicado al menos tres meses después y con un objeto parecido (palabras ' +
+          'en común). De los candidatos se toma el más parecido, y cada contrato se empareja ' +
+          'una sola vez. Es una aproximación: dos contratos parecidos del mismo órgano no ' +
+          'siempre son el mismo servicio.');
+  return m;
+}
+
+function bloqueRetencion(d, ambito) {
+  const el = bloqueAnalitica('Clientes que retiene y que pierde',
+    '¿Cuando le toca renovar, se queda el contrato?');
+  const r = d.retencion;
+  if (!r.resueltos && !r.ganados_a_otros.length && !r.en_marcha.length) {
+    nota(el, 'Ninguno de sus contratos tiene todavía una renovación identificada en este ámbito.');
+    metodoSucesiones(el);
+    return el;
+  }
+  if (r.resueltos) {
+    titular(el, `${fmtEntero(r.retenidos)} de ${fmtEntero(r.resueltos)}`,
+      r.resueltos === 1 ? 'renovación que se quedó' : 'renovaciones que se quedó');
+  }
+  listaSucesiones(el, 'Los que perdió', r.perdidos, ambito, true);
+  listaSucesiones(el, 'Los que ganó a otro', r.ganados_a_otros, ambito, true);
+  listaSucesiones(el, 'Renovación en marcha', r.en_marcha, ambito, true);
+  metodoSucesiones(el);
+  return el;
+}
+
+// Una tabla de tres columnas con cabecera: lo de la empresa al lado de lo del mercado.
+function tablaComparada(el, cabecera, filas) {
+  const tabla = crear('table', 'tabla-escueta tabla-comparada');
+  const thead = crear('thead');
+  const tr = crear('tr');
+  cabecera.forEach((t, i) => tr.appendChild(crear('th', i ? 'num' : '', t)));
+  thead.appendChild(tr);
+  tabla.appendChild(thead);
+  const cuerpo = crear('tbody');
+  for (const fila of filas) {
+    const f = crear('tr');
+    fila.forEach((t, i) => f.appendChild(crear('td', i ? 'num' : '', t)));
+    cuerpo.appendChild(f);
+  }
+  tabla.appendChild(cuerpo);
+  el.appendChild(tabla);
+  return tabla;
+}
+
+function bloquePrecio(d) {
+  const el = bloqueAnalitica('Precio y tamaño frente al mercado',
+    '¿Compite en precio? ¿En qué tamaño de contrato juega?');
+  const ella = d.precio.empresa;
+  const mercado = d.precio.mercado;
+  const mediana = (x, campo, n, formato) =>
+    (x[n] >= MINIMO_MEDIANA_FICHA && x[campo] !== null) ? formato(x[campo]) : '—';
+  tablaComparada(el, ['', 'Ella', 'Mercado'], [
+    ['Importe mediano',
+     mediana(ella, 'importe_mediano', 'importes', fmtImporteCorto),
+     mediana(mercado, 'importe_mediano', 'importes', fmtImporteCorto)],
+    ['Baja mediana',
+     mediana(ella, 'baja_mediana', 'baja_comparables', (v) => `${fmtDecimal(v)} %`),
+     mediana(mercado, 'baja_mediana', 'baja_comparables', (v) => `${fmtDecimal(v)} %`)],
+  ]);
+  const procs = new Map(mercado.procedimientos.map((x) => [x.procedimiento, [null, x.pct]]));
+  for (const x of ella.procedimientos) {
+    procs.set(x.procedimiento, [x.pct, (procs.get(x.procedimiento) || [])[1] ?? null]);
+  }
+  const filas = [...procs.entries()]
+    .sort((a, b) => (b[1][0] ?? -1) - (a[1][0] ?? -1) || (b[1][1] ?? -1) - (a[1][1] ?? -1))
+    .map(([nombre, [suyo, total]]) =>
+      [nombre, suyo === null ? '—' : `${suyo} %`, total === null ? '—' : `${total} %`]);
+  if (filas.length) {
+    el.appendChild(crear('h4', '', 'Por qué procedimiento gana'));
+    tablaComparada(el, ['', 'Ella', 'Mercado'], filas);
+  }
+  const m = metodo(el);
+  nota(m, `El mercado es lo adjudicado en el mismo ámbito (${fmtEntero(mercado.expedientes)} ` +
+          `expedientes). Las medianas necesitan al menos ${MINIMO_MEDIANA_FICHA} casos; con ` +
+          `menos sale «—». Una baja más alta que la del mercado es que entra más barato.`);
+  return el;
+}
+
+function bloqueRivales(d, ambito) {
+  const el = bloqueAnalitica('Rivales y socios',
+    '¿Quién más gana en sus clientes, y con quién va en UTE?');
+  const { rivales, socios } = d.rivales;
+  if (!rivales.length) {
+    nota(el, 'Nadie más gana en sus organismos dentro de este ámbito.');
+  } else {
+    const tope = Math.max(1, ...rivales.map((x) => x.organismos));
+    for (const x of rivales) {
+      el.appendChild(filaBarra(x.empresa, 100 * x.organismos / tope,
+        `${fmtEntero(x.organismos)} en común · ${fmtEntero(x.expedientes)} contratos`,
+        { apilada: true, alPulsar: () => abrirFicha('competidor', x.empresa, ambito) }));
+    }
+  }
+  if (socios.length) {
+    el.appendChild(crear('h4', '', 'UTE en las que aparece'));
+    const lista = crear('div', 'lista-ficha');
+    for (const x of socios) {
+      const fila = crear('div', 'fila-ficha');
+      fila.appendChild(enlaceFicha(x.empresa, 'competidor', x.empresa, ambito));
+      fila.appendChild(crear('span', 'cifra', `${fmtEntero(x.expedientes)} contratos`));
+      lista.appendChild(fila);
+    }
+    el.appendChild(lista);
+  }
+  const m = metodo(el);
+  nota(m, '«En común» son los organismos donde las dos han ganado algo en este ámbito. Las ' +
+          'UTE son las adjudicatarias cuyo nombre la incluye y dice UTE o unión temporal.');
+  return el;
+}
+
+function bloqueDondeTeGano(d, ambito) {
+  const el = bloqueAnalitica('Dónde te ha ganado',
+    '¿Qué te ha quitado de lo que presentaste?');
+  const t = d.donde_te_gano;
+  if (!t.presentadas_adjudicadas && !t.incumbente_atado.length) {
+    nota(el, 'Nada de lo que has marcado como «Presentada» está adjudicado todavía, y no has ' +
+             'descartado nada por «incumbente atado» en sus organismos.');
+    return el;
+  }
+  if (t.presentadas_adjudicadas) {
+    titular(el, `${fmtEntero(t.ganadas_por_ella)} de ${fmtEntero(t.presentadas_adjudicadas)}`,
+      'de lo que presentaste y ya está adjudicado');
+  }
+  const fila = (x) => {
+    const f = crear('div', 'fila-ficha');
+    f.appendChild(enlaceTexto(x.objeto || '(sin objeto)', x.id));
+    f.appendChild(crear('span', 'cifra', fmtFecha(x.fecha)));
+    const det = crear('span', 'detalle');
+    det.appendChild(enlaceFicha(x.organo || '(sin órgano)', 'organismo', x.organo, ambito));
+    f.appendChild(det);
+    return f;
+  };
+  for (const [titulo, items] of [['Se las llevó ella', t.le_gano],
+    ['Descartaste por «incumbente atado» donde ya tenía contrato', t.incumbente_atado]]) {
+    if (!items.length) continue;
+    el.appendChild(crear('h4', '', titulo));
+    const lista = crear('div', 'lista-ficha');
+    items.slice(0, 10).forEach((x) => lista.appendChild(fila(x)));
+    el.appendChild(lista);
+  }
+  const m = metodo(el);
+  nota(m, 'Sale de tu triaje, en cualquier ámbito. Lo de «incumbente atado» es aproximado: ' +
+          'que tuviera un contrato anterior en ese organismo no prueba que fuera el de ese pliego.');
+  return el;
+}
+
+function bloqueProveedor(d, ambito) {
+  const el = bloqueAnalitica('¿Cambia de proveedor?',
+    '¿Cuando renueva un contrato, repite con la misma empresa?');
+  const p = d.proveedor;
+  if (!p.resueltos && !p.en_marcha.length) {
+    nota(el, 'Todavía no hay ninguna renovación identificada de sus contratos en este ámbito.');
+    metodoSucesiones(el);
+    return el;
+  }
+  if (p.resueltos) {
+    titular(el, `${fmtEntero(p.repite)} de ${fmtEntero(p.resueltos)}`,
+      p.resueltos === 1 ? 'renovación con la misma empresa' : 'renovaciones con la misma empresa');
+  }
+  listaSucesiones(el, 'Sus renovaciones', p.parejas, ambito, false);
+  listaSucesiones(el, 'Renovación en marcha', p.en_marcha, ambito, false);
+  metodoSucesiones(el);
+  return el;
+}
+
+function bloqueComoCompra(d, ambito) {
+  const el = bloqueAnalitica('Cómo compra',
+    '¿Por qué procedimiento, cuánto duran sus contratos y cuánto tarda en decidir?');
+  const c = d.como_compra;
+  const filas = [];
+  if (c.duraciones >= MINIMO_MEDIANA_FICHA) {
+    filas.push(['Duración de sus contratos', `${fmtEntero(c.duracion_mediana)} meses`]);
+  }
+  if (c.recorridos >= MINIMO_MEDIANA_FICHA) {
+    filas.push(['De la publicación a la adjudicación', `${fmtEntero(c.dias_adjudicar)} días`]);
+  }
+  if (c.lotes_sabidos) {
+    filas.push(['Divide en lotes', `${fmtEntero(c.con_lotes)} de ${fmtEntero(c.lotes_sabidos)}`]);
+  }
+  if (filas.length) tablaEscueta(el, filas);
+  if (c.procedimientos.length) {
+    el.appendChild(crear('h4', '', 'Procedimiento'));
+    const tope = Math.max(1, ...c.procedimientos.map((x) => x.expedientes));
+    for (const x of c.procedimientos) {
+      el.appendChild(filaBarra(x.procedimiento, 100 * x.expedientes / tope,
+        `${fmtEntero(x.expedientes)} · ${x.pct} %`, { apilada: true }));
+    }
+  }
+  el.appendChild(crear('h4', '', 'Consultas previas abiertas'));
+  if (!c.consultas_abiertas.length) {
+    nota(el, 'Ninguna ahora mismo.');
+  } else {
+    const lista = crear('div', 'lista-ficha');
+    for (const x of c.consultas_abiertas) {
+      const f = crear('div', 'fila-ficha');
+      f.appendChild(enlaceTexto(x.objeto || '(sin objeto)', x.id));
+      f.appendChild(crear('span', 'cifra', fmtFecha(x.fecha)));
+      lista.appendChild(f);
+    }
+    el.appendChild(lista);
+    nota(el, 'Es el aviso más temprano de un pliego: el órgano preguntando al mercado antes de escribirlo.');
+  }
+  const m = metodo(el);
+  nota(m, `Las medianas necesitan al menos ${MINIMO_MEDIANA_FICHA} expedientes. Los días hasta ` +
+          'adjudicar se miden como en la Analítica, sobre el cambio de estado publicado. Los ' +
+          'lotes, sobre lo que viene de PLACSP o de Cataluña: TED no lo dice.');
+  return el;
+}
+
 function pintarFichaOrganismo(cont, d, ambito) {
   $('vista-sub').textContent = [
     d.nifs.length ? `NIF ${d.nifs.join(', ')}` : '',
@@ -3038,6 +3295,7 @@ function pintarFichaOrganismo(cont, d, ambito) {
 
   parejas(cont, [
     [meses, gana],
+    [bloqueProveedor(d, ambito), bloqueComoCompra(d, ambito)],
     [bloqueVencen(d, ambito, '¿Qué contratos suyos se acaban y quién los tiene ahora?')],
   ]);
   cont.appendChild(bloqueTarjetas('Qué tiene abierto', '¿Qué se le puede presentar hoy?',
@@ -3115,6 +3373,8 @@ function pintarFichaCompetidor(cont, d, ambito) {
     [anios, donde],
     [clientes, bloqueVencen(d, ambito,
       '¿Qué contratos suyos se acaban? Es la ocasión de quitárselos.', true)],
+    [bloqueRetencion(d, ambito), bloqueRivales(d, ambito)],
+    [bloquePrecio(d), bloqueDondeTeGano(d, ambito)],
     [contratos],
   ]);
 }
@@ -5048,6 +5308,56 @@ function pintarCuota(d) {
   return el;
 }
 
+// ¿Se puede desbancar al incumbente? Con las mismas parejas contrato → renovación que las
+// fichas (`_sucesiones` en el servidor).
+function pintarIncumbentes(d) {
+  const el = bloqueAnalitica('¿Se puede desbancar al incumbente?',
+    '¿Cuando un contrato se renueva, se lo queda la misma empresa?', 'incumbentes');
+  if (!d.renovaciones) {
+    nota(el, 'Todavía no hay ninguna renovación identificada en este ámbito y periodo.');
+    metodoSucesiones(el);
+    return el;
+  }
+  if (d.suficiente) {
+    const pct = Math.round(100 * d.repite / d.renovaciones);
+    titular(el, `${pct} %`, `de ${fmtEntero(d.renovaciones)} renovaciones se las quedó el mismo`);
+    el.appendChild(barraApilada([
+      { nombre: 'Repite el incumbente', valor: d.repite, clase: 'serie-1' },
+      { nombre: 'Cambia de empresa', valor: d.renovaciones - d.repite, clase: 'serie-gris' },
+    ]));
+  } else {
+    nota(el, `Solo hay ${fmtEntero(d.renovaciones)} renovaciones identificadas, ${fmtEntero(d.repite)} ` +
+             `con la misma empresa; hacen falta ${d.minimo} para dar un porcentaje.`);
+  }
+  if (d.incumbentes.length) {
+    el.appendChild(crear('h4', '', 'Los incumbentes, y cuántas renovaciones retuvieron'));
+    const tope = Math.max(1, ...d.incumbentes.map((x) => x.contratos));
+    for (const x of d.incumbentes) {
+      el.appendChild(filaBarra(x.empresa, 100 * x.retenidos / tope,
+        `${fmtEntero(x.retenidos)} de ${fmtEntero(x.contratos)}`,
+        { apilada: true,
+          alPulsar: () => abrirFicha('competidor', x.empresa, ambitoAnalitica) }));
+    }
+  }
+  if (d.organos_que_cambian.length) {
+    el.appendChild(crear('h4', '', 'Los organismos que más cambian'));
+    const tope = Math.max(1, ...d.organos_que_cambian.map((x) => x.renovaciones));
+    for (const x of d.organos_que_cambian) {
+      el.appendChild(filaBarra(x.organo, 100 * x.cambios / tope,
+        `${fmtEntero(x.cambios)} de ${fmtEntero(x.renovaciones)}`,
+        { apilada: true,
+          alPulsar: () => abrirFicha('organismo', x.organo, ambitoAnalitica) }));
+    }
+  }
+  if (d.en_marcha) {
+    nota(el, `${fmtEntero(d.en_marcha)} ${d.en_marcha === 1 ? 'renovación publicada sigue' : 'renovaciones publicadas siguen'} sin adjudicar.`);
+  }
+  const m = metodoSucesiones(el);
+  nota(m, 'El periodo se aplica a la renovación: cuándo se publicó la segunda, que es cuando ' +
+          'se decidió si el incumbente seguía.');
+  return el;
+}
+
 function pintarConsultas(d) {
   const el = bloqueAnalitica('De consulta previa a pliego',
     '¿Cuánto margen da una consulta preliminar de mercado antes de que salga la licitación?',
@@ -5401,7 +5711,7 @@ async function cargarAnalitica() {
     [pintarEstacionalidad(d.estacionalidad)],
     [pintarCuota(d.cuota)],
     [pintarCpv(d.cpv), pintarProcedimiento(d.procedimiento)],
-    [pintarConsultas(d.consultas)],
+    [pintarConsultas(d.consultas), pintarIncumbentes(d.incumbentes)],
     // La cartera, con tu triaje y tus puntuaciones, solo existe para tus perfiles: con
     // una temática el servidor la manda vacía y las renovaciones se quedan solas.
     d.cartera ? [pintarRenovaciones(d.renovaciones, g.mercado), pintarCartera(d.cartera)]
