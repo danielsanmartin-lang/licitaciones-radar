@@ -335,8 +335,38 @@
                 </select>
                 <label class="check"><input type="checkbox" id="vivas" checked> Solo abiertas</label>
                 <label class="check"><input type="checkbox" id="con-plazo"> Ocultar sin plazo</label>
+                <button id="mas-filtros-boton" class="boton-sec" aria-expanded="false"
+                        aria-controls="mas-filtros">Más filtros</button>
                 <button id="limpiar-abrir" class="boton-sec">Limpiar sin revisar…</button>
                 <a id="exportar" class="boton-sec" href="/api/export.csv" download>Exportar CSV</a>
+                <!-- «Más filtros»: una segunda fila que se despliega con el botón. Organismo y
+                     empresa buscan el texto dentro del nombre (con sugerencias); las fechas son
+                     las de la PRIMERA publicación del expediente. Las opciones las pide
+                     `cargarOpcionesBandeja()` al abrirla. -->
+                <div id="mas-filtros" class="mas-filtros" hidden>
+                  <input type="search" id="f-organo" list="f-organos" placeholder="Organismo"
+                         autocomplete="off" aria-label="Organismo">
+                  <datalist id="f-organos"></datalist>
+                  <input type="search" id="f-empresa" list="f-empresas" placeholder="Empresa adjudicataria"
+                         autocomplete="off" aria-label="Empresa adjudicataria">
+                  <datalist id="f-empresas"></datalist>
+                  <select id="f-cpv" aria-label="CPV"><option value="">Cualquier CPV</option></select>
+                  <select id="f-procedimiento" aria-label="Procedimiento">
+                    <option value="">Cualquier procedimiento</option>
+                  </select>
+                  <select id="f-importe-max" aria-label="Importe máximo">
+                    <option value="">Sin importe máximo</option>
+                    <option value="25000">Hasta 25.000 €</option>
+                    <option value="50000">Hasta 50.000 €</option>
+                    <option value="100000">Hasta 100.000 €</option>
+                    <option value="300000">Hasta 300.000 €</option>
+                    <option value="1000000">Hasta 1.000.000 €</option>
+                  </select>
+                  <select id="f-fuente" aria-label="Fuente"><option value="">Todas las fuentes</option></select>
+                  <label class="fecha">Publicada desde <input type="date" id="f-desde"></label>
+                  <label class="fecha">hasta <input type="date" id="f-hasta"></label>
+                  <button id="mas-filtros-quitar" class="quitar-filtros">Quitar estos filtros</button>
+                </div>
               </div>
               <!-- «Limpiar sin revisar…»: pasa a «vista» lo que no se va a mirar una a una.
                    Las tres opciones llevan su cifra y se aplican al pulsarlas; para eso está

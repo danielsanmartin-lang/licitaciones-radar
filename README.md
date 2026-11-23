@@ -410,6 +410,26 @@ the filters, and then what is past its deadline shows too.
 **«Ocultar sin plazo»** (Hide without deadline) removes from the list what does not
 publish a deadline. It combines with any counter and is remembered next time.
 
+**«Más filtros»** (More filters) unfolds a second row with seven more, for when the
+question is not «what is there» but «what is there from…»:
+
+- **Contracting body** and **winning company**, with suggestions as you type. They look
+  for the text *inside* the name, ignoring accents and case: «diputación foral» brings
+  every signatory, and a company brings all its legal names and also the lots it won
+  together with others.
+- **CPV** (a division, such as «72 · servicios de TI», or one of your product codes),
+  **procedure** (in Spanish: «Abierto» includes the Catalan «Obert»), **maximum amount**
+  and **source**. Each option shows how many Inbox procurement files it has, which is
+  exactly what you get when you pick it.
+- **Published from / to**: the date of the procurement file's *first* publication, the
+  one on the «publicada» pill. A 2024 tender awarded this year is still a 2024 one.
+
+The button says how many are set («Más filtros · 2») and the row stays open while any
+is. They show up in «Filtrando por», in the CSV and in «‹» (Back). The figures in «Qué
+tengo de verdad hoy» clear them so the number matches. What a company has won is already
+awarded, so with «Solo abiertas» (Only open) ticked it does not show: the list says so
+and offers to untick it.
+
 **«Limpiar sin revisar…»** (Clear not reviewed) is for when hundreds of «sin revisar»
 pile up that nobody is going to look at one by one. It offers three options, each with
 its figure: those **past their deadline**, those **without a date**, or **all**. The

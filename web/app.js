@@ -111,8 +111,108 @@ function filtros() {
     cierran_en_dias: cierranEnDias,
     sin_vencidas: sinVencidas,
     con_plazo: $('con-plazo').checked ? '1' : '',
+    ...valoresMasFiltros(),
     ...(filtroAnalitica ? filtroAnalitica.params : {}),
   };
+}
+
+// --- «Más filtros» -----------------------------------------------------------------
+//
+// Organismo, empresa, CPV, procedimiento, importe máximo, fuente y fechas, en una segunda
+// fila que se despliega. [parámetro de /api/bandeja, id del control]. Organismo y empresa
+// buscan el texto DENTRO del nombre, sin tildes ni mayúsculas, así que «diputación foral»
+// trae a todos sus firmantes; las fechas son las de la primera publicación del expediente.
+const MAS_FILTROS = [
+  ['organo', 'f-organo'], ['empresa', 'f-empresa'], ['cpv', 'f-cpv'],
+  ['procedimiento', 'f-procedimiento'], ['importe_max', 'f-importe-max'],
+  ['fuente', 'f-fuente'], ['publicada_desde', 'f-desde'], ['publicada_hasta', 'f-hasta'],
+];
+
+function valoresMasFiltros() {
+  const v = {};
+  for (const [param, id] of MAS_FILTROS) v[param] = $(id).value.trim();
+  return v;
+}
+
+function ponerMasFiltros(valores = {}) {
+  for (const [param, id] of MAS_FILTROS) $(id).value = valores[param] || '';
+  pintarBotonMasFiltros();
+}
+
+// Cuántos hay puestos. Las dos fechas son un solo filtro.
+function cuantosMasFiltros() {
+  const v = valoresMasFiltros();
+  const sueltos = ['organo', 'empresa', 'cpv', 'procedimiento', 'importe_max', 'fuente']
+    .filter((k) => v[k]).length;
+  return sueltos + (v.publicada_desde || v.publicada_hasta ? 1 : 0);
+}
+
+// «Más filtros · 2». Con alguno puesto, la fila se enseña: un filtro que actúa sin verse
+// es justo lo que «Filtrando por» existe para evitar.
+function pintarBotonMasFiltros() {
+  const n = cuantosMasFiltros();
+  const b = $('mas-filtros-boton');
+  b.textContent = n ? `Más filtros · ${n}` : 'Más filtros';
+  b.classList.toggle('activo', n > 0);
+  if (n) abrirMasFiltros(true);
+}
+
+function abrirMasFiltros(abrir) {
+  const fila = $('mas-filtros');
+  if (fila.hidden === !abrir) return;
+  fila.hidden = !abrir;
+  $('mas-filtros-boton').setAttribute('aria-expanded', abrir ? 'true' : 'false');
+  if (abrir) cargarOpcionesBandeja();
+}
+
+// Lo que ofrecen los desplegables, de lo que hay ahora en la Bandeja. Se pide cada vez
+// que se abre la fila: el servidor lo guarda hasta que la base cambia, así que después
+// de una búsqueda trae lo nuevo y si no, no cuesta nada.
+async function cargarOpcionesBandeja() {
+  let d;
+  try {
+    d = await pedirJSON('/api/bandeja/opciones');
+  } catch {
+    return;
+  }
+  if (!d || d.error) return;
+  const conCifra = (lista) => lista.map((o) => [o.valor, `${o.nombre} (${fmtEntero(o.expedientes)})`]);
+  llenarSelect($('f-cpv'), conCifra(d.cpv));
+  llenarSelect($('f-procedimiento'), conCifra(d.procedimientos));
+  llenarSelect($('f-fuente'), conCifra(d.fuentes));
+  // Las sugerencias van sin cifra: el filtro busca dentro del nombre y puede traer más
+  // (los lotes que una empresa ganó junto a otras), así que un número aquí no cuadraría.
+  for (const [id, lista] of [['f-organos', d.organos], ['f-empresas', d.empresas]]) {
+    const dl = $(id);
+    dl.textContent = '';
+    for (const o of lista) dl.appendChild(new Option(o.nombre));
+  }
+}
+
+// El texto de una opción elegida, sin su cifra: «72 · servicios de TI».
+function textoOpcion(id) {
+  const sel = $(id);
+  const op = sel.options[sel.selectedIndex];
+  return op ? op.text.replace(/\s\(\d[\d.]*\)$/, '') : sel.value;
+}
+
+function describirMasFiltros() {
+  const v = valoresMasFiltros();
+  const partes = [];
+  if (v.organo) partes.push(`organismo «${v.organo}»`);
+  if (v.empresa) partes.push(`empresa «${v.empresa}»`);
+  if (v.cpv) partes.push(`CPV ${textoOpcion('f-cpv')}`);
+  if (v.procedimiento) partes.push(`procedimiento ${v.procedimiento.toLowerCase()}`);
+  if (v.importe_max) partes.push(`hasta ${eur.format(Number(v.importe_max))}`);
+  if (v.fuente) partes.push(`fuente ${textoOpcion('f-fuente')}`);
+  if (v.publicada_desde && v.publicada_hasta) {
+    partes.push(`publicadas del ${fmtFecha(v.publicada_desde)} al ${fmtFecha(v.publicada_hasta)}`);
+  } else if (v.publicada_desde) {
+    partes.push(`publicadas desde el ${fmtFecha(v.publicada_desde)}`);
+  } else if (v.publicada_hasta) {
+    partes.push(`publicadas hasta el ${fmtFecha(v.publicada_hasta)}`);
+  }
+  return partes;
 }
 
 function aplicarKpi(clave) {
@@ -144,6 +244,7 @@ function limpiarFiltros() {
   $('ccaa').value = '';
   $('importe_min').value = '';
   $('vivas').checked = false;
+  ponerMasFiltros();
   for (const b of $('kpis').querySelectorAll('button.kpi')) b.classList.remove('activo');
   cargarLista();
 }
@@ -167,6 +268,7 @@ function describirFiltros() {
   }
   if (soloNovedades) partes.push('solo novedades');
   if ($('q').value.trim()) partes.push(`texto “${$('q').value.trim()}”`);
+  partes.push(...describirMasFiltros());
   return partes;
 }
 
@@ -759,6 +861,18 @@ async function cargarLista(reset = true) {
     $('vacio').textContent = activos.length
       ? 'Nada con estos filtros.'
       : 'Sin coincidencias todavía. En «Términos de búsqueda» puedes forzar una búsqueda.';
+    // Lo que gana una empresa ya no está en plazo: con «Solo abiertas» no sale nunca.
+    // Se dice y se ofrece, pero no se desmarca solo.
+    if ($('f-empresa').value.trim() && $('vivas').checked) {
+      $('vacio').textContent = 'Lo que ha ganado una empresa ya está adjudicado, así que con ' +
+        '«Solo abiertas» no sale. ';
+      const b = crear('button', 'quitar-filtros', 'Quitar «Solo abiertas»');
+      b.addEventListener('click', () => {
+        $('vivas').checked = false;
+        $('vivas').dispatchEvent(new Event('change'));
+      });
+      $('vacio').appendChild(b);
+    }
   }
   offset += d.items.length;
   $('mas').hidden = offset >= d.total;
@@ -3918,7 +4032,7 @@ function estadoBandeja() {
     kpiActivo, cierranEnDias, sinVencidas, soloNovedades, filtroAnalitica,
     q: $('q').value, perfil: $('perfil').value, estado: $('estado').value,
     ccaa: $('ccaa').value, importe_min: $('importe_min').value, orden: $('orden').value,
-    vivas: $('vivas').checked, conPlazo: $('con-plazo').checked,
+    vivas: $('vivas').checked, conPlazo: $('con-plazo').checked, mas: valoresMasFiltros(),
   };
 }
 
@@ -3932,6 +4046,7 @@ function restaurarBandeja(e) {
   $('orden').value = e.orden;
   $('vivas').checked = e.vivas;
   if ($('con-plazo').checked !== e.conPlazo) ponerConPlazo(e.conPlazo);
+  ponerMasFiltros(e.mas);
   $('tab-novedades').classList.toggle('activo', soloNovedades);
   for (const b of $('kpis').querySelectorAll('button.kpi')) {
     b.classList.toggle('activo', b.dataset.kpi === kpiActivo);
@@ -4504,6 +4619,32 @@ for (const id of ['perfil', 'estado', 'ccaa', 'importe_min', 'orden', 'vivas']) 
     cargarLista();
   });
 }
+// «Más filtros»: como los de la barra, tocarlos apaga el contador de la cabecera. Los dos
+// de texto esperan a que se deje de escribir, como la búsqueda.
+function alCambiarMasFiltros() {
+  kpiActivo = null;
+  cierranEnDias = '';
+  sinVencidas = '';
+  for (const b of $('kpis').querySelectorAll('button.kpi')) b.classList.remove('activo');
+  pintarBotonMasFiltros();
+  cargarLista();
+}
+let debounceMasFiltros;
+for (const [param, id] of MAS_FILTROS) {
+  if (param === 'organo' || param === 'empresa') {
+    $(id).addEventListener('input', () => {
+      clearTimeout(debounceMasFiltros);
+      debounceMasFiltros = setTimeout(alCambiarMasFiltros, 300);
+    });
+  } else {
+    $(id).addEventListener('change', alCambiarMasFiltros);
+  }
+}
+$('mas-filtros-boton').addEventListener('click', () => abrirMasFiltros($('mas-filtros').hidden));
+$('mas-filtros-quitar').addEventListener('click', () => {
+  ponerMasFiltros();
+  alCambiarMasFiltros();
+});
 // No quita el contador activo: ocultar lo que no tiene plazo se suma a cualquiera de ellos.
 $('con-plazo').addEventListener('change', () => {
   ponerConPlazo($('con-plazo').checked);
@@ -5869,6 +6010,7 @@ function irDesdeCartera(etiqueta, params, { vivas = false, orden = null } = {}) 
   $('estado').value = '';
   $('ccaa').value = '';
   $('importe_min').value = '';
+  ponerMasFiltros();
   const perfil = ambitoAnalitica.startsWith('perfil:') ? ambitoAnalitica.slice(7) : '';
   $('perfil').value = [...$('perfil').options].some((o) => o.value === perfil) ? perfil : '';
   $('vivas').checked = vivas;

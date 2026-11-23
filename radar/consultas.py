@@ -6,6 +6,7 @@ Se aísla del servidor para poder probarlas sin levantar HTTP.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -193,8 +194,17 @@ def _condiciones(
     puntuacion_min: float | None = None,
     cerradas: bool = False,
     fase: str | None = None,
+    organo: str | None = None,
+    empresa: str | None = None,
+    cpv: str | None = None,
+    procedimiento: str | None = None,
+    publicada_desde: str | None = None,
+    publicada_hasta: str | None = None,
+    importe_max: float | None = None,
 ) -> tuple[list[str], list]:
     """Construye el WHERE de la bandeja. Lo comparten la lista y los contadores.
+
+    Los siete últimos son los de «Más filtros» (ver `_condiciones_mas_filtros`).
 
     Los cuatro últimos son los de «Qué tengo de verdad hoy» (Analítica): cada cifra y
     cada tramo de su barra llevan a la bandeja con exactamente esas fichas, y para que
@@ -290,7 +300,206 @@ def _condiciones(
                 f"  {entrada}) WHERE rn = 1 AND {cond})")
             params.extend(p_entrada + p_fase)
 
+    _condiciones_mas_filtros(
+        con, where, params, organo=organo, empresa=empresa, cpv=cpv,
+        procedimiento=procedimiento, publicada_desde=publicada_desde,
+        publicada_hasta=publicada_hasta, importe_max=importe_max)
     return where, params
+
+
+# --- «Más filtros» de la Bandeja ----------------------------------------------------
+#
+# Organismo, empresa, CPV, procedimiento, fechas, importe máximo y fuente. Lo que entra en
+# la Bandeja es poco —en la base real, 548 anuncios con 255 órganos y 283 empresas—, así
+# que los nombres se resuelven en Python sobre los que hay y viajan a SQLite como una
+# lista JSON (`json_each`): una sola variable, sin el tope de 999 de los SQLite viejos.
+
+# El nombre de cada fuente en el desplegable. Las que no están aquí salen con su clave.
+FUENTES_BANDEJA = {
+    "placsp:licitaciones": "Plataforma del Estado",
+    "placsp:agregadas": "Plataformas autonómicas",
+    "placsp:consultas_previas": "Consultas previas",
+    "placsp:menores": "Contratos menores",
+    "ted": "TED (Unión Europea)",
+    "catalunya": "Cataluña",
+}
+
+
+def _valores_de_la_bandeja(con, columna: str) -> list[str]:
+    """Los valores distintos de una columna entre lo que puede salir en la Bandeja."""
+    return [f[0] for f in con.execute(
+        f"SELECT DISTINCT l.{columna} FROM licitaciones l"
+        f" WHERE {_ENTRADA_BANDEJA} AND l.{columna} IS NOT NULL")]
+
+
+def _organos_que_casan(con, texto: str) -> list[str]:
+    """Los órganos cuyo nombre contiene el texto, sin mirar tildes ni mayúsculas: con
+    «diputación foral de bizkaia» salen todos sus firmantes."""
+    buscado = _normalizar_busqueda(texto)
+    return [o for o in _valores_de_la_bandeja(con, "organo")
+            if buscado in _normalizar_busqueda(o)]
+
+
+def _empresas_que_casan(con, texto: str) -> list[str]:
+    """Las razones sociales de una empresa: las que contienen el texto, o cuya razón
+    social normalizada (`normalizar_empresa`, la de las fichas y el ranking) contiene la
+    de lo escrito. «S2 Grupo» trae sus tres variantes."""
+    buscado = _normalizar_busqueda(texto)
+    clave = normalizar_empresa(texto)
+    salida = []
+    for nombre in _valores_de_la_bandeja(con, "adjudicatario"):
+        if buscado in _normalizar_busqueda(nombre):
+            salida.append(nombre)
+        elif clave and clave in (normalizar_empresa(nombre) or ""):
+            salida.append(nombre)
+    return salida
+
+
+def _procedimientos_crudos(con, nombre: str) -> list[str]:
+    """Los valores tal como los publica la fuente que se pintan como `nombre`:
+    «Abierto» trae también «Obert»."""
+    return [p for p in _valores_de_la_bandeja(con, "procedimiento")
+            if _nombre_procedimiento(p) == nombre]
+
+
+def _en_lista(where: list, params: list, columna: str, valores: list) -> None:
+    if not valores:
+        # Nada casa con lo escrito: lista vacía, que es la respuesta, y no un error.
+        where.append("1=0")
+        return
+    where.append(f"{columna} IN (SELECT value FROM json_each(?))")
+    params.append(json.dumps(valores, ensure_ascii=False))
+
+
+def _es_dia(valor: str) -> bool:
+    try:
+        return len(valor) == 10 and date.fromisoformat(valor) is not None
+    except ValueError:
+        return False
+
+
+def _condiciones_mas_filtros(con, where: list, params: list, *, organo, empresa, cpv,
+                             procedimiento, publicada_desde, publicada_hasta,
+                             importe_max) -> None:
+    """Añade a `where` los de «Más filtros». Todos van por anuncio, como los de siempre,
+    salvo las fechas, que van por expediente: «publicada» es la PRIMERA publicación, la de
+    la píldora de la tarjeta y la de la Analítica, y la adjudicación de un pliego de 2024
+    publicada este año no lo convierte en uno de este año."""
+    if organo and organo.strip():
+        _en_lista(where, params, "l.organo", _organos_que_casan(con, organo))
+    if empresa and empresa.strip():
+        _en_lista(where, params, "l.adjudicatario", _empresas_que_casan(con, empresa))
+    if cpv:
+        if not (cpv.isdigit() and len(cpv) in (2, 8)):
+            raise ValueError("el CPV tiene que ser una división (2 cifras) o un código (8)")
+        # Con un espacio delante de cada código, para que «72» no case con «172…».
+        where.append("(' ' || COALESCE(l.cpv, '')) LIKE ?")
+        params.append(f"% {cpv}%")
+    if procedimiento:
+        _en_lista(where, params, "l.procedimiento", _procedimientos_crudos(con, procedimiento))
+    if importe_max is not None:
+        where.append("l.importe_referencia <= ?")
+        params.append(float(importe_max))
+    for valor, nombre in ((publicada_desde, "publicada_desde"),
+                          (publicada_hasta, "publicada_hasta")):
+        if valor and not _es_dia(valor):
+            raise ValueError(f"{nombre} tiene que ser 'AAAA-MM-DD'")
+    if publicada_desde or publicada_hasta:
+        having, p_having = [], []
+        if publicada_desde:
+            having.append("MIN(substr(l.fecha_publicacion, 1, 10)) >= ?")
+            p_having.append(publicada_desde)
+        if publicada_hasta:
+            having.append("MIN(substr(l.fecha_publicacion, 1, 10)) <= ?")
+            p_having.append(publicada_hasta)
+        where.append(
+            f"{_GRUPO} IN (SELECT {_GRUPO} FROM licitaciones l WHERE {_ENTRADA_BANDEJA}"
+            f" GROUP BY {_GRUPO} HAVING {' AND '.join(having)})")
+        params.extend(p_having)
+
+
+# Cómo junta la fuente a varias adjudicatarias en un solo campo (lotes, o un acuerdo
+# marco con varias empresas). Para las sugerencias se separan; el filtro las encuentra
+# igual, porque busca dentro del nombre.
+_SEPARADORES_EMPRESAS = re.compile(r"\s*(?:\|\||\s·\s)\s*")
+
+
+def opciones_bandeja(con: sqlite3.Connection) -> dict:
+    """Lo que ofrecen los desplegables y las sugerencias de «Más filtros», cada cosa con
+    cuántos expedientes de la Bandeja tiene (sin lo descartado, que no se ve si no se
+    pide).
+
+    En CPV, procedimiento y fuente ese número es exactamente el que da la lista al
+    elegirlo. En órganos y empresas solo ordena las sugerencias: el filtro busca el texto
+    DENTRO del nombre, así que «Telefónica Soluciones» trae también los lotes que ganó
+    junto a otras («A · B · Telefónica…»), y eso es más de lo que se cuenta aquí. Por eso
+    se juntan las variantes —mayúsculas en los órganos, razones sociales en las empresas,
+    como en el ranking— y la pantalla no pinta el número de esas dos.
+    """
+    clave = (_firma_de_la_base(con), "opciones-bandeja")
+    if clave in _MEMO_FICHAS:
+        return _MEMO_FICHAS[clave]
+
+    filas = con.execute(
+        f"""SELECT {_GRUPO} AS g, l.organo, l.adjudicatario, l.procedimiento, l.cpv, l.fuente
+              FROM licitaciones l LEFT JOIN revisiones r ON r.licitacion_id = l.id
+             WHERE {_ENTRADA_BANDEJA} AND COALESCE(r.estado, 'nuevo') != 'descartado'"""
+    ).fetchall()
+
+    def agrupar(claves_de):
+        """{clave: {"g": expedientes, "nombres": {variante: expedientes}}}."""
+        grupos: dict = {}
+        for f in filas:
+            for clave_, nombre in claves_de(f):
+                if not clave_:
+                    continue
+                d = grupos.setdefault(clave_, {"g": set(), "nombres": {}})
+                d["g"].add(f["g"])
+                d["nombres"].setdefault(nombre, set()).add(f["g"])
+        return grupos
+
+    def lista(grupos, elegir=lambda nombres: max(nombres, key=lambda n: (len(nombres[n]), n))):
+        salida = []
+        for d in grupos.values():
+            nombre = elegir(d["nombres"])
+            salida.append({"valor": nombre, "nombre": nombre, "expedientes": len(d["g"])})
+        return sorted(salida, key=lambda x: (-x["expedientes"], x["nombre"]))
+
+    normalizadas: dict = {}
+
+    def empresas_de(f):
+        for parte in _SEPARADORES_EMPRESAS.split(f["adjudicatario"] or ""):
+            parte = parte.strip()
+            if parte not in normalizadas:
+                normalizadas[parte] = normalizar_empresa(parte) if parte else None
+            yield normalizadas[parte], parte
+
+    def codigos(f):
+        return set((f["cpv"] or "").split())
+
+    def con_nombre(grupos, nombre):
+        return [{"valor": c, "nombre": nombre(c), "expedientes": len(d["g"])}
+                for c, d in sorted(grupos.items(), key=lambda x: (-len(x[1]["g"]), x[0]))]
+
+    divisiones = agrupar(lambda f: [(d, d) for d in _divisiones_cpv(codigos(f))])
+    del_producto = agrupar(lambda f: [(c, c) for c in _codigos_cpv(codigos(f))
+                                      if c in CPV_DEL_PRODUCTO])
+    datos = {
+        "organos": lista(agrupar(lambda f: [(_normalizar_busqueda(f["organo"]),
+                                              (f["organo"] or "").strip())])),
+        # La variante más larga, como el ranking: suele ser la razón social completa.
+        "empresas": lista(agrupar(empresas_de), elegir=lambda nombres: max(nombres, key=len)),
+        "procedimientos": lista(agrupar(lambda f: [(_nombre_procedimiento(f["procedimiento"]),
+                                                     _nombre_procedimiento(f["procedimiento"]))])),
+        "cpv": con_nombre(divisiones, lambda d: f"{d} · {DIVISIONES_CPV.get(d, 'otros')}")
+               + con_nombre(del_producto, lambda c: f"{c} · {CPV_DEL_PRODUCTO[c]}"),
+        "fuentes": con_nombre(agrupar(lambda f: [(f["fuente"], f["fuente"])]),
+                              lambda v: FUENTES_BANDEJA.get(v, v)),
+    }
+    if len(_MEMO_FICHAS) >= _MEMO_FICHAS_MAXIMO:
+        _MEMO_FICHAS.clear()
+    _MEMO_FICHAS[clave] = datos
+    return datos
 
 
 # Los tramos de la barra de «Qué tengo de verdad hoy», por el estado del último anuncio
@@ -352,6 +561,13 @@ def bandeja(
     puntuacion_min: float | None = None,
     cerradas: bool = False,
     fase: str | None = None,
+    organo: str | None = None,
+    empresa: str | None = None,
+    cpv: str | None = None,
+    procedimiento: str | None = None,
+    publicada_desde: str | None = None,
+    publicada_hasta: str | None = None,
+    importe_max: float | None = None,
     orden: str = ORDEN_POR_DEFECTO,
     limite: int = 200,
     offset: int = 0,
@@ -367,6 +583,9 @@ def bandeja(
         importe_min=importe_min, busqueda=busqueda, solo_novedades=solo_novedades,
         con_plazo=con_plazo, sin_vencidas=sin_vencidas, solo_casan=solo_casan,
         puntuacion_min=puntuacion_min, cerradas=cerradas, fase=fase,
+        organo=organo, empresa=empresa, cpv=cpv, procedimiento=procedimiento,
+        publicada_desde=publicada_desde, publicada_hasta=publicada_hasta,
+        importe_max=importe_max,
     )
     where, params = _condiciones(con, **filtros)
     orden_sql = ORDENES.get(orden, ORDENES[ORDEN_POR_DEFECTO])
