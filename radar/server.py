@@ -92,6 +92,14 @@ def _filtros_bandeja(params: dict) -> dict:
         ),
         cerradas=params.get("cerradas") == "1",
         fase=params.get("fase") or None,
+        # Los de «Más filtros». Las fechas y el CPV los valida `_condiciones`.
+        organo=params.get("organo") or None,
+        empresa=params.get("empresa") or None,
+        cpv=params.get("cpv") or None,
+        procedimiento=params.get("procedimiento") or None,
+        publicada_desde=params.get("publicada_desde") or None,
+        publicada_hasta=params.get("publicada_hasta") or None,
+        importe_max=float(params["importe_max"]) if params.get("importe_max") else None,
         orden=params.get("orden", consultas.ORDEN_POR_DEFECTO),
     )
 
@@ -204,6 +212,10 @@ class Manejador(BaseHTTPRequestHandler):
                 self._error(f"Búsqueda no válida: {exc}")
             except ValueError as exc:
                 self._error(str(exc))
+
+        elif partes.path == "/api/bandeja/opciones":
+            # Lo que ofrecen los desplegables de «Más filtros».
+            self._json(consultas.opciones_bandeja(self.con))
 
         elif partes.path == "/api/siguiendo":
             self._json(consultas.siguiendo(self.con))

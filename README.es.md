@@ -387,6 +387,26 @@ todas» quita los filtros, y entonces sí sale también lo vencido.
 **«Ocultar sin plazo»** quita de la lista lo que no publica fecha límite. Se suma a
 cualquier contador y se recuerda la próxima vez.
 
+**«Más filtros»** despliega una segunda fila con siete más, para cuando la pregunta no es
+«qué hay» sino «qué hay de…»:
+
+- **Organismo** y **empresa adjudicataria**, con sugerencias mientras escribes. Buscan el
+  texto *dentro* del nombre, sin tildes ni mayúsculas: «diputación foral» trae a todos sus
+  firmantes, y una empresa trae todas sus razones sociales y también los lotes que ganó
+  junto a otras.
+- **CPV** (una división, como «72 · servicios de TI», o uno de los códigos de tu
+  producto), **procedimiento** (en castellano: «Abierto» incluye «Obert»), **importe
+  máximo** y **fuente**. Cada opción lleva cuántos expedientes de la Bandeja tiene, y es
+  exactamente lo que sale al elegirla.
+- **Publicada desde / hasta**: la fecha de la *primera* publicación del expediente, la de
+  la píldora «publicada». Un pliego de 2024 adjudicado este año sigue siendo de 2024.
+
+El botón dice cuántos hay puestos («Más filtros · 2») y la fila se queda abierta mientras
+haya alguno. Entran en «Filtrando por», en el CSV y en «‹». Las cifras de «Qué tengo de
+verdad hoy» los quitan, para que el número cuadre. Lo que ha ganado una empresa ya está
+adjudicado, así que con «Solo abiertas» marcada no sale: la lista lo dice y ofrece
+quitarla.
+
 **«Limpiar sin revisar…»** es para cuando se acumulan cientos de «sin revisar» que nadie
 va a mirar una a una. Ofrece tres opciones, cada una con su cifra: las de **plazo
 vencido**, las que **no tienen fecha** o **todas**. Las elegidas pasan a **«vista»**:
