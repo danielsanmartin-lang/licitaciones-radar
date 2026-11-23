@@ -526,6 +526,15 @@
               </div>
               <div id="ficha-competidor" class="analitica"></div>
             </section>
+            <!-- Los expedientes de una barra, una baldosa o una celda de un gráfico. El título
+                 y el subtítulo los pone `cargarDesglose` con lo que se ha pulsado. -->
+            <section id="vista-desglose" role="tabpanel" hidden data-titulo="Lista"
+                     data-icono="ico-grafico" data-tono="turquesa">
+              <p class="intro">Los expedientes que cuenta lo que has pulsado en el gráfico.</p>
+              <p class="total-ventana" id="desglose-resumen"></p>
+              <div id="lista-desglose" class="lista"></div>
+              <button id="desglose-mas" class="boton-sec mas" hidden>Cargar más</button>
+            </section>
 
             <section id="vista-analitica" role="tabpanel" hidden data-titulo="Analítica"
                      data-icono="ico-grafico" data-tono="turquesa">

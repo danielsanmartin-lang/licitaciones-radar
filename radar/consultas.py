@@ -2096,6 +2096,23 @@ MESES_CALENDARIO_RENOVACIONES = 12
 INCUMBENTES_POR_MES = 3
 
 
+def _filas_vencimientos_por_mes(con, ambito: "Ambito | None", meses: int) -> list:
+    """Cada expediente que acaba dentro de los próximos `meses`, con su fin más tardío
+    (`fin`, el mes; `fin_dia`, la fecha) y un incumbente."""
+    entrada, params = _entrada_expedientes(ambito)
+    return [
+        {"g": f["g"], "fin": (f["fin_dia"] or "")[:7] or None, "fin_dia": f["fin_dia"],
+         "inc": f["inc"]}
+        for f in con.execute(
+            f"SELECT g, MAX(fin_dia) AS fin_dia, MAX(inc) AS inc FROM ("
+            f"  SELECT {_GRUPO} AS g, substr({FIN_SQL}, 1, 10) AS fin_dia,"
+            "          l.adjudicatario AS inc"
+            f"  {entrada} AND {EN_VENTANA}) GROUP BY g",
+            params + [f"+{int(meses)} months"],
+        )
+    ]
+
+
 def vencimientos_por_mes(con: sqlite3.Connection, ambito: "Ambito | None" = None,
                          meses: int = MESES_CALENDARIO_RENOVACIONES) -> list[dict]:
     """El calendario de renovaciones: cuántos contratos acaban cada uno de los próximos
@@ -2106,14 +2123,7 @@ def vencimientos_por_mes(con: sqlite3.Connection, ambito: "Ambito | None" = None
     nada que renovar también es una respuesta. Sin suma de importes por el mismo motivo
     que el resto de la Analítica.
     """
-    entrada, params = _entrada_expedientes(ambito)
-    filas = con.execute(
-        f"SELECT g, MAX(fin) AS fin, MAX(inc) AS inc FROM ("
-        f"  SELECT {_GRUPO} AS g, substr({FIN_SQL}, 1, 7) AS fin,"
-        "          l.adjudicatario AS inc"
-        f"  {entrada} AND {EN_VENTANA}) GROUP BY g",
-        params + [f"+{int(meses)} months"],
-    ).fetchall()
+    filas = _filas_vencimientos_por_mes(con, ambito, meses)
     hoy = date.today()
     calendario = []
     for i in range(meses):
@@ -2410,7 +2420,9 @@ def _expedientes(ambito: "Ambito | None", desde: str | None, hasta: str | None,
     no lo abre. El MAX falla en la dirección segura —enseña el total cuando el hueco real
     es un lote— y entonces sí lo abre. El coste de esa decisión es que el euro de este
     bloque no coincide con el de la tarjeta, y por eso la métrica se etiqueta «el mayor
-    importe publicado del expediente» y los tramos no son clicables.
+    importe publicado del expediente». Por lo mismo, el desglose de un tramo (ver
+    `radar/desglose.py`) pone ese importe al lado de cada tarjeta: sin él, una tarjeta de
+    195.000 € dentro del tramo «más de un millón» parecería un error.
     """
     entrada, params = _entrada_expedientes(ambito)
     having, p_rango = _rango(desde, hasta)
@@ -2480,11 +2492,19 @@ def _tramos(valores: list, cortes: tuple) -> list[dict]:
               for i, corte in enumerate(cortes)]
     salida.append({"desde": cortes[-1], "hasta": None, "expedientes": 0})
     for v in valores:
-        for tramo in salida:
-            if tramo["hasta"] is None or v < tramo["hasta"]:
-                tramo["expedientes"] += 1
-                break
+        salida[_tramo_de(v, cortes)]["expedientes"] += 1
     return salida
+
+
+def _tramo_de(v, cortes: tuple) -> int:
+    """En qué tramo de `_tramos` cae `v`: el primero cuyo límite superior lo supera, o el
+    último, que no tiene límite. Es la regla que comparten la columna y su desglose
+    (`radar/desglose.py`): si cada uno repartiera a su manera, pulsar una columna de 12
+    podría enseñar 11."""
+    for i, corte in enumerate(cortes):
+        if v < corte:
+            return i
+    return len(cortes)
 
 
 # Nombre en castellano de las divisiones CPV que aparecen en este nicho. No es la lista
@@ -2526,6 +2546,14 @@ def _corte_de_datos(con) -> str | None:
         " WHERE fecha_publicacion <= date('now', '+1 day')").fetchone()[0]
 
 
+def _filas_calendario(con, ambito, desde, hasta) -> list:
+    """Cada expediente con el mes de su primera publicación: lo que cuenta el calendario y
+    lo que enseña el desglose de una de sus columnas."""
+    base, params = _expedientes(ambito, desde, hasta)
+    return con.execute(
+        f"SELECT g, mes FROM ({base}) WHERE mes IS NOT NULL", params).fetchall()
+
+
 def _bloque_calendario(con, ambito, desde, hasta) -> dict:
     """En qué meses sale el trabajo. El bloque más sólido de la pestaña.
 
@@ -2537,13 +2565,10 @@ def _bloque_calendario(con, ambito, desde, hasta) -> dict:
     ingesta durante una semana, el número de días con datos baja solo y la pestaña lo
     confiesa sin que nadie tenga que programarlo.
     """
-    base, params = _expedientes(ambito, desde, hasta)
-    meses = [
-        {"mes": f["mes"], "expedientes": f["expedientes"]}
-        for f in con.execute(
-            f"SELECT mes, COUNT(*) AS expedientes FROM ({base})"
-            " WHERE mes IS NOT NULL GROUP BY mes ORDER BY mes", params)
-    ]
+    cuenta: dict = {}
+    for f in _filas_calendario(con, ambito, desde, hasta):
+        cuenta[f["mes"]] = cuenta.get(f["mes"], 0) + 1
+    meses = [{"mes": m, "expedientes": n} for m, n in sorted(cuenta.items())]
     corte = _corte_de_datos(con)
 
     por_anio: dict = {}
@@ -2584,6 +2609,13 @@ def _bloque_calendario(con, ambito, desde, hasta) -> dict:
     }
 
 
+def _filas_importes(con, ambito, desde, hasta) -> list:
+    """Cada expediente con importe y su mayor importe publicado, de menor a mayor."""
+    base, params = _expedientes(ambito, desde, hasta)
+    return con.execute(
+        f"SELECT g, imp FROM ({base}) WHERE imp IS NOT NULL ORDER BY imp", params).fetchall()
+
+
 def _bloque_importes(con, ambito, desde, hasta) -> dict:
     """De qué tamaño son estas operaciones de verdad.
 
@@ -2597,8 +2629,7 @@ def _bloque_importes(con, ambito, desde, hasta) -> dict:
     contrato enseña a desconfiar de las sumas para siempre.
     """
     base, params = _expedientes(ambito, desde, hasta)
-    valores = [f[0] for f in con.execute(
-        f"SELECT imp FROM ({base}) WHERE imp IS NOT NULL ORDER BY imp", params)]
+    valores = [f["imp"] for f in _filas_importes(con, ambito, desde, hasta)]
     total = con.execute(f"SELECT COUNT(*) FROM ({base})", params).fetchone()[0]
 
     # Los cinco mayores, a nivel de anuncio y quedándose el primero de cada expediente:
@@ -2650,18 +2681,7 @@ def _bloque_baja(con, ambito, desde, hasta) -> dict:
     presupuesto como precio de adjudicación —la fuente no publicó la cifra— y 262 comparan
     escalas distintas (un lote contra el total, una anualidad contra tres años).
     """
-    entrada, params = _entrada_expedientes(ambito)
-    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
-    filas = con.execute(
-        "SELECT pres, adj FROM ("
-        "  SELECT l.importe_sin_iva AS pres, l.importe_adjudicacion AS adj,"
-        f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
-        "                             ORDER BY l.fecha_adjudicacion DESC, l.id DESC) AS rn"
-        f"  {entrada}{filtro}"
-        "    AND l.importe_sin_iva > 0 AND l.importe_adjudicacion > 0"
-        ") WHERE rn = 1", params + p_rango
-    ).fetchall()
-
+    filas = _filas_baja(con, ambito, desde, hasta)
     bajas, repetido, escalas, sobrecoste = _clasificar_bajas(
         (f["pres"], f["adj"]) for f in filas)
 
@@ -2688,25 +2708,49 @@ def _bloque_baja(con, ambito, desde, hasta) -> dict:
     }
 
 
+def _filas_baja(con, ambito, desde, hasta) -> list:
+    """Cada expediente con presupuesto y adjudicación, los dos del MISMO anuncio: el de la
+    adjudicación más reciente (ver `_bloque_baja`)."""
+    entrada, params = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
+    return con.execute(
+        "SELECT g, pres, adj FROM ("
+        f"  SELECT {_GRUPO} AS g, l.importe_sin_iva AS pres, l.importe_adjudicacion AS adj,"
+        f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+        "                             ORDER BY l.fecha_adjudicacion DESC, l.id DESC) AS rn"
+        f"  {entrada}{filtro}"
+        "    AND l.importe_sin_iva > 0 AND l.importe_adjudicacion > 0"
+        ") WHERE rn = 1", params + p_rango
+    ).fetchall()
+
+
+def _baja_de(pres, adj) -> tuple:
+    """La baja (%) de un par (presupuesto, adjudicación), o None y el motivo por el que no
+    se cuenta: `repetido`, `sobrecoste` o `escalas`."""
+    if adj == pres:
+        return None, "repetido"
+    baja = 100.0 * (pres - adj) / pres
+    if baja < 0:
+        return None, "sobrecoste"
+    if baja > BAJA_MAXIMA_CREIBLE:
+        return None, "escalas"
+    return baja, None
+
+
 def _clasificar_bajas(pares) -> tuple[list, int, int, int]:
     """Las bajas creíbles de unos pares (presupuesto, adjudicación), ordenadas, y cuántos
     se han apartado por cada motivo. Lo comparten la Analítica y las fichas, para que la
     baja de un organismo se mida igual que la del mercado."""
-    repetido = escalas = sobrecoste = 0
+    apartados = {"repetido": 0, "escalas": 0, "sobrecoste": 0}
     bajas = []
     for pres, adj in pares:
-        if adj == pres:
-            repetido += 1
-            continue
-        baja = 100.0 * (pres - adj) / pres
-        if baja < 0:
-            sobrecoste += 1
-        elif baja > BAJA_MAXIMA_CREIBLE:
-            escalas += 1
+        baja, motivo = _baja_de(pres, adj)
+        if motivo:
+            apartados[motivo] += 1
         else:
             bajas.append(baja)
     bajas.sort()
-    return bajas, repetido, escalas, sobrecoste
+    return bajas, apartados["repetido"], apartados["escalas"], apartados["sobrecoste"]
 
 
 def _bloque_renovaciones(con, ambito) -> dict:
@@ -2776,7 +2820,7 @@ def _recorridos(con, ambito, filtro: str = "", p_filtro: list | None = None) -> 
     entrada, params = _entrada_expedientes(
         ambito, joins=" JOIN licitaciones_versiones v ON v.licitacion_id = l.id")
     return con.execute(
-        "SELECT CAST(julianday(substr(adj, 1, 10))"
+        "SELECT g, CAST(julianday(substr(adj, 1, 10))"
         "          - julianday(substr(pub, 1, 10)) AS INTEGER) AS dias FROM ("
         f"  SELECT {_GRUPO} AS g,"
         "          MIN(CASE WHEN v.estado_anterior IS NULL THEN v.fecha_cambio END) AS pub,"
@@ -2788,6 +2832,22 @@ def _recorridos(con, ambito, filtro: str = "", p_filtro: list | None = None) -> 
         ") WHERE pub IS NOT NULL AND adj IS NOT NULL"
         " ORDER BY dias", params + (p_filtro or [])
     ).fetchall()
+
+
+def _cpv_por_expediente(con, ambito, desde, hasta) -> list:
+    """[(g, {códigos CPV de todos sus anuncios})], uno por expediente del rango."""
+    base, params = _expedientes(ambito, desde, hasta,
+                               columnas="GROUP_CONCAT(l.cpv, ' ') AS cpvs")
+    return [(f["g"], {c for c in (f["cpvs"] or "").split() if c})
+            for f in con.execute(f"SELECT g, cpvs FROM ({base})", params)]
+
+
+def _divisiones_cpv(propios: set) -> set:
+    return {c[:2] for c in propios}
+
+
+def _codigos_cpv(propios: set) -> set:
+    return {c.split("-")[0] for c in propios}
 
 
 def _bloque_cpv(con, ambito, desde, hasta) -> dict:
@@ -2802,20 +2862,17 @@ def _bloque_cpv(con, ambito, desde, hasta) -> dict:
     por expediente es lo que evita contar tres veces el mismo código cuando el expediente
     tiene tres anuncios.
     """
-    base, params = _expedientes(ambito, desde, hasta,
-                               columnas="GROUP_CONCAT(l.cpv, ' ') AS cpvs")
     divisiones: dict = {}
     codigos: dict = {}
     con_cpv = total = 0
-    for fila in con.execute(f"SELECT cpvs FROM ({base})", params):
+    for _, propios in _cpv_por_expediente(con, ambito, desde, hasta):
         total += 1
-        propios = {c for c in (fila["cpvs"] or "").split() if c}
         if not propios:
             continue
         con_cpv += 1
-        for division in {c[:2] for c in propios}:
+        for division in _divisiones_cpv(propios):
             divisiones[division] = divisiones.get(division, 0) + 1
-        for codigo in {c.split("-")[0] for c in propios}:
+        for codigo in _codigos_cpv(propios):
             codigos[codigo] = codigos.get(codigo, 0) + 1
 
     return {
@@ -2955,7 +3012,7 @@ def _reparto_por_comunidad(filas: list, campo: str) -> dict:
         "expedientes": len(dentro),
         "sin_comunidad": len(filas) - len(con_comunidad),
         "excluidos": [
-            {"ccaa": f["ccaa"], "organo": f["organo"], "objeto": f["objeto"],
+            {"id": f["id"], "ccaa": f["ccaa"], "organo": f["organo"], "objeto": f["objeto"],
              "importe": f[campo], "total_de_su_comunidad": total_real[f["ccaa"]]}
             for f in sorted(fuera, key=lambda x: -x[campo])
         ],
@@ -2997,6 +3054,19 @@ def _bloque_comunidades(con, ambito, desde, hasta) -> dict:
     de hoy —un pliego abierto publicado en 2024 sigue abierto hoy— y lo ignoran, igual
     que la cartera y las renovaciones.
     """
+    adjudicadas, activas = _filas_comunidades(con, ambito, desde, hasta)
+    datos = {
+        "adjudicadas": _reparto_por_comunidad(adjudicadas, "adj"),
+        "activas": _reparto_por_comunidad(activas, "pres"),
+    }
+    datos["activas"]["siempre_a_fecha_de_hoy"] = True
+    return datos
+
+
+def _filas_comunidades(con, ambito, desde, hasta) -> tuple[list, list]:
+    """Los expedientes de los dos repartos territoriales: los adjudicados del rango y los
+    que tienen dinero en juego hoy. Las reglas están en `_bloque_comunidades`; aquí van
+    aparte para que el desglose de una baldosa enseñe exactamente estas filas."""
     entrada, params = _entrada_expedientes(ambito)
     viva, p_viva = _condicion_viva()
     # El orden de los parámetros es el de APARICIÓN en el texto: `viva` va en el SELECT,
@@ -3010,6 +3080,7 @@ def _bloque_comunidades(con, ambito, desde, hasta) -> dict:
         " MAX(l.importe_referencia) AS pres,"
         " MAX(l.organo) AS organo,"
         " MAX(l.objeto) AS objeto,"
+        " MAX(l.id) AS id,"
         f" MAX(CASE WHEN {viva} THEN 1 ELSE 0 END) AS abierta,"
         " MAX(CASE WHEN l.importe_adjudicacion IS NOT NULL THEN 1 ELSE 0 END) AS adjudicada"
         f"{entrada} GROUP BY g, lote"
@@ -3017,7 +3088,7 @@ def _bloque_comunidades(con, ambito, desde, hasta) -> dict:
     filas = list(con.execute(
         "SELECT g, MIN(mes) AS mes, MAX(ccaa) AS ccaa,"
         " SUM(adj) AS adj, SUM(pres) AS pres,"
-        " MAX(organo) AS organo, MAX(objeto) AS objeto,"
+        " MAX(organo) AS organo, MAX(objeto) AS objeto, MAX(id) AS id,"
         " MAX(abierta) AS abierta, MAX(adjudicada) AS adjudicada"
         f" FROM ({por_lote}) GROUP BY g",
         p_viva + params,
@@ -3039,13 +3110,7 @@ def _bloque_comunidades(con, ambito, desde, hasta) -> dict:
     # después de publicar la adjudicación, y ese dinero ya no está en juego.
     activas = [f for f in filas
                if f["abierta"] and not f["adjudicada"] and f["pres"] is not None]
-
-    datos = {
-        "adjudicadas": _reparto_por_comunidad(adjudicadas, "adj"),
-        "activas": _reparto_por_comunidad(activas, "pres"),
-    }
-    datos["activas"]["siempre_a_fecha_de_hoy"] = True
-    return datos
+    return adjudicadas, activas
 
 
 def _bloque_plazo(con, ambito, desde, hasta) -> dict:
@@ -3061,18 +3126,7 @@ def _bloque_plazo(con, ambito, desde, hasta) -> dict:
     publicación —anuncios que repiten un plazo ya vencido— y se cuentan aparte en vez de
     colarlos como ceros, que hundirían la mediana.
     """
-    entrada, params = _entrada_expedientes(ambito)
-    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
-    filas = con.execute(
-        "SELECT pub, lim FROM ("
-        "  SELECT l.fecha_publicacion AS pub, l.fecha_limite_presentacion AS lim,"
-        f"        ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
-        "                            ORDER BY l.fecha_publicacion ASC, l.id ASC) AS rn"
-        f"  {entrada}{filtro}"
-        ") WHERE rn = 1 AND pub IS NOT NULL AND lim IS NOT NULL",
-        params + p_rango,
-    ).fetchall()
-
+    filas = _filas_plazo(con, ambito, desde, hasta)
     dias, ya_vencido, disparatado, ilegible = _clasificar_plazos(
         (f["pub"], f["lim"]) for f in filas)
 
@@ -3097,6 +3151,27 @@ def _bloque_plazo(con, ambito, desde, hasta) -> dict:
     }
 
 
+def _nombre_procedimiento(crudo: str | None) -> str | None:
+    """El procedimiento como se pinta: en castellano, o None si la fuente no lo publica."""
+    crudo = (crudo or "").strip()
+    if not crudo:
+        return None
+    return PROCEDIMIENTOS_EN_CASTELLANO.get(crudo.lower(), crudo)
+
+
+def _procedimientos_por_expediente(con, ambito, desde, hasta) -> list:
+    """[(g, procedimiento en castellano o None)], uno por expediente del rango."""
+    base, params = _expedientes(ambito, desde, hasta,
+                                columnas="MAX(l.procedimiento) AS proc")
+    return [(f["g"], _nombre_procedimiento(f["proc"]))
+            for f in con.execute(f"SELECT g, proc FROM ({base})", params)]
+
+
+def _orden_procedimientos(cuenta: dict) -> list:
+    """De más a menos expedientes; a igualdad, por nombre. Fija qué cae en «el resto»."""
+    return sorted(cuenta.items(), key=lambda x: (-x[1], x[0]))
+
+
 def _bloque_procedimiento(con, ambito, desde, hasta) -> dict:
     """Por qué puerta se entra: abierto, simplificado, restringido o por invitación.
 
@@ -3107,20 +3182,16 @@ def _bloque_procedimiento(con, ambito, desde, hasta) -> dict:
     Los nombres se normalizan al castellano porque la fuente catalana publica en catalán
     y «Obert» y «Abierto» son el mismo procedimiento partido en dos barras.
     """
-    base, params = _expedientes(ambito, desde, hasta,
-                                columnas="MAX(l.procedimiento) AS proc")
     cuenta: dict = {}
     total = sin_dato = 0
-    for f in con.execute(f"SELECT proc FROM ({base})", params):
+    for _, nombre in _procedimientos_por_expediente(con, ambito, desde, hasta):
         total += 1
-        crudo = (f["proc"] or "").strip()
-        if not crudo:
+        if not nombre:
             sin_dato += 1
             continue
-        nombre = PROCEDIMIENTOS_EN_CASTELLANO.get(crudo.lower(), crudo)
         cuenta[nombre] = cuenta.get(nombre, 0) + 1
 
-    orden = sorted(cuenta.items(), key=lambda x: (-x[1], x[0]))
+    orden = _orden_procedimientos(cuenta)
     procedimientos = [{"procedimiento": k, "expedientes": n}
                       for k, n in orden[:TOP_PROCEDIMIENTOS]]
     cola = orden[TOP_PROCEDIMIENTOS:]
@@ -3138,25 +3209,49 @@ def _bloque_procedimiento(con, ambito, desde, hasta) -> dict:
     }
 
 
+def _filas_plazo(con, ambito, desde, hasta) -> list:
+    """Cada expediente con la publicación y la fecha límite de su PRIMER anuncio."""
+    entrada, params = _entrada_expedientes(ambito)
+    filtro, p_rango = _solo_en_rango(ambito, desde, hasta)
+    return con.execute(
+        "SELECT g, pub, lim FROM ("
+        f"  SELECT {_GRUPO} AS g, l.fecha_publicacion AS pub,"
+        "          l.fecha_limite_presentacion AS lim,"
+        f"        ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+        "                            ORDER BY l.fecha_publicacion ASC, l.id ASC) AS rn"
+        f"  {entrada}{filtro}"
+        ") WHERE rn = 1 AND pub IS NOT NULL AND lim IS NOT NULL",
+        params + p_rango,
+    ).fetchall()
+
+
+def _plazo_de(pub: str, lim: str) -> tuple:
+    """Los días para presentar entre una publicación y su fecha límite, o None y el motivo
+    por el que no se cuentan: `ilegible`, `ya_vencido` o `disparatado`."""
+    try:
+        d = (date.fromisoformat(lim[:10]) - date.fromisoformat(pub[:10])).days
+    except ValueError:
+        return None, "ilegible"
+    if d < 0:
+        return None, "ya_vencido"
+    if d > PLAZO_MAXIMO_CREIBLE:
+        return None, "disparatado"
+    return d, None
+
+
 def _clasificar_plazos(pares) -> tuple[list, int, int, int]:
     """Los días para presentar de unos pares (publicación, fecha límite) del primer
     anuncio de cada expediente, ordenados, y los apartados. Compartida con las fichas."""
     dias: list = []
-    ya_vencido = disparatado = ilegible = 0
+    apartados = {"ya_vencido": 0, "disparatado": 0, "ilegible": 0}
     for pub, lim in pares:
-        try:
-            d = (date.fromisoformat(lim[:10]) - date.fromisoformat(pub[:10])).days
-        except ValueError:
-            ilegible += 1
-            continue
-        if d < 0:
-            ya_vencido += 1
-        elif d > PLAZO_MAXIMO_CREIBLE:
-            disparatado += 1
+        d, motivo = _plazo_de(pub, lim)
+        if motivo:
+            apartados[motivo] += 1
         else:
             dias.append(d)
     dias.sort()
-    return dias, ya_vencido, disparatado, ilegible
+    return dias, apartados["ya_vencido"], apartados["disparatado"], apartados["ilegible"]
 
 
 def _bloque_organos(con, ambito, desde, hasta) -> dict:
@@ -3238,6 +3333,45 @@ CONSULTAS_ABIERTAS = 10
 EXPEDIENTE_NORMALIZADO = "lower(replace({t}.expediente, ' ', ''))"
 
 
+def _filas_cuota(con, ambito) -> tuple[list, list]:
+    """Los años de la cuota y, de cada expediente adjudicado en ellos, su ganador (el de
+    la adjudicación más reciente) ya normalizado en `clave`. Los que no tienen una razón
+    social reconocible se quedan fuera, igual en la columna que en su desglose."""
+    entrada, params = _entrada_expedientes(ambito)
+    crudas = con.execute(
+        "SELECT g, id, adjudicatario, imp, anio, fecha FROM ("
+        f"  SELECT {_GRUPO} AS g, l.id, l.adjudicatario,"
+        "          COALESCE(l.importe_adjudicacion, l.importe_referencia) AS imp,"
+        "          substr(COALESCE(l.fecha_adjudicacion, l.fecha_publicacion), 1, 4) AS anio,"
+        "          COALESCE(l.fecha_adjudicacion, l.fecha_publicacion) AS fecha,"
+        f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
+        "             ORDER BY l.fecha_adjudicacion DESC, l.id DESC) AS rn"
+        f"  {entrada} AND l.adjudicatario IS NOT NULL"
+        ") WHERE rn = 1", params,
+    ).fetchall()
+    anios = [str(a) for a in range(CUOTA_DESDE, date.today().year + 1)]
+    validos = set(anios)
+    claves: dict = {}
+    filas = []
+    for f in crudas:
+        if f["anio"] not in validos:
+            continue
+        if f["adjudicatario"] not in claves:
+            claves[f["adjudicatario"]] = normalizar_empresa(f["adjudicatario"])
+        clave = claves[f["adjudicatario"]]
+        if clave:
+            filas.append({**dict(f), "clave": clave})
+    return anios, filas
+
+
+def _primeras_cuota(filas: list) -> tuple[list, dict]:
+    """Las CUOTA_EMPRESAS que más ganan en todos los años juntos, y el total de cada una."""
+    total_por: dict = {}
+    for f in filas:
+        total_por[f["clave"]] = total_por.get(f["clave"], 0) + 1
+    return sorted(total_por, key=lambda k: (-total_por[k], k))[:CUOTA_EMPRESAS], total_por
+
+
 def _bloque_cuota(con, ambito) -> dict:
     """Quién se reparte el mercado, año a año: las cinco empresas que más expedientes
     ganan y el resto, en columnas al 100 %.
@@ -3249,40 +3383,20 @@ def _bloque_cuota(con, ambito) -> dict:
     fuente no la fecha). No depende del rango de la pestaña: una cuota de tres meses no
     dice nada.
     """
-    entrada, params = _entrada_expedientes(ambito)
-    filas = con.execute(
-        "SELECT g, adjudicatario, imp, anio FROM ("
-        f"  SELECT {_GRUPO} AS g, l.adjudicatario,"
-        "          COALESCE(l.importe_adjudicacion, l.importe_referencia) AS imp,"
-        "          substr(COALESCE(l.fecha_adjudicacion, l.fecha_publicacion), 1, 4) AS anio,"
-        f"         ROW_NUMBER() OVER (PARTITION BY {_GRUPO}"
-        "             ORDER BY l.fecha_adjudicacion DESC, l.id DESC) AS rn"
-        f"  {entrada} AND l.adjudicatario IS NOT NULL"
-        ") WHERE rn = 1", params,
-    ).fetchall()
     hoy = date.today()
-    anios = [str(a) for a in range(CUOTA_DESDE, hoy.year + 1)]
-    claves: dict = {}
+    anios, filas = _filas_cuota(con, ambito)
     nombres: dict = {}
-    total_por: dict = {}
     celdas: dict = {}
     por_anio = {a: 0 for a in anios}
     for f in filas:
-        if f["anio"] not in por_anio:
-            continue
-        if f["adjudicatario"] not in claves:
-            claves[f["adjudicatario"]] = normalizar_empresa(f["adjudicatario"])
-        clave = claves[f["adjudicatario"]]
-        if not clave:
-            continue
+        clave = f["clave"]
         nombres.setdefault(clave, set()).add(f["adjudicatario"])
-        total_por[clave] = total_por.get(clave, 0) + 1
         c = celdas.setdefault((clave, f["anio"]), {"expedientes": 0, "importe": 0.0})
         c["expedientes"] += 1
         c["importe"] += f["imp"] or 0
         por_anio[f["anio"]] += 1
 
-    primeras = sorted(total_por, key=lambda k: (-total_por[k], k))[:CUOTA_EMPRESAS]
+    primeras, total_por = _primeras_cuota(filas)
 
     def serie(clave):
         datos = []
@@ -3322,6 +3436,13 @@ def _bloque_cuota(con, ambito) -> dict:
     }
 
 
+def _organos_por_expediente(con, ambito, desde, hasta) -> list:
+    """[(g, órgano sin espacios a los lados, mes de primera publicación)]."""
+    base, params = _expedientes(ambito, desde, hasta, columnas="MAX(l.organo) AS organo")
+    return [(f["g"], (f["organo"] or "").strip(), f["mes"])
+            for f in con.execute(f"SELECT g, organo, mes FROM ({base})", params)]
+
+
 def _bloque_estacionalidad(con, ambito, desde, hasta) -> dict:
     """En qué meses publica cada uno de los organismos que más compran.
 
@@ -3329,19 +3450,50 @@ def _bloque_estacionalidad(con, ambito, desde, hasta) -> dict:
     hay que llamar a cada uno. Por mes de primera publicación del expediente, sumando los
     años del rango, y con el nombre exacto del órgano, como «Quién compra».
     """
-    base, params = _expedientes(ambito, desde, hasta, columnas="MAX(l.organo) AS organo")
     meses: dict = {}
-    for f in con.execute(f"SELECT organo, mes FROM ({base})", params):
-        nombre = (f["organo"] or "").strip()
-        if not nombre or not f["mes"]:
+    for _, nombre, mes in _organos_por_expediente(con, ambito, desde, hasta):
+        if not nombre or not mes:
             continue
-        meses.setdefault(nombre, [0] * 12)[int(f["mes"][5:7]) - 1] += 1
+        meses.setdefault(nombre, [0] * 12)[int(mes[5:7]) - 1] += 1
     primeros = sorted(meses.items(), key=lambda x: (-sum(x[1]), x[0]))[:ESTACIONALIDAD_ORGANOS]
     return {
         "organos": [{"organo": o, "total": sum(m), "meses": m} for o, m in primeros],
         "maximo": max((max(m) for _, m in primeros), default=0),
         "distintos": len(meses),
     }
+
+
+def _consultas_enlazadas(con) -> list:
+    """Cada consulta previa con NIF y expediente, y cuándo salió su licitación, si salió.
+    Las reglas del enlace están en `_bloque_consultas`. Necesita `db.INDICE_CONSULTAS`."""
+    expediente_c = EXPEDIENTE_NORMALIZADO.format(t="c")
+    expediente_l = EXPEDIENTE_NORMALIZADO.format(t="l")
+    return con.execute(
+        f"""SELECT c.id, substr(c.fecha_publicacion, 1, 10) AS pub,
+                   MIN(substr(l.fecha_publicacion, 1, 10)) AS licitada
+              FROM licitaciones c
+              LEFT JOIN licitaciones l
+                ON l.nif_organo = c.nif_organo AND {expediente_l} = {expediente_c}
+               AND l.fuente != ? AND l.fecha_publicacion > c.fecha_publicacion
+             WHERE c.fuente = ? AND c.nif_organo IS NOT NULL AND c.expediente IS NOT NULL
+             GROUP BY c.id""",
+        (FUENTE_CONSULTAS, FUENTE_CONSULTAS),
+    ).fetchall()
+
+
+def _dias_de_consultas(filas) -> list:
+    """[(id de la consulta, días hasta su licitación)] de las enlazadas con días > 0."""
+    salida = []
+    for f in filas:
+        if not f["licitada"] or not f["pub"]:
+            continue
+        try:
+            d = (date.fromisoformat(f["licitada"]) - date.fromisoformat(f["pub"])).days
+        except ValueError:
+            continue
+        if d > 0:
+            salida.append((f["id"], d))
+    return salida
 
 
 def _bloque_consultas(con, ambito) -> dict:
@@ -3362,33 +3514,11 @@ def _bloque_consultas(con, ambito) -> dict:
     """
     if not db.hay_indice(con, db.INDICE_CONSULTAS):
         return {"preparando": True}
-    expediente_c = EXPEDIENTE_NORMALIZADO.format(t="c")
-    expediente_l = EXPEDIENTE_NORMALIZADO.format(t="l")
-    filas = con.execute(
-        f"""SELECT c.id, substr(c.fecha_publicacion, 1, 10) AS pub,
-                   MIN(substr(l.fecha_publicacion, 1, 10)) AS licitada
-              FROM licitaciones c
-              LEFT JOIN licitaciones l
-                ON l.nif_organo = c.nif_organo AND {expediente_l} = {expediente_c}
-               AND l.fuente != ? AND l.fecha_publicacion > c.fecha_publicacion
-             WHERE c.fuente = ? AND c.nif_organo IS NOT NULL AND c.expediente IS NOT NULL
-             GROUP BY c.id""",
-        (FUENTE_CONSULTAS, FUENTE_CONSULTAS),
-    ).fetchall()
+    filas = _consultas_enlazadas(con)
     total = con.execute("SELECT COUNT(*) FROM licitaciones WHERE fuente = ?",
                         (FUENTE_CONSULTAS,)).fetchone()[0]
     enlazadas = {f["id"] for f in filas if f["licitada"]}
-    dias = []
-    for f in filas:
-        if not f["licitada"] or not f["pub"]:
-            continue
-        try:
-            d = (date.fromisoformat(f["licitada"]) - date.fromisoformat(f["pub"])).days
-        except ValueError:
-            continue
-        if d > 0:
-            dias.append(d)
-    dias.sort()
+    dias = sorted(d for _, d in _dias_de_consultas(filas))
 
     # Las del ámbito que siguen abiertas y no tienen pliego todavía. Una consulta sin fecha
     # de cierre cuenta como abierta DIAS_ABIERTA_SIN_PLAZO, que ya va en `_condicion_viva`.
@@ -3776,14 +3906,51 @@ def organismos(con: sqlite3.Connection, *, ambito: Ambito | None = None,
             "ambito": ambito.etiqueta}
 
 
+def _expedientes_de_organismo(con, nombre: str, ambito: Ambito) -> tuple[list, list]:
+    """Los anuncios de un órgano en el ámbito y sus expedientes. Los comparten la ficha y
+    el desglose de sus gráficos, así que una columna y su lista no pueden discrepar."""
+    def calcular():
+        anuncios = _anuncios_del_ambito(con, ambito, " AND l.organo = ?", (nombre,))
+        return anuncios, _por_expediente(anuncios)
+
+    return _memo_fichas(con, ("expedientes-organismo", nombre, ambito), calcular)
+
+
+def _expedientes_de_competidor(con, clave: str, ambito: Ambito) -> tuple[list, list]:
+    """Los anuncios que ha ganado una empresa (por su razón social normalizada) en el
+    ámbito, y sus expedientes. Compartidos por la ficha y el desglose de sus gráficos."""
+    def calcular():
+        # Memorizado por nombre, como en `_ranking_empresas`: en toda la IT son decenas de
+        # miles de anuncios adjudicados y unos pocos miles de nombres distintos.
+        claves: dict = {}
+
+        def es_ella(nombre):
+            if nombre not in claves:
+                claves[nombre] = normalizar_empresa(nombre) == clave
+            return claves[nombre]
+
+        anuncios = [f for f in _anuncios_del_ambito(con, ambito, " AND l.adjudicatario IS NOT NULL")
+                    if es_ella(f["adjudicatario"])]
+        return anuncios, _por_expediente(anuncios)
+
+    return _memo_fichas(con, ("expedientes-competidor", clave, ambito), calcular)
+
+
+def _adjudicacion_de(e: dict) -> tuple:
+    """El anuncio con la adjudicación más reciente de un expediente ganado, y el año en el
+    que cuenta: el de esa adjudicación o, si no se fechó, el de la primera publicación."""
+    ultima = max(e["anuncios_filas"], key=lambda f: (f["fecha_adjudicacion"] or "", f["id"]))
+    anio = (ultima["fecha_adjudicacion"] or e["primera_publicacion"] or "")[:4] or None
+    return ultima, anio
+
+
 def ficha_organismo(con: sqlite3.Connection, nombre: str, *,
                     ambito: Ambito | None = None) -> dict | None:
     """Todo lo que se sabe de un órgano en este ámbito. None si no tiene expedientes."""
     ambito = ambito or Ambito()
 
     def calcular():
-        anuncios = _anuncios_del_ambito(con, ambito, " AND l.organo = ?", (nombre,))
-        expedientes = _por_expediente(anuncios)
+        anuncios, expedientes = _expedientes_de_organismo(con, nombre, ambito)
         if not expedientes:
             return None
         recientes = sorted(expedientes, key=lambda e: (e["primera_publicacion"] or "", e["g"]),
@@ -3829,20 +3996,9 @@ def ficha_competidor(con: sqlite3.Connection, empresa: str, *,
     ambito = ambito or Ambito()
 
     def calcular():
-        # Memorizado por nombre, como en `_ranking_empresas`: en toda la IT son decenas de
-        # miles de anuncios adjudicados y unos pocos miles de nombres distintos.
-        claves: dict = {}
-
-        def es_ella(nombre):
-            if nombre not in claves:
-                claves[nombre] = normalizar_empresa(nombre) == clave
-            return claves[nombre]
-
-        anuncios = [f for f in _anuncios_del_ambito(con, ambito, " AND l.adjudicatario IS NOT NULL")
-                    if es_ella(f["adjudicatario"])]
+        anuncios, expedientes = _expedientes_de_competidor(con, clave, ambito)
         if not anuncios:
             return None
-        expedientes = _por_expediente(anuncios)
         variantes = sorted({f["adjudicatario"] for f in anuncios})
 
         por_anio: dict = {}
@@ -3850,9 +4006,7 @@ def ficha_competidor(con: sqlite3.Connection, empresa: str, *,
         por_organo: dict = {}
         contratos = []
         for e in expedientes:
-            filas = e["anuncios_filas"]
-            ultima = max(filas, key=lambda f: (f["fecha_adjudicacion"] or "", f["id"]))
-            anio = (ultima["fecha_adjudicacion"] or e["primera_publicacion"] or "")[:4] or None
+            ultima, anio = _adjudicacion_de(e)
             imp = e["imp"] or 0
             for destino, llave in ((por_anio, anio), (por_ccaa, ultima["ccaa"]),
                                    (por_organo, ultima["organo"])):
@@ -4109,6 +4263,14 @@ def _cambios_de_proveedor(pares: list[dict], organo: str) -> dict:
     }
 
 
+def _sucesiones_en_rango(con, ambito: Ambito | None, desde: str | None,
+                         hasta: str | None) -> list[dict]:
+    """Las parejas cuya renovación se publicó dentro del rango (ver `bloque_incumbentes`)."""
+    return [p for p in _sucesiones(con, ambito)
+            if (not desde or (p["siguiente"]["fecha"] or "")[:7] >= desde)
+            and (not hasta or (p["siguiente"]["fecha"] or "")[:7] <= hasta)]
+
+
 def bloque_incumbentes(con, ambito: Ambito | None, desde: str | None,
                        hasta: str | None) -> dict:
     """¿Se puede desbancar al incumbente? Para la Analítica.
@@ -4116,9 +4278,7 @@ def bloque_incumbentes(con, ambito: Ambito | None, desde: str | None,
     El rango se aplica a la renovación (cuándo se publicó la segunda), que es cuando se
     decidió si el incumbente seguía.
     """
-    pares = [p for p in _sucesiones(con, ambito)
-             if (not desde or (p["siguiente"]["fecha"] or "")[:7] >= desde)
-             and (not hasta or (p["siguiente"]["fecha"] or "")[:7] <= hasta)]
+    pares = _sucesiones_en_rango(con, ambito, desde, hasta)
     resueltos = [p for p in pares if p["repite"] is not None]
     repite = sum(1 for p in resueltos if p["repite"])
 
@@ -4155,9 +4315,9 @@ def bloque_incumbentes(con, ambito: Ambito | None, desde: str | None,
 
 def _procedimiento_de(e: dict) -> str | None:
     for f in e["anuncios_filas"]:
-        crudo = (f["procedimiento"] or "").strip()
-        if crudo:
-            return PROCEDIMIENTOS_EN_CASTELLANO.get(crudo.lower(), crudo)
+        nombre = _nombre_procedimiento(f["procedimiento"])
+        if nombre:
+            return nombre
     return None
 
 

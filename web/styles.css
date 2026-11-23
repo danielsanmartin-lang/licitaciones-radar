@@ -2031,6 +2031,28 @@ progress:not([value]) { opacity: .7; }
 .tt-clave { width: 12px; height: 2px; border-radius: 1px; flex: none; }
 .tt-clave.serie-1 { background: var(--serie-1); }
 .tt-clave.serie-2 { background: var(--serie-2); }
+/* «Pulsa para ver los 12»: lo único que avisa de que la marca lleva a una lista. */
+.tt-pista { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--borde); color: var(--acento-texto); font-size: var(--txt-xs); }
+
+/* --- Gráficos que llevan a sus expedientes (ver `irADesglose`) -------------------
+   Sin mano, como el resto de lo pulsable: avisa el relleno al pasar y la pista del
+   tooltip. El anillo es para quien llega con el teclado. */
+.col.pulsable:focus-visible,
+.baldosa.pulsable:focus-visible,
+.calor-celda.pulsable:focus-visible,
+.apilada-seg.pulsable:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+.baldosa.pulsable:hover, .calor-celda.pulsable:hover { box-shadow: inset 0 0 0 2px var(--acento); }
+.tabla-escueta tr.pulsable { cursor: default; }
+.tabla-escueta tr.pulsable:hover td:first-child,
+.tabla-escueta tr.pulsable:focus-visible td:first-child { color: var(--acento-texto); text-decoration: underline; }
+.tabla-escueta tr.pulsable:focus-visible { outline: 2px solid var(--acento); outline-offset: -2px; }
+
+/* La pantalla del desglose: la cifra que mete a cada expediente en lo pulsado, y los
+   grupos (un año, o los contratos que no caben en la escala). */
+.pill.dato-desglose { background: var(--acento); color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+.desglose-grupo { display: flex; align-items: baseline; gap: var(--e-2); margin: var(--e-4) 0 var(--e-2); font: 600 var(--txt-md)/1.3 var(--letra-titulo); color: var(--texto); }
+.desglose-grupo:first-child { margin-top: 0; }
+.desglose-grupo-n { color: var(--texto-ter); font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* --- Ventanas estrechas -------------------------------------------------------
  *

@@ -25,6 +25,8 @@ STDLIB_PERMITIDA = {
     "unittest", "urllib", "webbrowser", "xml", "zipfile", "collections",
     "functools", "itertools", "shutil", "textwrap", "plistlib", "subprocess",
     "getpass", "signal", "importlib", "math", "contextlib",
+    # Solo en las pruebas: la base variada de `test_desglose`, con semilla fija.
+    "random",
 }
 # certifi solo se usa en la herramienta de regeneración del bundle, que es
 # opcional y se ejecuta a mano una vez al año.

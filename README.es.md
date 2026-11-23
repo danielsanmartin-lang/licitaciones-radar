@@ -563,7 +563,8 @@ con su fin más tardío.
 
 Los botones de ventana (3, 6, 12, 24 meses) muestran cuántos vencen en cada plazo y por
 cuánto importe. Encima va el **calendario de renovaciones**: cuántos contratos acaban
-cada uno de los doce meses que vienen, con sus incumbentes al pasar el ratón. Arriba se
+cada uno de los doce meses que vienen, con sus incumbentes al pasar el ratón. **Pulsar un
+mes abre esos contratos**, con la misma tarjeta de aquí abajo y su «Seguir». Arriba se
 elige **el perfil** —todos, o solo concienciación, o solo correo—.
 
 Debajo de la ventana, dos apartados más:
@@ -679,6 +680,11 @@ lleva a la suya, y **«‹»** deshace el camino hasta donde estabas, con su pos
 la página. Desde una licitación que no casa con tus perfiles, la ficha se abre con toda
 la IT.
 
+Dentro, como en la Analítica, **los gráficos llevan a sus expedientes**: cada mes de
+«Cuándo publica» (de todos los años, separados por año) y cada procedimiento de «Cómo
+compra» en la de organismo; cada año de «Año a año» y cada comunidad de «Dónde gana» en la
+de competidor (ver [qué hay al pulsar un gráfico](#analítica)).
+
 ### Analítica
 
 Las preguntas que no son «qué hay hoy». Arriba, una fila de cifras clave; debajo, veinte
@@ -726,6 +732,33 @@ no la apertura, para no retrasarla; hasta entonces el bloque dice que se está p
 
 Los nombres de órgano y de empresa de «Quién compra», «Quién gana», el mapa de calor y la
 cuota llevan a sus fichas.
+
+**Y todo lo demás lleva a sus expedientes.** Pulsar febrero en «Cuándo sale el trabajo», el
+País Vasco en el mapa, un tramo de importes, una celda del mapa de calor, un trozo de la
+cuota o un mes de «A quién llamo» abre una lista con **exactamente** los expedientes que
+cuenta ese elemento: el mismo número del tooltip, que lo avisa con «Pulsa para ver los
+15». Van con la tarjeta de siempre, que abre la licitación, y **«‹»** vuelve al gráfico a
+la misma altura. También con el teclado: Tab hasta la columna y Enter.
+
+No se manda a la Bandeja porque no sabe filtrar por mes, tramo, CPV ni empresa, con una
+temática no tiene esas fichas y cuenta por anuncio donde la Analítica cuenta por
+expediente: el número no cuadraría. La lista sale de la misma cuenta que el gráfico, y una
+prueba recorre cada elemento de cada gráfico para que no se separen nunca. Tres cosas de
+esa lista:
+
+- **Un mes del año son ese mes de todos los años del periodo**, del más reciente al más
+  antiguo: la columna es la media de unos y el punto, el del año en curso.
+- **Cada tarjeta lleva delante la cifra que la mete ahí** —el mayor importe publicado, la
+  baja, los días de plazo, el importe adjudicado, cuándo acaba—, porque no siempre es la de
+  la tarjeta: el importe de un tramo es el mayor publicado del expediente, y la tarjeta
+  enseña el de su último anuncio.
+- **En el mapa, lo de más de 50 M€ va aparte**: no suma en la baldosa ni en las barras de
+  importe, pero sí en las de número.
+
+Las filas de «Los cinco mayores» y de los contratos apartados del reparto por comunidades
+abren la licitación directamente. «Qué tengo de verdad hoy» sigue llevando a la Bandeja,
+que es donde se tría. La primera vez que se pulsa un tramo de «Cuándo entra en el forecast»
+con «Toda la IT» tarda unos segundos (cruza el historial de cambios); los siguientes, no.
 
 El ámbito puede ser tus perfiles —todos o uno— o una **temática del mercado** de las de
 «Otras licitaciones», o toda la IT junta. Con una temática se mira el mercado entero, case
