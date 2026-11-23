@@ -2302,7 +2302,10 @@ async function cargarVencimientos() {
   if ((d.por_mes || []).some((m) => m.contratos)) {
     const bloque = bloqueAnalitica('Calendario de renovaciones',
       '¿Qué meses vienen cargados? Por expediente: un contrato con prórroga no cuenta dos veces.');
-    bloque.appendChild(calendarioRenovaciones(d.por_mes));
+    bloque.appendChild(calendarioRenovaciones(d.por_mes, (mes) => irADesglose({
+      origen: 'vencimientos', bloque: 'meses', clave: mes, unidad: 'contratos',
+      titulo: 'Calendario de renovaciones', elemento: `Acaban en ${nombreMes(mes)}`,
+      periodo: perfilVencimiento ? `perfil «${perfilVencimiento}»` : '' })));
     calendario.appendChild(bloque);
   }
 
@@ -3242,7 +3245,11 @@ function bloqueComoCompra(d, ambito) {
     const tope = Math.max(1, ...c.procedimientos.map((x) => x.expedientes));
     for (const x of c.procedimientos) {
       el.appendChild(filaBarra(x.procedimiento, 100 * x.expedientes / tope,
-        `${fmtEntero(x.expedientes)} · ${x.pct} %`, { apilada: true }));
+        `${fmtEntero(x.expedientes)} · ${x.pct} %`,
+        { apilada: true, pista: pistaVer(x.expedientes),
+          alPulsar: () => irADesglose({
+            origen: 'organismo', bloque: 'procedimiento', clave: x.procedimiento,
+            nombre: d.organo, titulo: 'Cómo compra', elemento: x.procedimiento }) }));
     }
   }
   el.appendChild(crear('h4', '', 'Consultas previas abiertas'));
@@ -3290,6 +3297,10 @@ function pintarFichaOrganismo(cont, d, ambito) {
     (d.desde ? `, ${d.desde === d.hasta ? d.desde : `de ${d.desde} a ${d.hasta}`}.` : '.'));
   meses.appendChild(columnas(d.meses.map((m) => ({
     etiqueta: MESES_CORTOS[m.mes - 1], valor: m.expedientes,
+    alPulsar: m.expedientes ? () => irADesglose({
+      origen: 'organismo', bloque: 'meses', clave: String(m.mes).padStart(2, '0'),
+      nombre: d.organo, titulo: 'Cuándo publica', elemento: MESES_LARGOS[m.mes - 1] }) : null,
+    pista: d.desde !== d.hasta ? `${pistaVer(m.expedientes)}, año a año` : pistaVer(m.expedientes),
   })), { serie: 'expedientes', etiquetarTodo: true }));
 
   const gana = bloqueAnalitica('Quién gana aquí', '¿A quién le adjudica, y cuántas veces?');
@@ -3340,6 +3351,10 @@ function pintarFichaCompetidor(cont, d, ambito) {
   anios.appendChild(columnas(d.por_anio.map((a) => ({
     etiqueta: a.anio, valor: a.expedientes,
     titulo: `${a.anio} · ${fmtImporteCorto(a.importe)}`,
+    alPulsar: () => irADesglose({
+      origen: 'competidor', bloque: 'anios', clave: a.anio, nombre: d.empresa,
+      titulo: 'Año a año', elemento: `Lo que ganó en ${a.anio}` }),
+    pista: pistaVer(a.expedientes),
   })), { serie: 'expedientes ganados', etiquetarTodo: true }));
   nota(anios, 'Por el año de adjudicación; si no se publicó, el de la primera publicación.');
 
@@ -3349,9 +3364,12 @@ function pintarFichaCompetidor(cont, d, ambito) {
   } else {
     const valores = {};
     for (const x of d.comunidades) {
-      valores[x.ccaa] = { valor: x.expedientes, detalle: fmtImporteCorto(x.importe) };
+      valores[x.ccaa] = { valor: x.expedientes, n: x.expedientes,
+                          detalle: fmtImporteCorto(x.importe) };
     }
-    donde.appendChild(mapaBaldosas(valores));
+    donde.appendChild(mapaBaldosas(valores, { alPulsar: (ccaa) => irADesglose({
+      origen: 'competidor', bloque: 'comunidades', clave: ccaa, nombre: d.empresa,
+      titulo: 'Dónde gana', elemento: `Lo que ganó en ${ccaa}` }) }));
   }
 
   const clientes = bloqueAnalitica('A quién le vende', '¿Qué organismos le adjudican más?');
@@ -3396,6 +3414,182 @@ function pintarFichaCompetidor(cont, d, ambito) {
     [contratos],
   ]);
 }
+
+// --- Desglose: de una barra a sus expedientes ----------------------------------------
+//
+// Cada columna, baldosa, celda o barra de un gráfico lleva a los expedientes que cuenta,
+// en una pantalla propia y con «Volver» al gráfico, a la misma altura. La lista la arma el
+// servidor con la MISMA función que el gráfico (`radar/desglose.py`): el número de arriba es
+// el del tooltip que se acaba de ver, no uno parecido. Por eso no se manda a la Bandeja:
+// no sabe filtrar por mes, tramo, CPV ni empresa, y con una temática no tiene esas fichas.
+
+const LIMITE_DESGLOSE = 100;
+
+// De dónde se viene: qué pestaña queda resaltada y cómo se llama en la cabecera. Las
+// fichas se llaman como su órgano o su empresa.
+const ORIGENES_DESGLOSE = {
+  analitica: { padre: 'analitica', nombre: 'Analítica' },
+  organismo: { padre: 'organismos' },
+  competidor: { padre: 'adjudicatarios' },
+  vencimientos: { padre: 'vencimientos', nombre: 'Vencimientos' },
+};
+
+const SINGULAR = { expedientes: 'expediente', contratos: 'contrato', consultas: 'consulta',
+                   renovaciones: 'renovación' };
+
+// `d`: { origen, bloque, clave, nombre?, titulo (del gráfico), elemento (lo pulsado),
+// unidad? ('expedientes'), periodo? }. El ámbito y el rango los pone el sitio de origen,
+// que es el que ha pintado el número: con otros, la lista no cuadraría con él.
+function irADesglose(d) {
+  let ambito = '';
+  let desde = '';
+  let periodo = d.periodo || '';
+  if (d.origen === 'analitica') {
+    ambito = ambitoAnalitica;
+    const rango = rangosAnalitica().find((r) => r.clave === rangoAnalitica);
+    desde = rango.desde;
+    if (d.periodo === undefined) periodo = rango.etiqueta;
+  } else if (d.origen === 'vencimientos') {
+    ambito = perfilVencimiento ? `perfil:${perfilVencimiento}` : '';
+  } else if (fichaActual) {
+    ambito = fichaActual.ambito;
+  }
+  const origen = ORIGENES_DESGLOSE[d.origen];
+  mostrarVista('desglose', { ficha: {
+    tipo: 'desglose', nombre: `${d.titulo} · ${d.elemento}`, ambito, padre: origen.padre,
+    desglose: { origen: d.origen, bloque: d.bloque, clave: String(d.clave),
+                nombre: d.nombre || '', desde },
+    textos: { de: origen.nombre || d.nombre, titulo: d.titulo, elemento: d.elemento,
+              unidad: d.unidad || 'expedientes', periodo },
+  } });
+}
+
+// La cifra que mete a cada expediente en lo pulsado, que no siempre es la de su tarjeta: el
+// importe de un tramo es el MAYOR publicado del expediente, y la tarjeta enseña el del
+// último anuncio.
+function textoDato(x) {
+  if (!x) return '';
+  if (x.unidad === 'eur') {
+    return `${x.texto}: ${fmtImporte(x.valor)}` + (x.fecha ? ` · ${fmtFecha(x.fecha)}` : '');
+  }
+  if (x.unidad === 'pct') return `${fmtDecimal(x.valor)} % ${x.texto}`;
+  if (x.unidad === 'dias') {
+    return `${fmtEntero(x.valor)} ${x.valor === 1 ? x.texto.replace(/^días/, 'día') : x.texto}`;
+  }
+  if (x.fecha) return `${x.texto} el ${fmtFecha(x.fecha)}`;
+  return x.texto || '';
+}
+
+function textoGrupo(g) {
+  if (/^\d{4}$/.test(g.clave)) return `en ${g.clave}`;
+  if (g.clave === 'dentro') return 'que suman en el mapa y en las barras de importe';
+  if (g.clave === 'fuera') return 'de más de 50 M€, que solo cuentan en las barras de número';
+  return g.titulo || g.clave;
+}
+
+let pasadaDesglose = 0;
+let desgloseCargados = 0;
+let desgloseGrupo;
+
+async function cargarDesglose(mas = false) {
+  const f = fichaActual;
+  if (!f || f.tipo !== 'desglose') return;
+  const x = f.desglose;
+  const t = f.textos;
+  const pasada = mas ? pasadaDesglose : ++pasadaDesglose;
+  const cont = $('lista-desglose');
+  $('vista-titulo').textContent = t.elemento.charAt(0).toUpperCase() + t.elemento.slice(1);
+  $('vista-sub').textContent = [`${t.de} › ${t.titulo}`, t.periodo].filter(Boolean).join(' · ');
+  if (!mas) {
+    desgloseCargados = 0;
+    desgloseGrupo = undefined;
+    $('desglose-resumen').textContent = '';
+    $('desglose-mas').hidden = true;
+  }
+  const carga = mas ? null : empezarCarga('lista-desglose', esMercado(f.ambito)
+    ? 'Buscando… con una temática, la primera vez tarda unos segundos' : 'Buscando…');
+  const p = ponerAmbito(new URLSearchParams({
+    origen: x.origen, bloque: x.bloque, clave: x.clave,
+    offset: desgloseCargados, limite: LIMITE_DESGLOSE,
+  }), f.ambito);
+  if (x.nombre) p.set('nombre', x.nombre);
+  if (x.desde) p.set('desde', x.desde);
+  let d;
+  try {
+    d = await pedirJSON('/api/desglose?' + p);
+  } catch {
+    if (pasada === pasadaDesglose && (!carga || carga.terminar())) {
+      cont.appendChild(crear('p', 'vacio', 'No se ha podido cargar la lista.'));
+    }
+    return;
+  }
+  if (pasada !== pasadaDesglose || (carga && !carga.terminar())) return;
+  tooltip().hidden = true;
+  if (d.error) {
+    cont.appendChild(crear('p', 'vacio', d.error));
+    return;
+  }
+  if (!mas) {
+    $('vista-sub').textContent = [`${t.de} › ${t.titulo}`, `ámbito: ${d.ambito}`, t.periodo]
+      .filter(Boolean).join(' · ');
+    pintarResumenDesglose(d, t);
+    if (!d.items.length) cont.appendChild(crear('p', 'vacio', 'No queda nada aquí: la base ha cambiado desde que se pintó el gráfico.'));
+  }
+  const titulos = Object.fromEntries(d.grupos.map((g) => [g.clave, g]));
+  for (const it of d.items) {
+    if (it.grupo !== desgloseGrupo) {
+      desgloseGrupo = it.grupo;
+      const g = titulos[it.grupo];
+      if (g && g.titulo) {
+        const cab = crear('h4', 'desglose-grupo', g.titulo);
+        cab.appendChild(crear('span', 'desglose-grupo-n', fmtEntero(g.total)));
+        cont.appendChild(cab);
+      }
+    }
+    pintarItemDesglose(cont, it, f.ambito);
+  }
+  desgloseCargados += d.items.length;
+  $('desglose-mas').hidden = !d.hay_mas;
+}
+
+function pintarResumenDesglose(d, t) {
+  const r = $('desglose-resumen');
+  r.textContent = '';
+  r.appendChild(crear('strong', '', fmtEntero(d.total)));
+  r.appendChild(document.createTextNode(
+    ` ${d.total === 1 ? (SINGULAR[t.unidad] || t.unidad) : t.unidad}`));
+  if (d.grupos.length > 1) {
+    r.appendChild(document.createTextNode(
+      ': ' + d.grupos.map((g) => `${fmtEntero(g.total)} ${textoGrupo(g)}`).join(', ')));
+  }
+  r.appendChild(document.createTextNode('.'));
+}
+
+// Cada cosa con su tarjeta de siempre: la de la Bandeja, la de Vencimientos (con
+// «Seguir») o la fila de una renovación, con el contrato de antes y el de ahora.
+function pintarItemDesglose(cont, it, ambito) {
+  if (it.forma === 'pareja') {
+    let lista = cont.lastElementChild;
+    if (!lista || !lista.classList.contains('lista-ficha')) {
+      lista = crear('div', 'lista-ficha');
+      cont.appendChild(lista);
+    }
+    lista.appendChild(filaSucesion(it, ambito, true));
+    return;
+  }
+  const el = it.forma === 'prospecto' ? tarjetaProspecto(it, tipoProspecto(it)) : tarjeta(it);
+  const texto = it.forma === 'prospecto' ? '' : textoDato(it.dato);
+  if (texto) {
+    const detalle = it.dato.detalle;
+    const pista = detalle
+      ? `presupuesto ${fmtImporte(detalle.presupuesto)} → adjudicado ${fmtImporte(detalle.adjudicado)}`
+      : 'Lo que la mete en lo que has pulsado del gráfico';
+    el.querySelector('.meta').prepend(pildora(texto, { clase: 'dato-desglose', titulo: pista }));
+  }
+  cont.appendChild(el);
+}
+
+$('desglose-mas').addEventListener('click', () => cargarDesglose(true));
 
 // --- Términos de búsqueda --------------------------------------------------
 
@@ -3698,8 +3892,10 @@ let vistaActual = 'bandeja';
 const VISTAS = ['bandeja', 'resumen', 'otras', 'siguiendo', 'vencimientos', 'adjudicatarios',
                 'organismos', 'analitica', 'ajustes', 'cobertura', 'versiones'];
 // Las fichas: vistas sin entrada en la barra lateral, a las que se llega desde un nombre.
-// Mientras se mira una, la barra lateral resalta la lista de la que es.
-const VISTAS_DETALLE = { organismo: 'organismos', competidor: 'adjudicatarios' };
+// Mientras se mira una, la barra lateral resalta la lista de la que es. El desglose (los
+// expedientes de una barra) resalta la pestaña del gráfico de donde se viene (`padre`).
+const VISTAS_DETALLE = { organismo: 'organismos', competidor: 'adjudicatarios',
+                         desglose: 'analitica' };
 
 // --- Volver a la pantalla anterior ------------------------------------------------
 //
@@ -3743,7 +3939,8 @@ function restaurarBandeja(e) {
 }
 
 function mismaFicha(a, b) {
-  return (!a && !b) || Boolean(a && b && a.tipo === b.tipo && a.nombre === b.nombre);
+  return (!a && !b) || Boolean(a && b && a.tipo === b.tipo && a.nombre === b.nombre
+                                && JSON.stringify(a.desglose) === JSON.stringify(b.desglose));
 }
 
 // El nombre de una pantalla apilada, para el «Volver a …» del botón.
@@ -3834,7 +4031,7 @@ function mostrarVista(vista, { ficha = null, apilar = true } = {}) {
   // Cada vista empieza arriba: el scroll vive en `.cuerpo`, que es el mismo para todas, y
   // sin esto se heredaba la posición de la anterior.
   $('cuerpo').scrollTop = 0;
-  const resaltada = VISTAS_DETALLE[vista] || vista;
+  const resaltada = (destino && destino.padre) || VISTAS_DETALLE[vista] || vista;
   for (const b of document.querySelectorAll('.tab[data-vista]')) {
     const activa = b.dataset.vista === resaltada;
     b.classList.toggle('activo', activa);
@@ -3851,6 +4048,7 @@ function mostrarVista(vista, { ficha = null, apilar = true } = {}) {
     organismos: () => { cargarFavoritos(); return cargarOrganismos(); },
     organismo: cargarFicha,
     competidor: cargarFicha,
+    desglose: () => cargarDesglose(),
     analitica: cargarAnalitica,
     ajustes: cargarAjustes,
     versiones: cargarVersiones,
@@ -4345,7 +4543,7 @@ $('adjudicatarios-q').addEventListener('input', () => {
 });
 // Cambiar el ámbito de una ficha es mirar la misma con otros ojos, no ir a otra: no se
 // apila en «Volver».
-for (const tipo of Object.keys(VISTAS_DETALLE)) {
+for (const tipo of ['organismo', 'competidor']) {
   $(`${tipo}-ambito`).addEventListener('change', () => {
     if (!fichaActual) return;
     fichaActual = { ...fichaActual, ambito: $(`${tipo}-ambito`).value };
@@ -4457,6 +4655,13 @@ arrancar();
 
 const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
                       'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const MESES_LARGOS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+                      'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+// 'AAAA-MM' → «marzo de 2027».
+function nombreMes(mes) {
+  return `${MESES_LARGOS[Number(mes.slice(5, 7)) - 1]} de ${mes.slice(0, 4)}`;
+}
 
 let rangoAnalitica = 'todo';
 // '' (todos los perfiles), 'perfil:…' o 'categoria:…'. Ver `ponerAmbito`.
@@ -4548,7 +4753,9 @@ function tooltip() {
 
 // `filas` es [{ valor, nombre, clase }]: la clase pinta el trazo que identifica la serie.
 // Todo por `textContent`: los nombres de órgano y de empresa vienen de las fuentes.
-function conTooltip(marca, titulo, filas) {
+// `pista` es la última línea, en pequeño: «Pulsa para ver los 12», en lo que lleva a algún
+// sitio. Es lo único que dice que una columna se puede pulsar, porque aquí no hay mano.
+function conTooltip(marca, titulo, filas, pista = '') {
   const mostrar = () => {
     const tt = tooltip();
     tt.textContent = '';
@@ -4560,6 +4767,7 @@ function conTooltip(marca, titulo, filas) {
       if (f.nombre) fila.appendChild(crear('span', 'tt-nombre', f.nombre));
       tt.appendChild(fila);
     }
+    if (pista) tt.appendChild(crear('div', 'tt-pista', pista));
     colocarTooltip(marca);
   };
   escucharTooltip(marca, mostrar);
@@ -4590,6 +4798,28 @@ function escucharTooltip(marca, mostrar) {
   marca.addEventListener('blur', ocultar);
 }
 
+// Lo que lleva a otra pantalla al pulsarlo: con el ratón, y con Enter o la barra
+// espaciadora para quien va con el teclado. El cursor no cambia, como en el resto de la
+// aplicación: lo que avisa es el relleno al pasar por encima y la pista del tooltip.
+function hacerPulsable(el, alPulsar) {
+  el.classList.add('pulsable');
+  el.tabIndex = 0;
+  el.setAttribute('role', 'button');
+  el.addEventListener('click', alPulsar);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      alPulsar();
+    }
+  });
+}
+
+// «Pulsa para ver los 12», o «Pulsa para verlo» cuando es uno.
+function pistaVer(n) {
+  if (n === 1) return 'Pulsa para verlo';
+  return n ? `Pulsa para ver los ${fmtEntero(n)}` : 'Pulsa para ver la lista';
+}
+
 // El mismo tooltip, para una explicación en texto corrido en lugar de cifras: sale al
 // instante, no al segundo largo del `title` nativo, y también con el teclado.
 function conExplicacion(marca, titulo, texto) {
@@ -4608,7 +4838,8 @@ function conExplicacion(marca, titulo, texto) {
 // es una segunda serie de la MISMA unidad que va encima como línea con puntos; nunca un
 // segundo eje.
 //
-// `puntos`: [{ etiqueta, valor, valor2?, parcial?, titulo? }]
+// `puntos`: [{ etiqueta, valor, valor2?, parcial?, titulo?, alPulsar?, pista? }]. Con
+// `alPulsar`, la columna lleva a sus expedientes (ver `irADesglose`).
 function columnas(puntos, { formato = fmtEntero, serie = '', serie2 = '',
                             etiquetarTodo = false } = {}) {
   const maximo = Math.max(0, ...puntos.map((p) => p.valor || 0),
@@ -4660,7 +4891,10 @@ function columnas(puntos, { formato = fmtEntero, serie = '', serie2 = '',
       filas.push({ valor: formato(p.valor2), nombre: serie2, clase: 'serie-2' });
     }
     if (p.detalle) filas.push({ valor: '', nombre: p.detalle });
-    conTooltip(col, p.titulo || p.etiqueta, filas);
+    // Una columna es una sola marca para las dos series: el punto de la línea no recibe
+    // el ratón, así que pulsar en cualquier sitio de la columna lleva a la misma lista.
+    if (p.alPulsar) hacerPulsable(col, p.alPulsar);
+    conTooltip(col, p.titulo || p.etiqueta, filas, p.alPulsar ? p.pista || pistaVer() : '');
   });
 
   area.appendChild(plot);
@@ -4713,20 +4947,9 @@ function filaBarra(etiqueta, pct, texto, opciones = {}) {
   carril.appendChild(relleno);
   fila.appendChild(carril);
   fila.appendChild(crear('span', 'valor', texto));
-  conTooltip(fila, etiqueta, [{ valor: texto }]);
-  // Las de órganos y empresas llevan a su ficha.
-  if (opciones.alPulsar) {
-    fila.classList.add('pulsable');
-    fila.tabIndex = 0;
-    fila.setAttribute('role', 'button');
-    fila.addEventListener('click', opciones.alPulsar);
-    fila.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        opciones.alPulsar();
-      }
-    });
-  }
+  conTooltip(fila, etiqueta, [{ valor: texto }], opciones.pista || '');
+  // Las de órganos y empresas llevan a su ficha; las demás, a sus expedientes.
+  if (opciones.alPulsar) hacerPulsable(fila, opciones.alPulsar);
   return fila;
 }
 
@@ -4746,7 +4969,8 @@ function barraApilada(partes) {
     const seg = crear('span', `apilada-seg ${p.clase}`);
     seg.style.flexGrow = String(p.valor);
     seg.tabIndex = 0;
-    conTooltip(seg, p.nombre, [{ valor: fmtEntero(p.valor), nombre: porcentaje }]);
+    conTooltip(seg, p.nombre, [{ valor: fmtEntero(p.valor), nombre: porcentaje }],
+               p.alPulsar ? p.pista || '' : '');
     barra.appendChild(seg);
 
     const li = crear('li');
@@ -4811,13 +5035,15 @@ function metodo(el, titulo = 'Cómo se calcula') {
 }
 
 function tablaEscueta(el, filas) {
-  // `filas` es [[texto, cifra, apagado], …]. Las dos celdas por textContent: la primera
-  // trae nombres de órgano y objetos de pliegos.
+  // `filas` es [[texto, cifra, apagado, alPulsar], …]. Las dos celdas por textContent: la
+  // primera trae nombres de órgano y objetos de pliegos. Con `alPulsar`, la fila abre lo
+  // que cuenta: la licitación, o sus expedientes.
   const tabla = crear('table', 'tabla-escueta');
-  for (const [texto, cifra, apagado] of filas) {
+  for (const [texto, cifra, apagado, alPulsar] of filas) {
     const tr = crear('tr');
     tr.appendChild(crear('td', apagado ? 'apagado' : '', texto));
     tr.appendChild(crear('td', 'num', cifra));
+    if (alPulsar) hacerPulsable(tr, alPulsar);
     tabla.appendChild(tr);
   }
   el.appendChild(tabla);
@@ -4848,11 +5074,14 @@ function tituloTramo(t, unidad, prefijo = '') {
   return `${prefijo}entre ${unidad(t.desde)} y ${unidad(t.hasta)}`;
 }
 
-function columnasDeTramos(tramos, unidad, serie) {
-  return columnas(tramos.map((t) => ({
+// Con `alPulsar(i, t)`, cada tramo con algo dentro lleva a sus expedientes.
+function columnasDeTramos(tramos, unidad, serie, alPulsar = null) {
+  return columnas(tramos.map((t, i) => ({
     etiqueta: etiquetaTramo(t, unidad),
     titulo: tituloTramo(t, unidad),
     valor: t.expedientes,
+    alPulsar: alPulsar && t.expedientes ? () => alPulsar(i, t) : null,
+    pista: pistaVer(t.expedientes),
   })), { serie, etiquetarTodo: true });
 }
 
@@ -4914,9 +5143,10 @@ const BALDOSAS = [
 ];
 const BALDOSAS_APARTE = [['Canarias', 'CAN', 0], ['Ceuta', 'CEU', 2], ['Melilla', 'MEL', 3]];
 
-// `valores`: { comunidad: { valor, detalle } }. La cifra va dentro de cada baldosa, con la
-// tinta que le toca a su relleno, y el detalle en el tooltip.
-function mapaBaldosas(valores, { formato = fmtEntero } = {}) {
+// `valores`: { comunidad: { valor, detalle, n? } }. La cifra va dentro de cada baldosa, con
+// la tinta que le toca a su relleno, y el detalle en el tooltip. Con `alPulsar(comunidad)`,
+// cada baldosa con algo lleva a sus expedientes; `n` es cuántos, para la pista.
+function mapaBaldosas(valores, { formato = fmtEntero, alPulsar = null } = {}) {
   const esc = escalaCuantiles(Object.values(valores).map((v) => v.valor || 0));
   const caja = crear('div', 'mapa');
   const pintar = (destino, [nombre, abrev, col, fila]) => {
@@ -4927,7 +5157,10 @@ function mapaBaldosas(valores, { formato = fmtEntero } = {}) {
     b.tabIndex = 0;
     b.appendChild(crear('b', '', abrev));
     b.appendChild(crear('span', '', v.valor ? formato(v.valor) : '—'));
-    conTooltip(b, nombre, [{ valor: v.valor ? formato(v.valor) : 'nada', nombre: v.detalle || '' }]);
+    const pulsable = alPulsar && v.valor;
+    if (pulsable) hacerPulsable(b, () => alPulsar(nombre));
+    conTooltip(b, nombre, [{ valor: v.valor ? formato(v.valor) : 'nada', nombre: v.detalle || '' }],
+               pulsable ? pistaVer(v.n) : '');
     destino.appendChild(b);
   };
   const rejilla = crear('div', 'baldosas');
@@ -4945,7 +5178,8 @@ function mapaBaldosas(valores, { formato = fmtEntero } = {}) {
 }
 
 // Un órgano por fila y los doce meses, con la cifra dentro de cada celda que no es cero.
-function mapaCalor(filas, maximo, ambito = '') {
+// Con `alPulsar(organo, mes)` (mes de 0 a 11), cada celda con algo lleva a sus expedientes.
+function mapaCalor(filas, maximo, ambito = '', alPulsar = null) {
   const esc = escalaLineal(maximo);
   const rejilla = crear('div', 'calor');
   rejilla.appendChild(crear('span', ''));
@@ -4958,8 +5192,10 @@ function mapaCalor(filas, maximo, ambito = '') {
     f.meses.forEach((n, i) => {
       const celda = crear('span', `calor-celda ${esc.pasoDe(n)}`, n ? String(n) : '');
       celda.tabIndex = 0;
+      if (alPulsar && n) hacerPulsable(celda, () => alPulsar(f.organo, i));
       conTooltip(celda, `${f.organo} · ${MESES_CORTOS[i]}`,
-                 [{ valor: fmtEntero(n), nombre: n === 1 ? 'expediente' : 'expedientes' }]);
+                 [{ valor: fmtEntero(n), nombre: n === 1 ? 'expediente' : 'expedientes' }],
+                 alPulsar && n ? pistaVer(n) : '');
       rejilla.appendChild(celda);
     });
   }
@@ -4969,8 +5205,9 @@ function mapaCalor(filas, maximo, ambito = '') {
   return caja;
 }
 
-// Los doce meses que vienen, con cuántos contratos acaban en cada uno y de quién son.
-function calendarioRenovaciones(porMes) {
+// Los doce meses que vienen, con cuántos contratos acaban en cada uno y de quién son. Con
+// `alPulsar(mes)` ('AAAA-MM'), cada mes con algo lleva a esos contratos.
+function calendarioRenovaciones(porMes, alPulsar = null) {
   return columnas(porMes.map((m) => {
     const mes = Number(m.mes.slice(5, 7));
     const etiqueta = MESES_CORTOS[mes - 1] + (mes === 1 ? ` ${m.mes.slice(2, 4)}` : '');
@@ -4981,6 +5218,8 @@ function calendarioRenovaciones(porMes) {
       detalle: m.incumbentes.length
         ? 'incumbentes: ' + m.incumbentes.map((i) => `${i.empresa} (${i.contratos})`).join(', ')
         : '',
+      alPulsar: alPulsar && m.contratos ? () => alPulsar(m.mes) : null,
+      pista: pistaVer(m.contratos),
     };
   }), { serie: 'contratos que vencen', etiquetarTodo: true });
 }
@@ -5003,6 +5242,10 @@ function pintarCalendario(d) {
   }
   const nombreMedia = hayMedia ? `media de ${d.anios_completos.join(' y ')}` : '';
   const nombreCurso = d.anio_en_curso || '';
+  // Lo que hay detrás de cada columna: ese mes de TODOS los años del periodo, que es de
+  // donde salen la media y el punto. La lista los separa por año.
+  const total = {};
+  for (const m of d.meses) total[m.mes.slice(5, 7)] = (total[m.mes.slice(5, 7)] || 0) + m.expedientes;
 
   // Sin años completos la columna es el propio año en curso: no hay con qué comparar.
   const puntos = MESES_CORTOS.map((mes, i) => {
@@ -5015,6 +5258,11 @@ function pintarCalendario(d) {
       valor2: hayMedia ? curso[mm] : undefined,
       parcial: enCurso && !hayMedia,
       parcial2: enCurso && hayMedia,
+      alPulsar: total[mm] ? () => irADesglose({
+        origen: 'analitica', bloque: 'calendario', clave: mm,
+        titulo: 'Cuándo sale el trabajo', elemento: MESES_LARGOS[i] }) : null,
+      pista: hayMedia || total[mm] !== (curso[mm] || 0)
+        ? `${pistaVer(total[mm])}, año a año` : pistaVer(total[mm]),
     };
   });
   const formato = (v) => fmtDecimal(v, Number.isInteger(v) ? 0 : 1);
@@ -5055,13 +5303,16 @@ function pintarImportes(d) {
     'importes');
   titular(el, fmtImporteCorto(d.mediana),
           `de mediana · la mitad entre ${fmtImporteCorto(d.p25)} y ${fmtImporteCorto(d.p75)}`);
-  el.appendChild(columnasDeTramos(d.tramos, fmtImporteCorto, 'expedientes'));
+  el.appendChild(columnasDeTramos(d.tramos, fmtImporteCorto, 'expedientes',
+    (i, t) => irADesglose({ origen: 'analitica', bloque: 'importes', clave: i,
+                            titulo: 'Tamaño de los contratos',
+                            elemento: tituloTramo(t, fmtImporteCorto) })));
   if (d.mayores.length) {
     const mayores = crear('div', 'bloque-lista');
     mayores.appendChild(crear('h4', '', 'Los cinco mayores'));
     tablaEscueta(mayores, d.mayores.map((m) => [
       `${m.organo || '(sin órgano)'} — ${(m.objeto || '').slice(0, 70)}`,
-      fmtImporteCorto(m.imp), true,
+      fmtImporteCorto(m.imp), true, () => abrirPanel(m.id),
     ]));
     el.appendChild(mayores);
   }
@@ -5082,7 +5333,10 @@ function pintarBaja(d) {
   }
   titular(el, `${fmtDecimal(d.mediana)} %`,
           `de baja mediana · sobre ${d.comparables.toLocaleString('es-ES')} adjudicaciones`);
-  el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} %`, 'expedientes'));
+  el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} %`, 'expedientes',
+    (i, t) => irADesglose({ origen: 'analitica', bloque: 'baja', clave: i,
+                            titulo: 'Importe al que se cierran',
+                            elemento: tituloTramo(t, (v) => `${v} %`, 'baja ') })));
   // Lo excluido se enseña, no se esconde: es casi la mitad de la muestra.
   const m = metodo(el);
   nota(m, `De ${d.con_ambos_importes.toLocaleString('es-ES')} expedientes que publican ` +
@@ -5101,7 +5355,10 @@ function pintarPlazo(d) {
   }
   titular(el, `${d.mediana_dias} días`,
           `de plazo mediano · la mitad entre ${d.p25} y ${d.p75}`);
-  el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'expedientes'));
+  el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'expedientes',
+    (i, t) => irADesglose({ origen: 'analitica', bloque: 'plazo', clave: i,
+                            titulo: 'Cuánto tiempo tengo para presentar',
+                            elemento: tituloTramo(t, (v) => `${v} días`) })));
   const m = metodo(el);
   nota(m, `Medido sobre ${d.expedientes.toLocaleString('es-ES')} expedientes, con las ` +
           'dos fechas tomadas del mismo anuncio. De ' +
@@ -5119,7 +5376,10 @@ function pintarCiclo(d) {
   }
   titular(el, `${d.mediana_dias} días`,
           `de la publicación a la adjudicación · la mitad entre ${d.p25} y ${d.p75}`);
-  el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'expedientes'));
+  el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'expedientes',
+    (i, t) => irADesglose({ origen: 'analitica', bloque: 'ciclo', clave: i,
+                            titulo: 'Cuándo entra en el forecast',
+                            elemento: tituloTramo(t, (v) => `${v} días`) })));
   const m = metodo(el);
   nota(m, `Medido sobre ${d.expedientes.toLocaleString('es-ES')} expedientes que ` +
           'recorrieron los dos hitos con fecha publicada por la fuente.');
@@ -5131,7 +5391,12 @@ function pintarRenovaciones(d, mercado) {
     '¿Quién tiene un contrato acabándose antes de que salga el pliego nuevo?', 'renovaciones');
   titular(el, d.expedientes.toLocaleString('es-ES'),
           `contratos vencen en ${d.meses} meses · ${d.con_incumbente} con incumbente identificado`);
-  if (d.por_mes) el.appendChild(calendarioRenovaciones(d.por_mes));
+  if (d.por_mes) {
+    el.appendChild(calendarioRenovaciones(d.por_mes, (mes) => irADesglose({
+      origen: 'analitica', bloque: 'renovaciones', clave: mes, unidad: 'contratos',
+      titulo: 'A quién llamo antes del pliego', elemento: `acaban en ${nombreMes(mes)}`,
+      periodo: 'a fecha de hoy' })));
+  }
   // Vencimientos solo lista lo de tus perfiles: mandar ahí desde una temática del
   // mercado llevaría a una lista que no cuadra con esta cifra.
   if (!mercado) {
@@ -5148,17 +5413,23 @@ function pintarCpv(d) {
   const el = bloqueAnalitica('Qué compran exactamente',
     '¿En qué epígrafes cae mi producto, y merece la pena afinar el radar por ahí?', 'cpv');
   const tope = Math.max(1, ...d.divisiones.map((x) => x.expedientes));
+  const verCpv = (codigo, elemento) => irADesglose({
+    origen: 'analitica', bloque: 'cpv', clave: codigo, titulo: 'Qué compran exactamente',
+    elemento });
   for (const x of d.divisiones) {
     // Apilada: «79 servicios para empresas y seguridad» no cabe en una columna de etiqueta.
     el.appendChild(filaBarra(`${x.division} ${x.nombre}`, 100 * x.expedientes / tope,
-                             x.expedientes.toLocaleString('es-ES'), { apilada: true }));
+                             x.expedientes.toLocaleString('es-ES'),
+                             { apilada: true, pista: pistaVer(x.expedientes),
+                               alPulsar: () => verCpv(x.division, `CPV ${x.division} · ${x.nombre}`) }));
   }
   // En una temática del mercado no hay «tu producto»: el servidor manda la lista vacía.
   if (d.del_producto.length) {
     const lista = crear('div', 'bloque-lista');
     lista.appendChild(crear('h4', '', 'Los códigos que son tu producto'));
     tablaEscueta(lista, d.del_producto.map((x) => [
-      `${x.codigo} · ${x.nombre}`, x.expedientes.toLocaleString('es-ES'),
+      `${x.codigo} · ${x.nombre}`, x.expedientes.toLocaleString('es-ES'), false,
+      x.expedientes ? () => verCpv(x.codigo, `CPV ${x.codigo} · ${x.nombre}`) : null,
     ]));
     el.appendChild(lista);
     const boton = crear('button', 'boton-sec', 'Afinar los términos de búsqueda');
@@ -5169,6 +5440,13 @@ function pintarCpv(d) {
   nota(m, 'Un expediente tiene varios CPV, así que los recuentos no suman el total y no ' +
           `se pueden repartir en porcentajes. ${d.sin_cpv} expedientes no traen ninguno.`);
   return el;
+}
+
+// Una comunidad de los repartos territoriales, a sus expedientes. `bloque` es
+// 'comunidades-adjudicadas' o 'comunidades-activas'; lo activo es siempre de hoy.
+function verComunidad(bloque, titulo, ccaa) {
+  irADesglose({ origen: 'analitica', bloque, clave: ccaa, titulo, elemento: ccaa,
+                periodo: bloque === 'comunidades-activas' ? 'a fecha de hoy' : undefined });
 }
 
 // Los dos repartos territoriales comparten pintado porque son el mismo gráfico con dos
@@ -5183,7 +5461,9 @@ function pintarComunidades(d, titulo, pregunta, ancla) {
   const tope = Math.max(1, ...d.comunidades.map((c) => c.importe));
   for (const c of d.comunidades) {
     el.appendChild(filaBarra(c.ccaa, 100 * c.importe / tope,
-                             `${fmtImporteCorto(c.importe)} · ${c.expedientes}`));
+                             `${fmtImporteCorto(c.importe)} · ${c.expedientes}`,
+                             { pista: pistaVer(c.expedientes),
+                               alPulsar: () => verComunidad(ancla, titulo, c.ccaa) }));
   }
 
   // Cuánto se ha quedado fuera de la escala, a la vista y en una línea: en lo que está vivo
@@ -5201,7 +5481,7 @@ function pintarComunidades(d, titulo, pregunta, ancla) {
     tablaEscueta(m, d.excluidos.map((e) => [
       `${e.ccaa} · ${(e.objeto || '(sin objeto)').slice(0, 55)} — su comunidad suma en ` +
       `realidad ${fmtImporteCorto(e.total_de_su_comunidad)}`,
-      fmtImporteCorto(e.importe), true,
+      fmtImporteCorto(e.importe), true, e.id ? () => abrirPanel(e.id) : null,
     ]));
     nota(m, `Se ${uno ? 'aparta' : 'apartan'} de las barras porque no son contratos sino ` +
             'continentes —sistemas dinámicos y acuerdos marco de los que se gana un lote—: ' +
@@ -5223,7 +5503,7 @@ function pintarComunidades(d, titulo, pregunta, ancla) {
 
 // El hermano por número. Va aparte y no como una opción de `pintarComunidades` porque
 // no comparte casi nada: no hay umbral, no hay tabla de apartados y el pie dice otra cosa.
-function pintarComunidadesRecuento(d, titulo, pregunta, ancla) {
+function pintarComunidadesRecuento(d, titulo, pregunta, ancla, bloque) {
   const el = bloqueAnalitica(titulo, pregunta, ancla);
   el.classList.add('etiquetas-anchas');
   if (!d.recuento.length) {
@@ -5233,7 +5513,9 @@ function pintarComunidadesRecuento(d, titulo, pregunta, ancla) {
   const tope = Math.max(1, ...d.recuento.map((c) => c.expedientes));
   for (const c of d.recuento) {
     el.appendChild(filaBarra(c.ccaa, 100 * c.expedientes / tope,
-                             c.expedientes.toLocaleString('es-ES')));
+                             c.expedientes.toLocaleString('es-ES'),
+                             { pista: pistaVer(c.expedientes),
+                               alPulsar: () => verComunidad(bloque, titulo, c.ccaa) }));
   }
   // Dos tarjetas contiguas con cifras distintas para la misma comunidad parecen un
   // fallo, así que se dice por qué no lo son.
@@ -5262,7 +5544,13 @@ function pintarProcedimiento(d) {
   const tope = Math.max(1, ...d.procedimientos.map((x) => x.expedientes));
   for (const x of d.procedimientos) {
     el.appendChild(filaBarra(x.procedimiento, 100 * x.expedientes / tope,
-                             x.expedientes.toLocaleString('es-ES')));
+                             x.expedientes.toLocaleString('es-ES'),
+                             { pista: pistaVer(x.expedientes),
+                               alPulsar: () => irADesglose({
+                                 origen: 'analitica', bloque: 'procedimiento',
+                                 clave: x.procedimiento, titulo: 'Cómo se compra',
+                                 elemento: x.procedimiento === 'el resto'
+                                   ? 'El resto de procedimientos' : x.procedimiento }) }));
   }
   nota(el, 'En un negociado sin publicidad no se puja: o te han invitado o no existes. Esa ' +
            'barra es trabajo comercial de antes del pliego, no mercado al que presentarse.');
@@ -5298,7 +5586,7 @@ function pintarOrganos(d, mercado) {
 
 // El dinero por comunidad en un mapa. Los mismos datos que las barras de al lado, sin los
 // contratos de más de 50 M€, que no caben en ninguna escala (van contados al pie).
-function pintarMapa(d, titulo, pregunta, ancla) {
+function pintarMapa(d, titulo, pregunta, ancla, bloque) {
   const el = bloqueAnalitica(titulo, pregunta, ancla);
   if (!d.comunidades.length) {
     nota(el, 'Nada con comunidad publicada en este periodo.');
@@ -5306,10 +5594,11 @@ function pintarMapa(d, titulo, pregunta, ancla) {
   }
   const valores = {};
   for (const c of d.comunidades) {
-    valores[c.ccaa] = { valor: c.importe,
+    valores[c.ccaa] = { valor: c.importe, n: c.expedientes,
                         detalle: `${fmtEntero(c.expedientes)} ${c.expedientes === 1 ? 'expediente' : 'expedientes'}` };
   }
-  el.appendChild(mapaBaldosas(valores, { formato: fmtImporteCorto }));
+  el.appendChild(mapaBaldosas(valores, { formato: fmtImporteCorto,
+    alPulsar: (ccaa) => verComunidad(bloque, titulo, ccaa) }));
   const pie = [];
   if (d.excluidos.length) {
     pie.push(`Fuera del mapa, ${fmtEntero(d.excluidos.length)} ${d.excluidos.length === 1
@@ -5327,15 +5616,20 @@ function pintarEstacionalidad(d) {
     nota(el, 'Nada con órgano publicado en este periodo.');
     return el;
   }
-  el.appendChild(mapaCalor(d.organos, d.maximo, ambitoAnalitica));
+  el.appendChild(mapaCalor(d.organos, d.maximo, ambitoAnalitica, (organo, i) => irADesglose({
+    origen: 'analitica', bloque: 'estacionalidad', clave: String(i + 1).padStart(2, '0'),
+    nombre: organo, titulo: `Cuándo publica · ${organo}`, elemento: MESES_LARGOS[i] })));
   const m = metodo(el);
   nota(m, `Los ${d.organos.length} órganos con más expedientes de ${fmtEntero(d.distintos)}, ` +
           'por el mes de la primera publicación de cada expediente, sumando los años del ' +
-          'periodo de arriba. Pulsa un órgano para ver su ficha.');
+          'periodo de arriba. Pulsa un órgano para ver su ficha, o una celda para ver ' +
+          'sus expedientes de ese mes, año a año.');
   return el;
 }
 
 const SERIES_CUOTA = ['serie-1', 'serie-2', 'serie-3', 'serie-4', 'serie-5'];
+// Lo que el servidor entiende por «las que no son ninguna de las cinco» (`desglose.py`).
+const OTRAS_EMPRESAS = '*otras*';
 
 function textoVariacion(v, anio) {
   if (v === null || v === undefined) return '';
@@ -5354,18 +5648,23 @@ function pintarCuota(d) {
     const barra = crear('div', 'apilada-barra');
     const partes = [
       ...d.empresas.map((e, k) => ({ nombre: e.empresa, clase: SERIES_CUOTA[k], ...e.por_anio[i] })),
-      { nombre: 'Otras empresas', clase: 'serie-gris', ...d.otros[i] },
+      { nombre: 'Otras empresas', clase: 'serie-gris', otras: true, ...d.otros[i] },
     ];
     for (const parte of partes) {
       if (!parte.expedientes) continue;
       const seg = crear('span', `apilada-seg ${parte.clase}`);
       seg.style.flexGrow = String(parte.expedientes);
       seg.tabIndex = 0;
+      hacerPulsable(seg, () => irADesglose({
+        origen: 'analitica', bloque: 'cuota', clave: anio,
+        nombre: parte.otras ? OTRAS_EMPRESAS : parte.nombre,
+        titulo: 'Cuota de mercado', elemento: `${parte.nombre} en ${anio}`,
+        periodo: `desde ${d.siempre_desde}` }));
       conTooltip(seg, `${parte.nombre} · ${anio}`, [{
         valor: `${fmtDecimal(parte.cuota)} %`,
         nombre: `${fmtEntero(parte.expedientes)} de ${fmtEntero(d.totales[i].expedientes)}` +
                 (parte.importe ? ` · ${fmtImporteCorto(parte.importe)}` : ''),
-      }]);
+      }], pistaVer(parte.expedientes));
       barra.appendChild(seg);
     }
     fila.appendChild(barra);
@@ -5419,9 +5718,16 @@ function pintarIncumbentes(d) {
   if (d.suficiente) {
     const pct = Math.round(100 * d.repite / d.renovaciones);
     titular(el, `${pct} %`, `de ${fmtEntero(d.renovaciones)} renovaciones se las quedó el mismo`);
+    const verParejas = (clave, elemento) => () => irADesglose({
+      origen: 'analitica', bloque: 'incumbentes', clave, unidad: 'renovaciones',
+      titulo: '¿Se puede desbancar al incumbente?', elemento });
     el.appendChild(barraApilada([
-      { nombre: 'Repite el incumbente', valor: d.repite, clase: 'serie-1' },
-      { nombre: 'Cambia de empresa', valor: d.renovaciones - d.repite, clase: 'serie-gris' },
+      { nombre: 'Repite el incumbente', valor: d.repite, clase: 'serie-1',
+        pista: pistaVer(d.repite),
+        alPulsar: verParejas('repite', 'Las que se quedó el mismo') },
+      { nombre: 'Cambia de empresa', valor: d.renovaciones - d.repite, clase: 'serie-gris',
+        pista: pistaVer(d.renovaciones - d.repite),
+        alPulsar: verParejas('cambia', 'Las que cambiaron de empresa') },
     ]));
   } else {
     nota(el, `Solo hay ${fmtEntero(d.renovaciones)} renovaciones identificadas, ${fmtEntero(d.repite)} ` +
@@ -5470,7 +5776,11 @@ function pintarConsultas(d) {
             `de mediana · la mitad entre ${d.p25} y ${d.p75}`);
   }
   if (d.suficiente) {
-    el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'consultas'));
+    el.appendChild(columnasDeTramos(d.tramos, (v) => `${v} d`, 'consultas',
+      (i, t) => irADesglose({ origen: 'analitica', bloque: 'consultas', clave: i,
+                              unidad: 'consultas', titulo: 'De consulta previa a pliego',
+                              elemento: `Pliego ${tituloTramo(t, (v) => `${v} días`)} después`,
+                              periodo: 'todo el mercado' })));
   }
   nota(el, `En todo el mercado: ${fmtEntero(d.enlazadas)} de ${fmtEntero(d.consultas)} consultas ` +
            'se han podido enlazar con su licitación. Es un mínimo: muchas cambian de número ' +
@@ -5786,23 +6096,27 @@ async function cargarAnalitica() {
     // dos listas casi nunca coincide —Cataluña es 3.ª en euros y 2.ª en operaciones, País
     // Vasco 10.ª y 6.ª— y ese desajuste es justo lo que hay que poder ver de un vistazo.
     [pintarMapa(d.comunidades.adjudicadas, 'Mapa del dinero adjudicado',
-                '¿En qué comunidades se ha adjudicado el dinero?', 'mapa-adjudicado'),
+                '¿En qué comunidades se ha adjudicado el dinero?', 'mapa-adjudicado',
+                'comunidades-adjudicadas'),
      pintarMapa(d.comunidades.activas, 'Mapa del dinero en juego',
-                '¿Dónde queda dinero con el plazo todavía abierto?', 'mapa-activo')],
+                '¿Dónde queda dinero con el plazo todavía abierto?', 'mapa-activo',
+                'comunidades-activas')],
     [pintarComunidades(d.comunidades.adjudicadas,
                        'Comunidades por importe adjudicado',
                        '¿Dónde se ha repartido el dinero que ya está adjudicado?',
                        'comunidades-adjudicadas'),
      pintarComunidadesRecuento(d.comunidades.adjudicadas,
                        'Comunidades por número de adjudicaciones',
-                       '¿Dónde se cierran más operaciones, cuesten lo que cuesten?')],
+                       '¿Dónde se cierran más operaciones, cuesten lo que cuesten?',
+                       undefined, 'comunidades-adjudicadas')],
     [pintarComunidades(d.comunidades.activas,
                        'Comunidades por importe en juego',
                        '¿Dónde queda dinero en juego, con el plazo todavía abierto?',
                        'comunidades-activas'),
      pintarComunidadesRecuento(d.comunidades.activas,
                        'Comunidades por licitaciones abiertas',
-                       '¿Dónde hay más pliegos abiertos ahora mismo?')],
+                       '¿Dónde hay más pliegos abiertos ahora mismo?',
+                       undefined, 'comunidades-activas')],
     // Quién compra y quién gana, juntos: son las dos llamadas que salen de esta pestaña.
     [pintarOrganos(d.organos, g.mercado), pintarAdjudicatarios(d.adjudicatarios)],
     // Los dos a lo ancho: doce meses por diez órganos, y tres años de seis empresas.

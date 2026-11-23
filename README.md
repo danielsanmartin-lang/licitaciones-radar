@@ -600,8 +600,9 @@ extension appears once, with its latest end date.
 
 The window buttons (3, 6, 12, 24 months) show how many expire in each period and for how
 much. Above sits the **renewals calendar**: how many contracts end in each of the next
-twelve months, with their incumbents on hover. At the top you choose **the profile** —all
-of them, or only awareness, or only email—.
+twelve months, with their incumbents on hover. **Clicking a month opens those
+contracts**, with the same card as below and its «Seguir» (Follow). At the top you choose
+**the profile** —all of them, or only awareness, or only email—.
 
 Below the window, two more sections:
 
@@ -718,6 +719,11 @@ body and the winner in any tender's detail. Every name in a profile leads to its
 and **«‹»** (Back) retraces your steps to where you were, with your place on the
 page. From a tender that does not match your profiles, the profile opens with all of IT.
 
+Inside, as in Analytics, **the charts lead to their procurement files**: each month of
+«Cuándo publica» (across all years, split by year) and each procedure in «Cómo compra» on
+a body's profile; each year of «Año a año» and each region of «Dónde gana» on a
+competitor's (see [what clicking a chart shows](#analítica-analytics)).
+
 ### Analítica (Analytics)
 
 The questions that are not "what is out there today". At the top, a row of key figures;
@@ -766,6 +772,34 @@ opening, so as not to delay it; until then the block says it is being prepared.
 
 The body and company names in «Quién compra», «Quién gana», the heatmap and market share
 lead to their profiles.
+
+**Everything else leads to its procurement files.** Clicking February in «Cuándo sale el
+trabajo», the Basque Country on the map, an amount band, a heatmap cell, a slice of the
+market share or a month in «A quién llamo» opens a list with **exactly** the files that
+element counts: the same number as the tooltip, which says so with «Pulsa para ver los 15»
+(click to see the 15). They use the usual card, which opens the tender, and **«‹»** goes
+back to the chart at the same scroll position. It works from the keyboard too: Tab to the
+column and press Enter.
+
+It does not send you to the Bandeja (inbox), because the inbox cannot filter by month,
+band, CPV or company, has none of those records for a market topic, and counts notices
+where Analytics counts procurement files: the number would not match. The list comes from
+the same calculation as the chart, and a test walks every element of every chart so the
+two never drift apart. Three things about that list:
+
+- **A month of the year means that month in every year of the period**, newest first: the
+  column is the average of some of them and the dot is the current year's.
+- **Each card leads with the figure that put it there** — the largest published amount, the
+  discount, the days to bid, the awarded amount, when it ends — because it is not always
+  the card's own: an amount band uses the file's largest published amount, while the card
+  shows its latest notice.
+- **On the map, anything over €50 M is listed separately**: it does not add up in the tile
+  or the amount bars, but it does in the count bars.
+
+The rows of «Los cinco mayores» (the five largest) and of the contracts set aside from the
+regional split open the tender directly. «Qué tengo de verdad hoy» still leads to the inbox,
+which is where you triage. The first click on a «Cuándo entra en el forecast» band with
+«Toda la IT» takes a few seconds (it reads the change history); later ones do not.
 
 The scope can be your profiles — all of them or one — or one of the **market topics**
 from «Otras licitaciones», or all of IT together. With a topic, it looks at the whole

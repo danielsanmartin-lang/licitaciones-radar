@@ -20,7 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import automatica, busqueda, categorias, consultas, db, enlaces, pipeline, rutas
+from . import (automatica, busqueda, categorias, consultas, db, desglose, enlaces,
+               pipeline, rutas)
 from .db import ESTADOS_REVISION
 from .sources.base import NUTS2_CCAA
 
@@ -332,6 +333,30 @@ class Manejador(BaseHTTPRequestHandler):
                     categoria=params.get("categoria") or None,
                     desde=params.get("desde") or None,
                     hasta=params.get("hasta") or None,
+                ))
+            except ValueError as exc:
+                self._error(str(exc))
+
+        elif partes.path == "/api/desglose":
+            # Los expedientes de una barra, una baldosa o una celda de un gráfico. Con el
+            # ámbito y el rango del gráfico de origen, que los pone la propia pantalla.
+            for clave in ("desde", "hasta"):
+                valor = params.get(clave)
+                if valor and not _ES_MES.match(valor):
+                    return self._error(f"{clave} tiene que ser 'AAAA-MM'")
+            try:
+                self._json(desglose.desglose(
+                    self.con,
+                    origen=params.get("origen") or "",
+                    bloque=params.get("bloque") or "",
+                    clave=params.get("clave") or None,
+                    nombre=params.get("nombre") or None,
+                    perfil=params.get("perfil") or None,
+                    categoria=params.get("categoria") or None,
+                    desde=params.get("desde") or None,
+                    hasta=params.get("hasta") or None,
+                    limite=int(params.get("limite", desglose.LIMITE)),
+                    offset=int(params.get("offset", 0)),
                 ))
             except ValueError as exc:
                 self._error(str(exc))
